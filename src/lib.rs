@@ -16,8 +16,8 @@ pub fn encode_with<T: Write, V: Encode>(writer: T, options: BinOptions, value: V
 	value.encode(&mut stream)
 }
 
-pub fn decode_with<T: Read, V: Decode>(writer: T, options: BinOptions) -> EncodingResult<V> {
-	let mut stream = BinStream::new(writer, options);
+pub fn decode_with<T: Read, V: Decode>(reader: T, options: BinOptions) -> EncodingResult<V> {
+	let mut stream = BinStream::new(reader, options);
 	V::decode(&mut stream)
 }
 
