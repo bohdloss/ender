@@ -29,8 +29,6 @@ pub struct UnitStruct;
 pub enum Enum {
 	StructVariant {
 		value1: u64,
-		#[ende(de, as = 0.0)]
-		#[ende(en, as = ())]
 		value2: f64
 	},
 	TupleVariant(

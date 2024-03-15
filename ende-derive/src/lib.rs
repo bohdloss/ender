@@ -53,6 +53,8 @@ mod kw {
 
 	custom_keyword!(serde);
 	custom_keyword!(skip);
+	custom_keyword!(with);
+	custom_keyword!(default);
 
 	custom_keyword!(fixed_int);
 	custom_keyword!(leb128_int);
@@ -176,13 +178,13 @@ enum Flag {
 		eq: token::Eq,
 		condition: Expr,
 	},
-	Else {
-		kw: Else,
+	Default {
+		kw: kw::default,
 		eq: token::Eq,
 		default: Expr
 	},
-	As {
-		kw: As,
+	With {
+		kw: kw::with,
 		eq: token::Eq,
 		with: Expr
 	},
@@ -226,8 +228,8 @@ impl Flag {
 			Flag::Serde(x) => x.span,
 			Flag::Skip(x) => x.span,
 			Flag::If { kw, .. } => kw.span,
-			Flag::Else { kw, .. } => kw.span,
-			Flag::As { kw, .. } => kw.span,
+			Flag::Default { kw, .. } => kw.span,
+			Flag::With { kw, .. } => kw.span,
 			Flag::FixedInt { kw, .. } => kw.span,
 			Flag::Leb128Int { kw, .. } => kw.span,
 			Flag::BigEndian { kw, .. } => kw.span,
@@ -260,14 +262,14 @@ impl Flag {
 
 	fn default(&self) -> bool {
 		match self {
-			Flag::Else { .. } => true,
+			Flag::Default { .. } => true,
 			_ => false
 		}
 	}
 
 	fn with(&self) -> bool {
 		match self {
-			Flag::As { .. } => true,
+			Flag::With { .. } => true,
 			_ => false
 		}
 	}
@@ -281,14 +283,14 @@ impl Flag {
 
 	fn as_default(&self) -> Option<&Expr> {
 		match self {
-			Flag::Else { default, .. } => Some(default),
+			Flag::Default { default, .. } => Some(default),
 			_ => None
 		}
 	}
 
 	fn as_with(&self) -> Option<&Expr> {
 		match self {
-			Flag::As { with, .. } => Some(with),
+			Flag::With { with, .. } => Some(with),
 			_ => None
 		}
 	}
@@ -306,14 +308,14 @@ impl Parse for Flag {
 				eq: input.parse()?,
 				condition: input.parse()?
 			}
-		} else if input.peek(Token![else]) {
-			Flag::Else {
+		} else if input.peek(kw::default) {
+			Flag::Default {
 				kw: input.parse()?,
 				eq: input.parse()?,
 				default: input.parse()?
 			}
-		} else if input.peek(Token![as]) {
-			Flag::As {
+		} else if input.peek(kw::with) {
+			Flag::With {
 				kw: input.parse()?,
 				eq: input.parse()?,
 				with: input.parse()?
@@ -511,11 +513,6 @@ impl Ende {
 
 			transformed.append(&mut x.flag.into_iter().collect());
 		}
-		// Skip and others can't be used together
-		let skip = transformed.iter().any(Flag::skip);
-		if skip && transformed.len() > 1 {
-			make_error!(??? transformed[0].span(), "Skip can't be used together with other attributes");
-		}
 
 		Ok(transformed)
 	}
@@ -658,11 +655,16 @@ fn gen_encode_fn_call<T: ToTokens>(field: &T, attrs: &[Flag]) -> TokenStream2 {
 fn gen_decode_fn_call(attrs: &[Flag]) -> TokenStream2 {
 	let dollar_crate = dollar_crate(ENDE);
 
+	let default = if let Some(default) = attrs.iter().find(|x| x.default()).and_then(Flag::as_default) {
+		default.to_token_stream()
+	} else {
+		quote!(Default::default())
+	};
+
 	if attrs.iter().any(Flag::skip) {
-		return quote!(
-			Default::default()
-		);
+		return default;
 	}
+
 	let decode = if let Some(with) = attrs.iter().find(|x| x.with()).and_then(Flag::as_with) {
 		quote!(
 			{ #with }
@@ -686,18 +688,12 @@ fn gen_decode_fn_call(attrs: &[Flag]) -> TokenStream2 {
 	);
 
 	if let Some(cond) = attrs.iter().find(|x| x.condition()).and_then(Flag::as_condition) {
-		let default = if let Some(default) = attrs.iter().find(|x| x.default()).and_then(Flag::as_default) {
-			default.to_token_stream()
-		} else {
-			quote!(Default::default())
-		};
-
 		return quote!(
 			#before
 			let __val = if #cond {
 				#decode
 			} else {
-				Default::default()
+				#default
 			};
 			#after
 			__val
