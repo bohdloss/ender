@@ -1064,7 +1064,7 @@ fn derive_enum_decode(enum_data: &DataEnum, repr: Option<ReprAttr>, reset_state:
 
 	if enum_data.variants.len() == 0 {
 		return Ok(quote!(
-			Err(#dollar_crate::EncodingError::InvalidVariant(0))
+			Err(#dollar_crate::EncodingError::InvalidVariant)
 		));
 	}
 
@@ -1100,7 +1100,7 @@ fn derive_enum_decode(enum_data: &DataEnum, repr: Option<ReprAttr>, reset_state:
 		#const_code
 		Ok(match #read_variant {
 			#variants_code
-			__variant => return Err(#dollar_crate::EncodingError::InvalidVariant(__variant as _))
+			_ => return Err(#dollar_crate::EncodingError::InvalidVariant)
 		})
 	))
 }
