@@ -536,8 +536,8 @@ pub enum EncodingError {
 		#[from]
 		FromVecWithNulError
 	),
-	#[error("Unrecognized enum variant: {0}")]
-	InvalidVariant(u128),
+	#[error("Unrecognized enum variant")]
+	InvalidVariant,
 	#[cfg(feature = "serde")]
 	#[error("Serde error occurred: {0}")]
 	SerdeError(String)
