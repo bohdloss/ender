@@ -1,0 +1,17 @@
+[package]
+name = "ende"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ende-derive = { path = "ende-derive" }
+serde = { version = "1.0.197", optional = true, features = ["derive"] }
+thiserror = "1.0.57"
+array-init = "2.1.0"
+
+[dev-dependencies]
+bitflags = "2.4.2"
+semver = { version = "1.0.22", features = ["serde"] }
+
+[features]
+serde = ["dep:serde"]
