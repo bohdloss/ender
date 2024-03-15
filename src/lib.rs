@@ -11,6 +11,16 @@ use thiserror::Error;
 
 pub use ende_derive::{Encode, Decode};
 
+pub fn encode_with<T: Write, V: Encode>(writer: T, options: BinOptions, value: V) -> EncodingResult<()> {
+	let mut stream = BinStream::new(writer, options);
+	value.encode(&mut stream)
+}
+
+pub fn decode_with<T: Read, V: Decode>(writer: T, options: BinOptions) -> EncodingResult<V> {
+	let mut stream = BinStream::new(writer, options);
+	V::decode(&mut stream)
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 #[repr(u8)]
 pub enum Endianness {
@@ -90,7 +100,19 @@ impl Default for VariantRepr {
 pub struct BinOptions {
 	pub num_repr: NumRepr,
 	pub size_repr: SizeRepr,
-	pub variant_repr: VariantRepr
+	pub variant_repr: VariantRepr,
+	pub flatten: u64,
+}
+
+impl BinOptions {
+	pub fn flatten(&mut self) -> bool {
+		if self.flatten == 0 {
+			false
+		} else {
+			self.flatten -= 1;
+			true
+		}
+	}
 }
 
 impl Default for BinOptions {
@@ -98,13 +120,14 @@ impl Default for BinOptions {
 		Self {
 			num_repr: NumRepr::default(),
 			size_repr: SizeRepr::default(),
-			variant_repr: VariantRepr::default()
+			variant_repr: VariantRepr::default(),
+			flatten: 0
 		}
 	}
 }
 
 pub struct BinStream<T>{
-	stream: T,
+	pub stream: T,
 	pub options: BinOptions
 }
 
@@ -113,6 +136,13 @@ impl<T> BinStream<T> {
 		Self {
 			stream,
 			options
+		}
+	}
+	
+	pub fn new_default(stream: T) -> Self {
+		Self {
+			stream,
+			options: Default::default()
 		}
 	}
 
@@ -616,11 +646,20 @@ impl Encode for CStr {
 
 impl<T: Encode> Encode for Option<T> {
 	fn encode<G: Write>(&self, encoder: &mut BinStream<G>) -> EncodingResult<()> {
-		match self {
-			None => encoder.write_bool(false),
-			Some(value) => {
-				encoder.write_bool(true)?;
-				value.encode(encoder)
+		if encoder.options.flatten() {
+			match self {
+				None => Ok(()),
+				Some(x) => {
+					x.encode(encoder)
+				}
+			}
+		} else {
+			match self {
+				None => encoder.write_bool(false),
+				Some(value) => {
+					encoder.write_bool(true)?;
+					value.encode(encoder)
+				}
 			}
 		}
 	}
@@ -628,10 +667,14 @@ impl<T: Encode> Encode for Option<T> {
 
 impl<T: Decode> Decode for Option<T> {
 	fn decode<G: Read>(decoder: &mut BinStream<G>) -> EncodingResult<Self> where Self: Sized {
-		Ok(match decoder.read_bool()? {
-			true => Some(T::decode(decoder)?),
-			false => None
-		})
+		if decoder.options.flatten() {
+			Ok(Some(T::decode(decoder)?))
+		} else {
+			Ok(match decoder.read_bool()? {
+				true => Some(T::decode(decoder)?),
+				false => None
+			})
+		}
 	}
 }
 

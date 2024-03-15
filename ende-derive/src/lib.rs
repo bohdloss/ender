@@ -55,6 +55,8 @@ mod kw {
 	custom_keyword!(skip);
 	custom_keyword!(with);
 	custom_keyword!(default);
+	custom_keyword!(validate);
+	custom_keyword!(flatten);
 
 	custom_keyword!(fixed_int);
 	custom_keyword!(leb128_int);
@@ -219,6 +221,16 @@ enum Flag {
 		width: BitWidth,
 		paren: Option<Paren>,
 		targets: Punctuated<Target2, Comma>
+	},
+	Flatten {
+		kw: kw::flatten,
+		eq: Option<token::Eq>,
+		depth: Option<Expr>
+	},
+	Validate {
+		kw: kw::validate,
+		eq: token::Eq,
+		expr: Expr
 	}
 }
 
@@ -236,6 +248,8 @@ impl Flag {
 			Flag::LittleEndian { kw, .. } => kw.span,
 			Flag::MaxSize { kw, .. } => kw.span,
 			Flag::BitWidth { kw, .. } => kw.span,
+			Flag::Flatten { kw, .. } => kw.span,
+			Flag::Validate { kw, ..} => kw.span,
 		}
 	}
 
@@ -431,6 +445,21 @@ impl Parse for Flag {
 				paren,
 				targets,
 			}
+		} else if input.peek(kw::validate) {
+			return Err(Error::new(input.span(), "Still unimplemeted!"))
+		} else if input.peek(kw::flatten) {
+			let kw = input.parse()?;
+			let (eq, depth) = if input.peek(token::Eq) {
+				(Some(input.parse()?), Some(input.parse()?))
+			} else {
+				(None, None)
+			};
+
+			Flag::Flatten {
+				kw,
+				eq,
+				depth,
+			}
 		} else {
 			return Err(Error::new(input.span(), "Unknown attribute parameter"))
 		})
@@ -584,6 +613,13 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> (TokenStrea
 					));
 				}
 				aggregated
+			}
+			Flag::Flatten { depth, .. } => {
+				let depth = depth.as_ref().map(ToTokens::to_token_stream).unwrap_or(quote!(1u64));
+
+				quote!(
+					#source.options.flatten = { #depth };
+				)
 			}
 			_ => continue
 		};
