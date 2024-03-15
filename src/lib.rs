@@ -377,16 +377,16 @@ impl<T: Write> BinStream<T> {
 		}
 	}
 	pub fn write_bool(&mut self, value: bool) -> EncodingResult<()> {
-		self.write_u8(value as u8)
+		self._write_u8(value as u8, NumEncoding::FixedInt, Endianness::LittleEndian)
 	}
 	pub fn write_char(&mut self, value: char) -> EncodingResult<()> {
 		self.write_u32(value as u32)
 	}
 	pub fn write_f32(&mut self, value: f32) -> EncodingResult<()> {
-		self.write_u32(value.to_bits())
+		self._write_u32(value.to_bits(), NumEncoding::FixedInt, self.options.num_repr.endianness)
 	}
 	pub fn write_f64(&mut self, value: f64) -> EncodingResult<()> {
-		self.write_u64(value.to_bits())
+		self._write_u64(value.to_bits(), NumEncoding::FixedInt, self.options.num_repr.endianness)
 	}
 	pub fn write_raw_bytes(&mut self, bytes: &[u8]) -> EncodingResult<()> {
 		Ok(self.stream.write_all(bytes)?)
@@ -455,7 +455,7 @@ impl<T: Read> BinStream<T> {
 		})
 	}
 	pub fn read_bool(&mut self) -> EncodingResult<bool> {
-		match self.read_u8()? {
+		match self._read_u8(NumEncoding::FixedInt, Endianness::LittleEndian)? {
 			0 => Ok(false),
 			1 => Ok(true),
 			_ => Err(EncodingError::InvalidBool)
@@ -465,10 +465,10 @@ impl<T: Read> BinStream<T> {
 		char::from_u32(self.read_u32()?).ok_or(EncodingError::InvalidChar)
 	}
 	pub fn read_f32(&mut self) -> EncodingResult<f32> {
-		Ok(f32::from_bits(self.read_u32()?))
+		Ok(f32::from_bits(self._read_u32(NumEncoding::FixedInt, self.options.num_repr.endianness)?))
 	}
 	pub fn read_f64(&mut self) -> EncodingResult<f64> {
-		Ok(f64::from_bits(self.read_u64()?))
+		Ok(f64::from_bits(self._read_u64(NumEncoding::FixedInt, self.options.num_repr.endianness)?))
 	}
 	pub fn read_raw_bytes(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
 		Ok(self.stream.read_exact(buf)?)
