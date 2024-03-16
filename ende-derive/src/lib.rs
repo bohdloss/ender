@@ -5,8 +5,8 @@ use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned, TokenStreamExt, ToTokens};
 use syn::{Attribute, Data, DataEnum, DataStruct, DeriveInput, Expr, Fields, LitInt, parse_macro_input, token, Type, Variant};
 use syn::{Token, parenthesized, Error};
-use syn::token::{Paren, Comma, If, Else, As, For};
-use syn::parse::{Parse, ParseStream};
+use syn::token::{Paren, Comma, If, Else, As, For, Semi};
+use syn::parse::{Parse, ParseStream, Peek};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
@@ -58,11 +58,11 @@ mod kw {
 	custom_keyword!(validate);
 	custom_keyword!(flatten);
 
-	custom_keyword!(fixed_int);
-	custom_keyword!(leb128_int);
+	custom_keyword!(fixed);
+	custom_keyword!(leb128);
 	custom_keyword!(big_endian);
 	custom_keyword!(little_endian);
-	custom_keyword!(max_size);
+	custom_keyword!(max);
 	custom_keyword!(bit_width);
 
 	custom_keyword!(bit8);
@@ -100,31 +100,65 @@ impl Parse for ReprAttr {
 }
 
 enum BitWidth {
-	Bit8(Span),
-	Bit16(Span),
-	Bit32(Span),
-	Bit64(Span),
-	Bit128(Span),
+	Bit8(LitInt),
+	Bit16(LitInt),
+	Bit32(LitInt),
+	Bit64(LitInt),
+	Bit128(LitInt),
+}
+
+impl BitWidth {
+	fn span(&self) -> Span {
+		match self {
+			BitWidth::Bit8(x) => x.span(),
+			BitWidth::Bit16(x) => x.span(),
+			BitWidth::Bit32(x) => x.span(),
+			BitWidth::Bit64(x) => x.span(),
+			BitWidth::Bit128(x) => x.span(),
+		}
+	}
+}
+
+impl Parse for BitWidth {
+	fn parse(input: ParseStream) -> syn::Result<Self> {
+		let width: LitInt = input.parse()?;
+		Ok(match width.base10_parse::<u8>()? {
+			8 => BitWidth::Bit8(width),
+			16 => BitWidth::Bit16(width),
+			32 => BitWidth::Bit32(width),
+			64 => BitWidth::Bit64(width),
+			128 => BitWidth::Bit128(width),
+			_ => return Err(Error::new(input.span(), "The only allowed bit widths are 8, 16, 32, 64 and 128"))
+		})
+	}
 }
 
 #[allow(unused)]
-enum Target1 {
+enum Target {
 	Num(kw::num),
 	Size(kw::size),
 	Variant(kw::variant)
 }
 
-impl ToTokens for Target1 {
+impl Target {
+	fn do_peek(input: ParseStream) -> bool {
+		input.peek(kw::num) ||
+			input.peek(kw::size) ||
+			input.peek(kw::variant)
+	}
+}
+
+impl ToTokens for Target {
 	fn to_tokens(&self, tokens: &mut TokenStream2) {
 		tokens.append(match self {
-			Target1::Num(x) => Ident::new("num_repr", x.span),
-			Target1::Size(x) => Ident::new("size_repr", x.span),
-			Target1::Variant(x) => Ident::new("variant_repr", x.span),
+			Target::Num(x) => Ident::new("num_repr", x.span),
+			Target::Size(x) => Ident::new("size_repr", x.span),
+			Target::Variant(x) => Ident::new("variant_repr", x.span),
 		})
 	}
 }
 
-impl Parse for Target1 {
+impl Parse for Target {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		Ok(if input.peek(kw::num) {
 			Self::Num(input.parse()?)
@@ -142,31 +176,52 @@ impl Parse for Target1 {
 }
 
 #[allow(unused)]
-enum Target2 {
-	Size(kw::size),
-	Variant(kw::variant)
+enum Modifier {
+	FixedInt(kw::fixed),
+	Leb128Int(kw::leb128),
+	BigEndian(kw::big_endian),
+	LittleEndian(kw::little_endian),
+	MaxSize {
+		kw: kw::max,
+		eq: token::Eq,
+		max: Expr
+	},
+	BitWidth(BitWidth),
 }
 
-impl ToTokens for Target2 {
-	fn to_tokens(&self, tokens: &mut TokenStream2) {
-		tokens.append(match self {
-			Target2::Size(x) => Ident::new("size_repr", x.span),
-			Target2::Variant(x) => Ident::new("variant_repr", x.span),
-		})
+impl Modifier {
+	fn span(&self) -> Span {
+		match self {
+			Self::FixedInt(x) => x.span,
+			Self::Leb128Int(x) => x.span,
+			Self::BigEndian(x) => x.span,
+			Self::LittleEndian(x) => x.span,
+			Self::MaxSize { kw, .. } => kw.span,
+			Self::BitWidth(x) => x.span(),
+		}
 	}
 }
 
-impl Parse for Target2 {
+impl Parse for Modifier {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
-		Ok(if input.peek(kw::size) {
-			Self::Size(input.parse()?)
-		} else if input.peek(kw::variant) {
-			Self::Variant(input.parse()?)
+		Ok(if input.peek(kw::fixed) {
+			Self::FixedInt(input.parse()?)
+		} else if input.peek(kw::leb128) {
+			Self::Leb128Int(input.parse()?)
+		} else if input.peek(kw::big_endian) {
+			Self::BigEndian(input.parse()?)
+		} else if input.peek(kw::little_endian) {
+			Self::LittleEndian(input.parse()?)
+		} else if input.peek(kw::max) {
+			Self::MaxSize {
+				kw: input.parse()?,
+				eq: input.parse()?,
+				max: input.parse()?
+			}
+		} else if input.peek(LitInt) {
+			Self::BitWidth(input.parse()?)
 		} else {
-			return Err(Error::new(
-				input.span(),
-				r#"Unknown target parameter. Only "size" and "variant" are allowed in this position"#)
-			)
+			return Err(Error::new(input.span(), "Unknown modifier"))
 		})
 	}
 }
@@ -190,38 +245,6 @@ enum Flag {
 		eq: token::Eq,
 		with: Expr
 	},
-	FixedInt {
-		kw: kw::fixed_int,
-		paren: Option<Paren>,
-		targets: Punctuated<Target1, Comma>
-	},
-	Leb128Int {
-		kw: kw::leb128_int,
-		paren: Option<Paren>,
-		targets: Punctuated<Target1, Comma>
-	},
-	BigEndian {
-		kw: kw::big_endian,
-		paren: Option<Paren>,
-		targets: Punctuated<Target1, Comma>
-	},
-	LittleEndian {
-		kw: kw::little_endian,
-		paren: Option<Paren>,
-		targets: Punctuated<Target1, Comma>
-	},
-	MaxSize {
-		kw: kw::max_size,
-		eq: token::Eq,
-		max: Expr
-	},
-	BitWidth {
-		kw: kw::bit_width,
-		eq: token::Eq,
-		width: BitWidth,
-		paren: Option<Paren>,
-		targets: Punctuated<Target2, Comma>
-	},
 	Flatten {
 		kw: kw::flatten,
 		eq: Option<token::Eq>,
@@ -231,6 +254,11 @@ enum Flag {
 		kw: kw::validate,
 		eq: token::Eq,
 		expr: Expr
+	},
+	ModifierList {
+		target: Target,
+		eq: token::Colon,
+		modifiers: Punctuated<Modifier, Comma>
 	}
 }
 
@@ -242,14 +270,9 @@ impl Flag {
 			Flag::If { kw, .. } => kw.span,
 			Flag::Default { kw, .. } => kw.span,
 			Flag::With { kw, .. } => kw.span,
-			Flag::FixedInt { kw, .. } => kw.span,
-			Flag::Leb128Int { kw, .. } => kw.span,
-			Flag::BigEndian { kw, .. } => kw.span,
-			Flag::LittleEndian { kw, .. } => kw.span,
-			Flag::MaxSize { kw, .. } => kw.span,
-			Flag::BitWidth { kw, .. } => kw.span,
 			Flag::Flatten { kw, .. } => kw.span,
 			Flag::Validate { kw, ..} => kw.span,
+			Flag::ModifierList { target, .. } => target.span()
 		}
 	}
 
@@ -312,7 +335,13 @@ impl Flag {
 
 impl Parse for Flag {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
-		Ok(if input.peek(kw::serde) {
+		Ok(if Target::do_peek(input) {
+			Flag::ModifierList {
+				target: input.parse()?,
+				eq: input.parse()?,
+				modifiers: Punctuated::parse_separated_nonempty(input)?,
+			}
+		} else if input.peek(kw::serde) {
 			Flag::Serde(input.parse()?)
 		} else if input.peek(kw::skip) {
 			Flag::Skip(input.parse()?)
@@ -333,117 +362,6 @@ impl Parse for Flag {
 				kw: input.parse()?,
 				eq: input.parse()?,
 				with: input.parse()?
-			}
-		} else if input.peek(kw::fixed_int) {
-			let kw = input.parse()?;
-			let (paren, targets) = if input.peek(Paren) {
-				let inside;
-				(Some(parenthesized!(inside in input)), Punctuated::parse_terminated(&inside)?)
-			} else {
-				let mut all = Punctuated::new();
-				all.push(Target1::Num(Default::default()));
-				all.push(Target1::Size(Default::default()));
-				all.push(Target1::Variant(Default::default()));
-				(None, all)
-			};
-
-			Flag::FixedInt {
-				kw,
-				paren,
-				targets,
-			}
-		} else if input.peek(kw::leb128_int) {
-			let kw = input.parse()?;
-			let (paren, targets) = if input.peek(Paren) {
-				let inside;
-				(Some(parenthesized!(inside in input)), Punctuated::parse_terminated(&inside)?)
-			} else {
-				let mut all = Punctuated::new();
-				all.push(Target1::Num(Default::default()));
-				all.push(Target1::Size(Default::default()));
-				all.push(Target1::Variant(Default::default()));
-				(None, all)
-			};
-
-			Flag::Leb128Int {
-				kw,
-				paren,
-				targets,
-			}
-		} else if input.peek(kw::big_endian) {
-			let kw = input.parse()?;
-			let (paren, targets) = if input.peek(Paren) {
-				let inside;
-				(Some(parenthesized!(inside in input)), Punctuated::parse_terminated(&inside)?)
-			} else {
-				let mut all = Punctuated::new();
-				all.push(Target1::Num(Default::default()));
-				all.push(Target1::Size(Default::default()));
-				all.push(Target1::Variant(Default::default()));
-				(None, all)
-			};
-
-			Flag::BigEndian {
-				kw,
-				paren,
-				targets,
-			}
-		} else if input.peek(kw::little_endian) {
-			let kw = input.parse()?;
-			let (paren, targets) = if input.peek(Paren) {
-				let inside;
-				(Some(parenthesized!(inside in input)), Punctuated::parse_terminated(&inside)?)
-			} else {
-				let mut all = Punctuated::new();
-				all.push(Target1::Num(Default::default()));
-				all.push(Target1::Size(Default::default()));
-				all.push(Target1::Variant(Default::default()));
-				(None, all)
-			};
-
-			Flag::LittleEndian {
-				kw,
-				paren,
-				targets,
-			}
-		} else if input.peek(kw::max_size) {
-			Flag::MaxSize {
-				kw: input.parse()?,
-				eq: input.parse()?,
-				max: input.parse()?
-			}
-		} else if input.peek(kw::bit_width) {
-			let kw1 = input.parse()?;
-			let eq = input.parse()?;
-			let width: LitInt = input.parse()?;
-
-			let width_span = width.span();
-
-			let width = match width.base10_parse::<u8>()? {
-				8 => BitWidth::Bit8(width_span),
-				16 => BitWidth::Bit16(width_span),
-				32 => BitWidth::Bit32(width_span),
-				64 => BitWidth::Bit64(width_span),
-				128 => BitWidth::Bit128(width_span),
-				_ => return Err(Error::new(input.span(), "The only allowed bit widths are 8, 16, 32, 64 and 128"))
-			};
-
-			let (paren, targets) = if input.peek(Paren) {
-				let inside;
-				(Some(parenthesized!(inside in input)), Punctuated::parse_terminated(&inside)?)
-			} else {
-				let mut all = Punctuated::new();
-				all.push(Target2::Size(Default::default()));
-				all.push(Target2::Variant(Default::default()));
-				(None, all)
-			};
-
-			Flag::BitWidth {
-				kw: kw1,
-				eq,
-				width,
-				paren,
-				targets,
 			}
 		} else if input.peek(kw::validate) {
 			return Err(Error::new(input.span(), "Still unimplemeted!"))
@@ -491,7 +409,7 @@ struct Ende {
 	paren: Paren,
 	ende: EndeFragment,
 	comma: Option<Comma>,
-	flag: Punctuated<Flag, Comma>
+	flag: Punctuated<Flag, Semi>
 }
 
 impl Parse for Ende {
@@ -547,72 +465,58 @@ impl Ende {
 	}
 }
 
-fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> (TokenStream2, TokenStream2) {
+fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(TokenStream2, TokenStream2), TokenStream2> {
 	let dollar_crate = dollar_crate(ENDE);
     let mut aggregate = TokenStream2::new();
 
 	let mut found = false;
 	for flag in attrs.iter() {
-		let middle = match &flag {
-			Flag::FixedInt { targets, .. } => {
-				let mut aggregated = TokenStream2::new();
+		let middle = match flag {
+			Flag::ModifierList { target, modifiers, .. } => {
+				let mut aggregate = TokenStream2::new();
+				for modifier in modifiers.iter() {
+					aggregate.append_all(match &modifier {
+						Modifier::FixedInt(_) => {quote!(
+							#source.options.#target.num_encoding = #dollar_crate::NumEncoding::FixedInt;
+						)}
+						Modifier::Leb128Int(_) => {quote!(
+							#source.options.#target.num_encoding = #dollar_crate::NumEncoding::Leb128Int;
+						)}
+						Modifier::BigEndian(_) => {quote!(
+							#source.options.#target.endianness = #dollar_crate::Endianness::BigEndian;
+						)}
+						Modifier::LittleEndian(_) => {quote!(
+							#source.options.#target.endianness = #dollar_crate::Endianness::BigEndian;
+						)}
+						Modifier::MaxSize { max, .. } => {
+							match target {
+								Target::Size(_) => {}
+								_ => make_error!(??? target.span(), r#"Only "size" allowed in conjunction with "max""#)
+							}
 
-				for target in targets.iter() {
-					aggregated.append_all(quote!(
-						 #source.options.#target.num_encoding = #dollar_crate::NumEncoding::FixedInt;
-					));
-				}
-				aggregated
-			}
-			Flag::Leb128Int { targets, .. } => {
-				let mut aggregated = TokenStream2::new();
+							quote!(
+							#source.options.size_repr.max_size = { #max };
+						)}
+						Modifier::BitWidth(width) => {
+							match target {
+								Target::Num(_) => make_error!(??? target.span(), r#"Bit width is only allowed in conjuction with "size" or "variant""#),
+								_ => {}
+							}
 
-				for target in targets.iter() {
-					aggregated.append_all(quote!(
-						 #source.options.#target.num_encoding = #dollar_crate::NumEncoding::Leb128Int;
-					));
+							let width = match width {
+								BitWidth::Bit8(x) => quote_spanned!(x.span()=>Bit8),
+								BitWidth::Bit16(x) => quote_spanned!(x.span()=>Bit16),
+								BitWidth::Bit32(x) => quote_spanned!(x.span()=>Bit32),
+								BitWidth::Bit64(x) => quote_spanned!(x.span()=>Bit64),
+								BitWidth::Bit128(x) => quote_spanned!(x.span()=>Bit128),
+							};
+							quote!(
+								#source.options.#target.width = #dollar_crate::BitWidth::#width;
+							)
+						}
+					});
 				}
-				aggregated
-			}
-			Flag::BigEndian { targets, .. } => {
-				let mut aggregated = TokenStream2::new();
-
-				for target in targets.iter() {
-					aggregated.append_all(quote!(
-						 #source.options.#target.endianness = #dollar_crate::Endianness::BigEndian;
-					));
-				}
-				aggregated
-			}
-			Flag::LittleEndian { targets, .. } => {
-				let mut aggregated = TokenStream2::new();
-
-				for target in targets.iter() {
-					aggregated.append_all(quote!(
-						 #source.options.#target.endianness = #dollar_crate::Endianness::LittleEndian;
-					));
-				}
-				aggregated
-			}
-			Flag::MaxSize { max, .. } => {quote!(
-				#source.options.size_repr.max_size = { #max };
-			)}
-			Flag::BitWidth { width, targets, .. } => {
-				let width = match width {
-					BitWidth::Bit8(x) => quote_spanned!(*x=>Bit8),
-					BitWidth::Bit16(x) => quote_spanned!(*x=>Bit16),
-					BitWidth::Bit32(x) => quote_spanned!(*x=>Bit32),
-					BitWidth::Bit64(x) => quote_spanned!(*x=>Bit64),
-					BitWidth::Bit128(x) => quote_spanned!(*x=>Bit128),
-				};
-				let mut aggregated = TokenStream2::new();
-
-				for target in targets.iter() {
-					aggregated.append_all(quote!(
-						#source.options.#target.width = #dollar_crate::BitWidth::#width;
-					));
-				}
-				aggregated
+				aggregate
 			}
 			Flag::Flatten { depth, .. } => {
 				let depth = depth.as_ref().map(ToTokens::to_token_stream).unwrap_or(quote!(1u64));
@@ -630,23 +534,23 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> (TokenStrea
 	}
 
 	if !found {
-		return (TokenStream2::new(), TokenStream2::new());
+		return Ok((TokenStream2::new(), TokenStream2::new()));
 	}
 
-	(quote!(
+	Ok((quote!(
 		let #ident: #dollar_crate::BinOptions = #source.options;
 		#aggregate
 	),
 	quote!(
 		#source.options = #ident;
-	))
+	)))
 }
 
-fn gen_encode_fn_call<T: ToTokens>(field: &T, attrs: &[Flag]) -> TokenStream2 {
+fn gen_encode_fn_call<T: ToTokens>(field: &T, attrs: &[Flag]) -> Result<TokenStream2, TokenStream2> {
 	let dollar_crate = dollar_crate(ENDE);
 
 	if attrs.iter().any(Flag::skip) {
-		return quote!();
+		return Ok(quote!());
 	}
 
 	let encode = if let Some(with) = attrs.iter().find(|x| x.with()).and_then(Flag::as_with) {
@@ -669,26 +573,26 @@ fn gen_encode_fn_call<T: ToTokens>(field: &T, attrs: &[Flag]) -> TokenStream2 {
 		&format_ident!("__state"),
 		&format_ident!("__encoder"),
 		attrs
-	);
+	)?;
 
 	if let Some(cond) = attrs.iter().find(|x| x.condition()).and_then(Flag::as_condition) {
-		return quote!(
+		return Ok(quote!(
 			#before
 			if #cond {
 				#encode
 			}
 			#after
-		)
+		))
 	}
 
-	quote!(
+	Ok(quote!(
 		#before
 		#encode
 		#after
-	)
+	))
 }
 
-fn gen_decode_fn_call(attrs: &[Flag]) -> TokenStream2 {
+fn gen_decode_fn_call(attrs: &[Flag]) -> Result<TokenStream2, TokenStream2> {
 	let dollar_crate = dollar_crate(ENDE);
 
 	let default = if let Some(default) = attrs.iter().find(|x| x.default()).and_then(Flag::as_default) {
@@ -698,7 +602,7 @@ fn gen_decode_fn_call(attrs: &[Flag]) -> TokenStream2 {
 	};
 
 	if attrs.iter().any(Flag::skip) {
-		return default;
+		return Ok(default);
 	}
 
 	let decode = if let Some(with) = attrs.iter().find(|x| x.with()).and_then(Flag::as_with) {
@@ -721,10 +625,10 @@ fn gen_decode_fn_call(attrs: &[Flag]) -> TokenStream2 {
 		&format_ident!("__state"),
 		&format_ident!("__decoder"),
 		attrs
-	);
+	)?;
 
 	if let Some(cond) = attrs.iter().find(|x| x.condition()).and_then(Flag::as_condition) {
-		return quote!(
+		return Ok(quote!(
 			#before
 			let __val = if #cond {
 				#decode
@@ -733,15 +637,15 @@ fn gen_decode_fn_call(attrs: &[Flag]) -> TokenStream2 {
 			};
 			#after
 			__val
-		)
+		))
 	}
 
-	quote!(
+	Ok(quote!(
 		#before
 		let __val = #decode;
 		#after
 		__val
-	)
+	))
 }
 
 fn derive_struct_encode(struct_data: &DataStruct) -> Result<TokenStream2, TokenStream2> {
@@ -757,7 +661,7 @@ fn derive_struct_encode(struct_data: &DataStruct) -> Result<TokenStream2, TokenS
 				ref_code.append_all(quote!(
 					let ref #field_name = self.#field_name;
 				));
-				let encode = gen_encode_fn_call(field_name, &attrs);
+				let encode = gen_encode_fn_call(field_name, &attrs)?;
 				fields_code.append_all(quote!( { #encode } ));
 			}
 
@@ -778,7 +682,7 @@ fn derive_struct_encode(struct_data: &DataStruct) -> Result<TokenStream2, TokenS
 				ref_code.append_all(quote!(
 					let ref #field_name = self.#field_accessor;
 				));
-				let encode = gen_encode_fn_call(&field_name, &attrs);
+				let encode = gen_encode_fn_call(&field_name, &attrs)?;
 				fields_code.append_all(quote!( { #encode } ));
 			}
 
@@ -806,7 +710,7 @@ fn derive_struct_decode(struct_data: &DataStruct, reset_state: &TokenStream2) ->
 
 				let attrs = Ende::from_attributes(&field.attrs, false)?;
 
-				let decode = gen_decode_fn_call(&attrs);
+				let decode = gen_decode_fn_call(&attrs)?;
 				fields_code.append_all(quote!(
 					let #field_name: #field_type = {
 						#ref_code
@@ -840,7 +744,7 @@ fn derive_struct_decode(struct_data: &DataStruct, reset_state: &TokenStream2) ->
 				let ref field_type = field.ty;
 				let attrs = Ende::from_attributes(&field.attrs, false)?;
 
-				let decode = gen_decode_fn_call(&attrs);
+				let decode = gen_decode_fn_call(&attrs)?;
 				fields_code.append_all(quote!(
 					let #field_name: #field_type = {
 						#ref_code
@@ -897,7 +801,7 @@ fn derive_variant_encode(variant: &Variant, idx: &Ident, uvariant: bool) -> Resu
 				match_code.append_all(quote!(
 					#field_name,
 				));
-				let encode = gen_encode_fn_call(field_name, &attrs);
+				let encode = gen_encode_fn_call(field_name, &attrs)?;
 				fields_code.append_all(quote!( { #encode } ));
 			}
 
@@ -919,7 +823,7 @@ fn derive_variant_encode(variant: &Variant, idx: &Ident, uvariant: bool) -> Resu
 				match_code.append_all(quote!(
 					#field_accessor,
 				));
-				let encode = gen_encode_fn_call(&field_accessor, &attrs);
+				let encode = gen_encode_fn_call(&field_accessor, &attrs)?;
 				fields_code.append_all(quote!( { #encode } ));
 			}
 
@@ -954,7 +858,7 @@ fn derive_variant_decode(variant: &Variant, idx: &Ident, reset_state: &TokenStre
 				let ref field_type = field.ty;
 				let attrs = Ende::from_attributes(&field.attrs, false)?;
 
-				let decode = gen_decode_fn_call(&attrs);
+				let decode = gen_decode_fn_call(&attrs)?;
 				fields_code.append_all(quote!(
 					let #field_name: #field_type = {
 						#ref_code
@@ -990,7 +894,7 @@ fn derive_variant_decode(variant: &Variant, idx: &Ident, reset_state: &TokenStre
 				let ref field_type = field.ty;
 				let attrs = Ende::from_attributes(&field.attrs, false)?;
 
-				let decode = gen_decode_fn_call(&attrs);
+				let decode = gen_decode_fn_call(&attrs)?;
 				fields_code.append_all(quote!(
 					let #field_name: #field_type = {
 						#ref_code
@@ -1115,7 +1019,7 @@ fn do_derive(input: &DeriveInput, is_encode: bool) -> Result<TokenStream2, Token
 			format_ident!("__decoder")
 		},
 		&attrs
-	);
+	)?;
 
 	Ok(match input.data {
 		Data::Struct(ref struct_data) => {
@@ -1191,7 +1095,7 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
 	).into()
 }
 
-#[proc_macro_derive(Decode, attributes(ende))]
+#[proc_macro_derive(Decode, attributes())]
 pub fn decode(input: TokenStream1) -> TokenStream1 {
 	let dollar_crate = dollar_crate(ENDE);
 	let input = parse_macro_input!(input as DeriveInput);

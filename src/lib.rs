@@ -141,7 +141,7 @@ impl BinOptions {
 			flatten: 0
 		}
 	}
-	
+
 	pub fn flatten(&mut self) -> bool {
 		if self.flatten == 0 {
 			false

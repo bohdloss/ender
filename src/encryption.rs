@@ -46,7 +46,7 @@ impl Decode for RsaBlock<4096> {
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
-#[ende(bit_width = 8)]
+#[ende(variant: 8)]
 pub enum AesBits {
 	#[display("128")]
 	N128,
@@ -58,7 +58,7 @@ pub enum AesBits {
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
-#[ende(bit_width = 8)]
+#[ende(variant: 8)]
 pub enum AesMode {
 	#[display("ECB")]
 	Ecb,
@@ -67,7 +67,7 @@ pub enum AesMode {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
-#[ende(bit_width = 8)]
+#[ende(variant: 8)]
 pub enum Encryption {
 	#[display("no encryption")]
 	None,

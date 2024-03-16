@@ -3,17 +3,16 @@ use std::io::{Seek, Write};
 use crate::{BinOptions, BinStream, Decode, Encode, NumEncoding};
 
 #[derive(Encode, Decode)]
-#[ende(little_endian)]
+#[ende(num: little_endian)]
 pub struct StructStruct {
 	#[ende(skip)]
 	value1: u64,
 	value2: f64,
-	#[ende(flatten)]
 	unit: ()
 }
 
 #[derive(Encode, Decode)]
-#[ende(little_endian)]
+#[ende(num: little_endian)]
 pub struct TupleStruct(
 	#[ende(skip)]
 	u64,
@@ -21,12 +20,11 @@ pub struct TupleStruct(
 );
 
 #[derive(Encode, Decode)]
-#[ende(little_endian)]
 pub struct UnitStruct;
 
 #[derive(Encode, Decode)]
 #[repr(isize)]
-#[ende(bit_width = 64)]
+#[ende(size: 64; variant: 64)]
 pub enum Enum {
 	StructVariant {
 		value1: u64,
@@ -41,22 +39,19 @@ pub enum Enum {
 }
 
 #[derive(Encode, Decode)]
-#[ende(little_endian)]
 pub struct EmptyStructStruct {}
 
 #[derive(Encode, Decode)]
-#[ende(little_endian)]
 pub struct EmptyTupleStruct();
 
 #[derive(Encode, Decode)]
-#[ende(little_endian)]
+#[ende(variant: little_endian)]
 pub enum EmptyVariantEnum {
 	StructVariant {},
 	TupleVariant()
 }
 
 #[derive(Encode, Decode)]
-#[ende(little_endian)]
 pub enum EmptyEnum {
 }
 
