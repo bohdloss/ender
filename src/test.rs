@@ -8,6 +8,7 @@ pub struct StructStruct {
 	#[ende(skip)]
 	value1: u64,
 	value2: f64,
+	#[ende(flatten)]
 	unit: ()
 }
 

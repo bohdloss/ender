@@ -1,6 +1,11 @@
 #[cfg(test)]
 mod test;
 
+#[cfg(feature = "encryption")]
+pub mod encryption;
+#[cfg(feature = "compression")]
+pub mod compression;
+
 use std::ffi::{CStr, CString, FromVecWithNulError};
 use std::io;
 use std::io::{Read, Write};
@@ -10,6 +15,7 @@ use array_init::array_init;
 use thiserror::Error;
 
 pub use ende_derive::{Encode, Decode};
+use parse_display::Display;
 
 pub fn encode_with<T: Write, V: Encode>(writer: T, options: BinOptions, value: V) -> EncodingResult<()> {
 	let mut stream = BinStream::new(writer, options);
@@ -21,21 +27,21 @@ pub fn decode_with<T: Read, V: Decode>(reader: T, options: BinOptions) -> Encodi
 	V::decode(&mut stream)
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[repr(u8)]
 pub enum Endianness {
 	LittleEndian,
 	BigEndian
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[repr(u8)]
 pub enum NumEncoding {
 	FixedInt,
 	Leb128Int
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[repr(u8)]
 pub enum BitWidth {
 	Bit8,
@@ -45,14 +51,15 @@ pub enum BitWidth {
 	Bit128
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[display("endianness = {endianness}, encoding = {num_encoding}")]
 pub struct NumRepr {
 	pub endianness: Endianness,
 	pub num_encoding: NumEncoding,
 }
 
-impl Default for NumRepr {
-	fn default() -> Self {
+impl NumRepr {
+	pub const fn new() -> Self {
 		Self {
 			endianness: Endianness::LittleEndian,
 			num_encoding: NumEncoding::FixedInt
@@ -60,7 +67,14 @@ impl Default for NumRepr {
 	}
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+impl Default for NumRepr {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[display("endianness = {endianness} , encoding = {num_encoding}, bit_width = {width}, max_size = {max_size}")]
 pub struct SizeRepr {
 	pub endianness: Endianness,
 	pub num_encoding: NumEncoding,
@@ -68,8 +82,8 @@ pub struct SizeRepr {
 	pub max_size: usize
 }
 
-impl Default for SizeRepr {
-	fn default() -> Self {
+impl SizeRepr {
+	pub const fn new() -> Self {
 		Self {
 			endianness: Endianness::LittleEndian,
 			num_encoding: NumEncoding::FixedInt,
@@ -79,15 +93,22 @@ impl Default for SizeRepr {
 	}
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+impl Default for SizeRepr {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[display("endianness = {endianness} , encoding = {num_encoding}, bit_width = {width}")]
 pub struct VariantRepr {
 	pub endianness: Endianness,
 	pub num_encoding: NumEncoding,
 	pub width: BitWidth
 }
 
-impl Default for VariantRepr {
-	fn default() -> Self {
+impl VariantRepr {
+	pub const fn new() -> Self {
 		Self {
 			endianness: Endianness::LittleEndian,
 			num_encoding: NumEncoding::FixedInt,
@@ -96,7 +117,14 @@ impl Default for VariantRepr {
 	}
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+impl Default for VariantRepr {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[display("num_repr = ({num_repr}), size_repr = ({size_repr}), variant_repr = ({variant_repr})")]
 pub struct BinOptions {
 	pub num_repr: NumRepr,
 	pub size_repr: SizeRepr,
@@ -105,6 +133,15 @@ pub struct BinOptions {
 }
 
 impl BinOptions {
+	pub const fn new() -> Self {
+		Self {
+			num_repr: NumRepr::new(),
+			size_repr: SizeRepr::new(),
+			variant_repr: VariantRepr::new(),
+			flatten: 0
+		}
+	}
+	
 	pub fn flatten(&mut self) -> bool {
 		if self.flatten == 0 {
 			false
@@ -117,12 +154,7 @@ impl BinOptions {
 
 impl Default for BinOptions {
 	fn default() -> Self {
-		Self {
-			num_repr: NumRepr::default(),
-			size_repr: SizeRepr::default(),
-			variant_repr: VariantRepr::default(),
-			flatten: 0
-		}
+		Self::new()
 	}
 }
 
@@ -540,7 +572,14 @@ pub enum EncodingError {
 	InvalidVariant,
 	#[cfg(feature = "serde")]
 	#[error("Serde error occurred: {0}")]
-	SerdeError(String)
+	SerdeError(String),
+	#[cfg(feature = "encryption")]
+	#[error("Cryptographic error: {0}")]
+	EncryptionError(
+		#[source]
+		#[from]
+		encryption::CryptoError
+	)
 }
 
 pub type EncodingResult<T> = Result<T, EncodingError>;
