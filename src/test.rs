@@ -4,6 +4,7 @@ use crate::{BinOptions, BinStream, Decode, Encode, NumEncoding};
 
 #[derive(Encode, Decode)]
 #[ende(num: little_endian)]
+#[allow(unused)]
 pub struct StructStruct {
 	#[ende(skip)]
 	value1: u64,
@@ -13,6 +14,7 @@ pub struct StructStruct {
 
 #[derive(Encode, Decode)]
 #[ende(num: little_endian)]
+#[allow(unused)]
 pub struct TupleStruct(
 	#[ende(skip)]
 	u64,

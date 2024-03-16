@@ -570,6 +570,8 @@ pub enum EncodingError {
 	),
 	#[error("Unrecognized enum variant")]
 	InvalidVariant,
+	#[error("Validation error: {0}")]
+	ValidationError(String),
 	#[cfg(feature = "serde")]
 	#[error("Serde error occurred: {0}")]
 	SerdeError(String),

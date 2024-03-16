@@ -1,12 +1,10 @@
-#![allow(unused)]
-
 use proc_macro::{TokenStream as TokenStream1};
 use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned, TokenStreamExt, ToTokens};
-use syn::{Attribute, Data, DataEnum, DataStruct, DeriveInput, Expr, Fields, LitInt, parse_macro_input, token, Type, Variant};
+use syn::{Attribute, Data, DataEnum, DataStruct, DeriveInput, Expr, Fields, LitInt, LitStr, parse_macro_input, token, Type, Variant};
 use syn::{Token, parenthesized, Error};
-use syn::token::{Paren, Comma, If, Else, As, For, Semi};
-use syn::parse::{Parse, ParseStream, Peek};
+use syn::token::{Paren, Comma, If, Semi};
+use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
@@ -108,6 +106,7 @@ enum BitWidth {
 }
 
 impl BitWidth {
+	#[allow(unused)]
 	fn span(&self) -> Span {
 		match self {
 			BitWidth::Bit8(x) => x.span(),
@@ -190,6 +189,7 @@ enum Modifier {
 }
 
 impl Modifier {
+	#[allow(unused)]
 	fn span(&self) -> Span {
 		match self {
 			Self::FixedInt(x) => x.span,
@@ -253,7 +253,10 @@ enum Flag {
 	Validate {
 		kw: kw::validate,
 		eq: token::Eq,
-		expr: Expr
+		expr: Expr,
+		comma: Option<Comma>,
+		format: Option<LitStr>,
+		fmt_args: Punctuated<Expr, Comma>
 	},
 	ModifierList {
 		target: Target,
@@ -263,6 +266,7 @@ enum Flag {
 }
 
 impl Flag {
+	#[allow(unused)]
 	fn span(&self) -> Span {
 		match self {
 			Flag::Serde(x) => x.span,
@@ -311,6 +315,13 @@ impl Flag {
 		}
 	}
 
+	fn validate(&self) -> bool {
+		match self {
+			Flag::Validate { .. } => true,
+			_ => false
+		}
+	}
+
 	fn as_condition(&self) -> Option<&Expr> {
 		match self {
 			Flag::If { condition, .. } => Some(condition),
@@ -328,6 +339,13 @@ impl Flag {
 	fn as_with(&self) -> Option<&Expr> {
 		match self {
 			Flag::With { with, .. } => Some(with),
+			_ => None
+		}
+	}
+
+	fn as_validate(&self) -> Option<(&Expr, Option<&LitStr>, &Punctuated<Expr, Comma>)> {
+		match self {
+			Flag::Validate { expr, format, fmt_args, .. } => Some((expr, format.as_ref(), fmt_args)),
 			_ => None
 		}
 	}
@@ -364,7 +382,34 @@ impl Parse for Flag {
 				with: input.parse()?
 			}
 		} else if input.peek(kw::validate) {
-			return Err(Error::new(input.span(), "Still unimplemeted!"))
+			let kw = input.parse()?;
+			let eq = input.parse()?;
+			let expr = input.parse()?;
+
+			let (comma, format, fmt_args) = if input.peek(Comma) {
+				let comma = input.parse()?;
+				let format = input.parse()?;
+
+				let fmt_args = if input.peek(Comma) {
+					input.parse::<Comma>()?;
+					Punctuated::parse_separated_nonempty(input)?
+				} else {
+					Punctuated::new()
+				};
+
+				(Some(comma), Some(format), fmt_args)
+			} else {
+				(None, None, Punctuated::new())
+			};
+
+			Flag::Validate {
+				kw,
+				eq,
+				expr,
+				comma,
+				format,
+				fmt_args,
+			}
 		} else if input.peek(kw::flatten) {
 			let kw = input.parse()?;
 			let (eq, depth) = if input.peek(token::Eq) {
@@ -463,6 +508,37 @@ impl Ende {
 
 		Ok(transformed)
 	}
+
+	fn ref_code_needed(attrs: &[Flag]) -> bool {
+		attrs.iter().any(|x|
+			x.condition() ||
+				x.default() ||
+				x.with()
+		)
+	}
+}
+
+fn gen_validation_code(ref_code: Option<&TokenStream2>, attrs: &[Flag]) -> Result<Option<TokenStream2>, TokenStream2> {
+	let dollar_crate = dollar_crate(ENDE);
+	Ok(if let Some((cond, format, fmt_args)) = attrs.iter().find(|x| x.validate()).and_then(Flag::as_validate) {
+		let format_code = if let Some(format) = format {
+			let fmt_args = fmt_args.iter();
+			quote!(format!(#format, #(#fmt_args),*))
+		} else {
+			quote!(format!("Assertion failed"))
+		};
+
+		Some(quote!(
+			{
+				#ref_code
+				if !{ #cond } {
+					return Err(#dollar_crate::EncodingError::ValidationError(#format_code));
+				}
+			}
+		))
+	} else {
+		None
+	})
 }
 
 fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(TokenStream2, TokenStream2), TokenStream2> {
@@ -546,7 +622,7 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 	)))
 }
 
-fn gen_encode_fn_call<T: ToTokens>(field: &T, attrs: &[Flag]) -> Result<TokenStream2, TokenStream2> {
+fn gen_encode_fn_call(field: TokenStream2, attrs: &[Flag]) -> Result<TokenStream2, TokenStream2> {
 	let dollar_crate = dollar_crate(ENDE);
 
 	if attrs.iter().any(Flag::skip) {
@@ -653,6 +729,7 @@ fn derive_struct_encode(struct_data: &DataStruct) -> Result<TokenStream2, TokenS
 		Fields::Named(ref fields) => {
 			let mut ref_code = TokenStream2::new();
 			let mut fields_code = TokenStream2::new();
+			let mut ref_needed = false;
 
 			for field in fields.named.iter() {
 				let attrs = Ende::from_attributes(&field.attrs, true)?;
@@ -661,10 +738,16 @@ fn derive_struct_encode(struct_data: &DataStruct) -> Result<TokenStream2, TokenS
 				ref_code.append_all(quote!(
 					let ref #field_name = self.#field_name;
 				));
-				let encode = gen_encode_fn_call(field_name, &attrs)?;
-				fields_code.append_all(quote!( { #encode } ));
+				let encode = gen_encode_fn_call(quote!(&self.#field_name), &attrs)?;
+				let validate = gen_validation_code(Some(&ref_code), &attrs)?;
+				ref_needed |= Ende::ref_code_needed(&attrs);
+				fields_code.append_all(quote!(
+					#validate
+					{ #encode }
+				));
 			}
 
+			let ref_code = ref_needed.then_some(ref_code);
 			quote!(
 				#ref_code
 				#fields_code
@@ -673,6 +756,7 @@ fn derive_struct_encode(struct_data: &DataStruct) -> Result<TokenStream2, TokenS
 		Fields::Unnamed(ref fields) => {
 			let mut ref_code = TokenStream2::new();
 			let mut fields_code = TokenStream2::new();
+			let mut ref_needed = false;
 
 			for (field_index, field) in fields.unnamed.iter().enumerate() {
 				let attrs = Ende::from_attributes(&field.attrs, true)?;
@@ -682,10 +766,16 @@ fn derive_struct_encode(struct_data: &DataStruct) -> Result<TokenStream2, TokenS
 				ref_code.append_all(quote!(
 					let ref #field_name = self.#field_accessor;
 				));
-				let encode = gen_encode_fn_call(&field_name, &attrs)?;
-				fields_code.append_all(quote!( { #encode } ));
+				let encode = gen_encode_fn_call(quote!(&self.#field_accessor), &attrs)?;
+				let validate = gen_validation_code(Some(&ref_code), &attrs)?;
+				ref_needed |= Ende::ref_code_needed(&attrs);
+				fields_code.append_all(quote!(
+					#validate
+					{ #encode }
+				));
 			}
 
+			let ref_code = ref_needed.then_some(ref_code);
 			quote!(
 				#ref_code
 				#fields_code
@@ -697,7 +787,7 @@ fn derive_struct_encode(struct_data: &DataStruct) -> Result<TokenStream2, TokenS
 	})
 }
 
-fn derive_struct_decode(struct_data: &DataStruct, reset_state: &TokenStream2) -> Result<TokenStream2, TokenStream2> {
+fn derive_struct_decode(struct_data: &DataStruct, pre_return: &TokenStream2) -> Result<TokenStream2, TokenStream2> {
 	Ok(match struct_data.fields {
 		Fields::Named(ref fields) => {
 			let mut fields_code = TokenStream2::new();
@@ -711,9 +801,10 @@ fn derive_struct_decode(struct_data: &DataStruct, reset_state: &TokenStream2) ->
 				let attrs = Ende::from_attributes(&field.attrs, false)?;
 
 				let decode = gen_decode_fn_call(&attrs)?;
+				let maybe_ref_code = Ende::ref_code_needed(&attrs).then_some(&ref_code);
 				fields_code.append_all(quote!(
 					let #field_name: #field_type = {
-						#ref_code
+						#maybe_ref_code
 						#decode
 					};
 				));
@@ -723,12 +814,14 @@ fn derive_struct_decode(struct_data: &DataStruct, reset_state: &TokenStream2) ->
 				ref_code.append_all(quote!(
 					let ref #field_name = #field_name;
 				));
+				let validate = gen_validation_code(Some(&ref_code), &attrs)?;
+				fields_code.append_all(validate);
 			}
 
 			quote!(
 				#fields_code
 
-				#reset_state
+				#pre_return
 				Ok(Self {
 					#aggregate_code
 				})
@@ -745,9 +838,10 @@ fn derive_struct_decode(struct_data: &DataStruct, reset_state: &TokenStream2) ->
 				let attrs = Ende::from_attributes(&field.attrs, false)?;
 
 				let decode = gen_decode_fn_call(&attrs)?;
+				let maybe_ref_code = Ende::ref_code_needed(&attrs).then_some(&ref_code);
 				fields_code.append_all(quote!(
 					let #field_name: #field_type = {
-						#ref_code
+						#maybe_ref_code
 						#decode
 					};
 				));
@@ -757,12 +851,14 @@ fn derive_struct_decode(struct_data: &DataStruct, reset_state: &TokenStream2) ->
 				ref_code.append_all(quote!(
 					let ref #field_name = #field_name;
 				));
+				let validate = gen_validation_code(Some(&ref_code), &attrs)?;
+				fields_code.append_all(validate);
 			}
 
 			quote!(
 				#fields_code
 
-				#reset_state
+				#pre_return
 				Ok(Self(
 					#aggregate_code
 				))
@@ -770,7 +866,7 @@ fn derive_struct_decode(struct_data: &DataStruct, reset_state: &TokenStream2) ->
 		}
 		Fields::Unit => {
 			quote!(
-				#reset_state
+				#pre_return
 				Ok(Self)
 			)
 		}
@@ -801,8 +897,12 @@ fn derive_variant_encode(variant: &Variant, idx: &Ident, uvariant: bool) -> Resu
 				match_code.append_all(quote!(
 					#field_name,
 				));
-				let encode = gen_encode_fn_call(field_name, &attrs)?;
-				fields_code.append_all(quote!( { #encode } ));
+				let encode = gen_encode_fn_call(quote!(#field_name), &attrs)?;
+				let validate = gen_validation_code(None, &attrs)?;
+				fields_code.append_all(quote!(
+					#validate
+					{ #encode }
+				));
 			}
 
 			quote!(
@@ -817,14 +917,18 @@ fn derive_variant_encode(variant: &Variant, idx: &Ident, uvariant: bool) -> Resu
 			let mut fields_code = TokenStream2::new();
 
 			for (field_index, field) in fields.unnamed.iter().enumerate() {
-				let field_accessor = format_ident!("m{}", field_index);
+				let field_name = format_ident!("m{}", field_index);
 				let attrs = Ende::from_attributes(&field.attrs, true)?;
 
 				match_code.append_all(quote!(
-					#field_accessor,
+					#field_name,
 				));
-				let encode = gen_encode_fn_call(&field_accessor, &attrs)?;
-				fields_code.append_all(quote!( { #encode } ));
+				let encode = gen_encode_fn_call(quote!(#field_name), &attrs)?;
+				let validate = gen_validation_code(None, &attrs)?;
+				fields_code.append_all(quote!(
+					#validate
+					{ #encode }
+				));
 			}
 
 			quote!(
@@ -844,7 +948,7 @@ fn derive_variant_encode(variant: &Variant, idx: &Ident, uvariant: bool) -> Resu
 	})
 }
 
-fn derive_variant_decode(variant: &Variant, idx: &Ident, reset_state: &TokenStream2) -> Result<TokenStream2, TokenStream2> {
+fn derive_variant_decode(variant: &Variant, idx: &Ident, pre_return: &TokenStream2) -> Result<TokenStream2, TokenStream2> {
 	let ref variant_name = variant.ident;
 
 	Ok(match variant.fields {
@@ -859,9 +963,10 @@ fn derive_variant_decode(variant: &Variant, idx: &Ident, reset_state: &TokenStre
 				let attrs = Ende::from_attributes(&field.attrs, false)?;
 
 				let decode = gen_decode_fn_call(&attrs)?;
+				let maybe_ref_code = Ende::ref_code_needed(&attrs).then_some(&ref_code);
 				fields_code.append_all(quote!(
 					let #field_name: #field_type = {
-						#ref_code
+						#maybe_ref_code
 						#decode
 					};
 				));
@@ -871,13 +976,15 @@ fn derive_variant_decode(variant: &Variant, idx: &Ident, reset_state: &TokenStre
 				ref_code.append_all(quote!(
 					let ref #field_name = #field_name;
 				));
+				let validate = gen_validation_code(Some(&ref_code), &attrs)?;
+				fields_code.append_all(validate);
 			}
 
 			quote!(
 				#idx => {
 					#fields_code
 
-					#reset_state
+					#pre_return
 					Self::#variant_name {
 						#aggregate_code
 					}
@@ -895,9 +1002,10 @@ fn derive_variant_decode(variant: &Variant, idx: &Ident, reset_state: &TokenStre
 				let attrs = Ende::from_attributes(&field.attrs, false)?;
 
 				let decode = gen_decode_fn_call(&attrs)?;
+				let maybe_ref_code = Ende::ref_code_needed(&attrs).then_some(&ref_code);
 				fields_code.append_all(quote!(
 					let #field_name: #field_type = {
-						#ref_code
+						#maybe_ref_code
 						#decode
 					};
 				));
@@ -907,13 +1015,15 @@ fn derive_variant_decode(variant: &Variant, idx: &Ident, reset_state: &TokenStre
 				ref_code.append_all(quote!(
 					let ref #field_name = #field_name;
 				));
+				let validate = gen_validation_code(Some(&ref_code), &attrs)?;
+				fields_code.append_all(validate);
 			}
 
 			quote!(
 				#idx => {
 					#fields_code
 
-					#reset_state
+					#pre_return
 					Self::#variant_name (
 						#aggregate_code
 					)
@@ -923,7 +1033,7 @@ fn derive_variant_decode(variant: &Variant, idx: &Ident, reset_state: &TokenStre
 		Fields::Unit => {
 			quote!(
 				#idx => {
-					#reset_state
+					#pre_return
 					Self::#variant_name
 				}
 			)
