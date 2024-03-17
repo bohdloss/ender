@@ -160,21 +160,27 @@ impl Default for BinOptions {
 
 pub struct BinStream<T>{
 	pub stream: T,
-	pub options: BinOptions
+	pub options: BinOptions,
+	#[cfg(feature = "encryption")]
+	pub crypto: encryption::CryptoState
 }
 
 impl<T> BinStream<T> {
 	pub fn new(stream: T, options: BinOptions) -> Self {
 		Self {
 			stream,
-			options
+			options,
+			#[cfg(feature = "encryption")]
+			crypto: encryption::CryptoState::new()
 		}
 	}
 	
 	pub fn new_default(stream: T) -> Self {
 		Self {
 			stream,
-			options: Default::default()
+			options: Default::default(),
+			#[cfg(feature = "encryption")]
+			crypto: encryption::CryptoState::new()
 		}
 	}
 

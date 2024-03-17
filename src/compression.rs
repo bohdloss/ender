@@ -130,7 +130,7 @@ pub enum GZipLevel {
 	L9 = 9,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
 pub enum Compression {

@@ -3,46 +3,165 @@ use std::io::{Read, Write};
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
 use openssl::error::ErrorStack;
+use openssl::pkey::{Private, Public};
+use openssl::rsa::{Padding, Rsa};
 use openssl::symm::Cipher;
 use parse_display::Display;
 use thiserror::Error;
-use crate::{Encode, Decode, EncodingResult, BinStream};
+use crate::{Encode, Decode, EncodingResult, BinStream, EncodingError};
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
+#[display("rsa = ({rsa})")]
+pub struct CryptoState {
+	pub rsa: RsaState,
+}
+
+impl CryptoState {
+	pub const fn new() -> Self {
+		Self {
+			rsa: RsaState::new()
+		}
+	}
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
+#[repr(u8)]
+#[ende(variant: 8)]
+#[allow(non_camel_case_types)]
+pub enum RsaPadding {
+	None,
+	PKCS1,
+	PKCS1_OAEP,
+	PKCS1_PSS
+}
+
+impl RsaPadding {
+	fn to_openssl_padding(&self) -> Padding {
+		match self {
+			RsaPadding::None => Padding::NONE,
+			RsaPadding::PKCS1 => Padding::PKCS1,
+			RsaPadding::PKCS1_OAEP => Padding::PKCS1_OAEP,
+			RsaPadding::PKCS1_PSS => Padding::PKCS1_PSS,
+		}
+	}
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
+#[repr(u8)]
+#[ende(variant: 8)]
+pub enum RsaMode {
+	Normal,
+	Reverse
+}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
+#[display("padding: {padding}, mode = {mode}")]
+pub struct RsaState {
+	pub key: Vec<u8>,
+	pub padding: RsaPadding,
+	pub mode: RsaMode,
+}
+
+impl RsaState {
+	pub const fn new() -> Self {
+		Self {
+			key: Vec::new(),
+			padding: RsaPadding::None,
+			mode: RsaMode::Normal,
+		}
+	}
+	
+	pub fn store_key<T: AsRef<[u8]>>(&mut self, bytes: &T) {
+		self.key.clear();
+		for byte in bytes.as_ref() {
+			self.key.push(*byte);
+		}
+	}
+	
+	pub fn get_key(&self) -> &[u8] {
+		&self.key
+	}
+}
 
 pub struct RsaBlock<const BLOCK_SIZE: usize>([u8; BLOCK_SIZE]);
 
+fn rsa_encrypt<const BLOCK_SIZE: usize, T: Write>(encoder: &mut BinStream<T>, data: &[u8; BLOCK_SIZE]) -> EncodingResult<()> {
+	let mut temp = [0u8; BLOCK_SIZE];
+	match encoder.crypto.rsa.mode {
+		RsaMode::Normal => {
+			let rsa: Rsa<Public> = Rsa::public_key_from_der(encoder.crypto.rsa.get_key())
+				.map_err(ese_to_ee)?;
+
+			rsa.public_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
+				.map_err(ese_to_ee)?;
+		}
+		RsaMode::Reverse => {
+			let rsa: Rsa<Private> = Rsa::private_key_from_der(encoder.crypto.rsa.get_key())
+				.map_err(ese_to_ee)?;
+
+			rsa.private_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
+				.map_err(ese_to_ee)?;
+		}
+	}
+	encoder.write_raw_bytes(&temp)
+}
+
+fn rsa_decrypt<const BLOCK_SIZE: usize, T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<[u8; BLOCK_SIZE]> {
+	let mut temp = [0u8; BLOCK_SIZE];
+	let mut data = [0u8; BLOCK_SIZE];
+	decoder.read_raw_bytes(&mut temp)?;
+	match decoder.crypto.rsa.mode {
+		RsaMode::Normal => {
+			let rsa: Rsa<Private> = Rsa::private_key_from_der(decoder.crypto.rsa.get_key())
+				.map_err(ese_to_ee)?;
+
+			rsa.private_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
+				.map_err(ese_to_ee)?;
+		}
+		RsaMode::Reverse => {
+			let rsa: Rsa<Public> = Rsa::public_key_from_der(decoder.crypto.rsa.get_key())
+				.map_err(ese_to_ee)?;
+
+			rsa.public_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
+				.map_err(ese_to_ee)?;
+		}
+	}
+	Ok(data)
+}
+
 impl Encode for RsaBlock<128> {
-	fn encode<T: Write>(&self, _encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		todo!()
+	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
+		rsa_encrypt(encoder, &self.0)
 	}
 }
 
 impl Decode for RsaBlock<128> {
-	fn decode<T: Read>(_decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		todo!()
+	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
+		Ok(Self(rsa_decrypt(decoder)?))
 	}
 }
 
 impl Encode for RsaBlock<256> {
-	fn encode<T: Write>(&self, _encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		todo!()
+	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
+		rsa_encrypt(encoder, &self.0)
 	}
 }
 
 impl Decode for RsaBlock<256> {
-	fn decode<T: Read>(_decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		todo!()
+	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
+		Ok(Self(rsa_decrypt(decoder)?))
 	}
 }
 
 impl Encode for RsaBlock<512> {
-	fn encode<T: Write>(&self, _encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		todo!()
+	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
+		rsa_encrypt(encoder, &self.0)
 	}
 }
 
 impl Decode for RsaBlock<512> {
-	fn decode<T: Read>(_decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		todo!()
+	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
+		Ok(Self(rsa_decrypt(decoder)?))
 	}
 }
 
@@ -80,7 +199,17 @@ pub enum CfbFeedback {
 	N128
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
+impl CfbFeedback {
+	pub fn bits(&self) -> u32 {
+		match self {
+			CfbFeedback::N1 => 1,
+			CfbFeedback::N8 => 8,
+			CfbFeedback::N128 => 128,
+		}
+	}
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
 pub enum AesMode {
@@ -133,7 +262,7 @@ impl AesMode {
 	}
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[ende(variant: 8)]
 pub enum Encryption {
 	#[display("no encryption")]
@@ -376,4 +505,9 @@ pub enum CryptoError {
 		#[from]
 		ErrorStack
 	),
+}
+
+/// Error Stack Error to Encoding Error
+fn ese_to_ee(x: ErrorStack) -> EncodingError {
+	EncodingError::EncryptionError(CryptoError::Generic(x))
 }
