@@ -57,11 +57,93 @@ pub enum ZStdLevel {
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
+pub enum ZLibLevel {
+	#[display("0")]
+	L0 = 0,
+	#[display("1")]
+	L1 = 1,
+	#[display("2")]
+	L2 = 2,
+	#[display("3")]
+	L3 = 3,
+	#[display("4")]
+	L4 = 4,
+	#[display("5")]
+	L5 = 5,
+	#[display("6")]
+	L6 = 6,
+	#[display("7")]
+	L7 = 7,
+	#[display("8")]
+	L8 = 8,
+	#[display("9")]
+	L9 = 9,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
+#[repr(u8)]
+#[ende(variant: 8)]
+pub enum DeflateLevel {
+	#[display("0")]
+	L0 = 0,
+	#[display("1")]
+	L1 = 1,
+	#[display("2")]
+	L2 = 2,
+	#[display("3")]
+	L3 = 3,
+	#[display("4")]
+	L4 = 4,
+	#[display("5")]
+	L5 = 5,
+	#[display("6")]
+	L6 = 6,
+	#[display("7")]
+	L7 = 7,
+	#[display("8")]
+	L8 = 8,
+	#[display("9")]
+	L9 = 9,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
+#[repr(u8)]
+#[ende(variant: 8)]
+pub enum GZipLevel {
+	#[display("1")]
+	L1 = 1,
+	#[display("2")]
+	L2 = 2,
+	#[display("3")]
+	L3 = 3,
+	#[display("4")]
+	L4 = 4,
+	#[display("5")]
+	L5 = 5,
+	#[display("6")]
+	L6 = 6,
+	#[display("7")]
+	L7 = 7,
+	#[display("8")]
+	L8 = 8,
+	#[display("9")]
+	L9 = 9,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
+#[repr(u8)]
+#[ende(variant: 8)]
 pub enum Compression {
 	#[display("no compression")]
 	None,
 	#[display("level {0} ZStandard compression")]
-	ZStd(ZStdLevel)
+	ZStd(ZStdLevel),
+	#[display("level {0} ZLib compression")]
+	ZLib(ZLibLevel),
+	#[display("level {0} Deflate compression")]
+	Deflate(DeflateLevel),
+	#[display("level {0} GZip compression")]
+	GZip(GZipLevel),
 }
 
 impl Compression {
@@ -78,6 +160,27 @@ impl Compression {
 			_ => false
 		}
 	}
+
+	pub fn is_zlib(&self) -> bool {
+		match self {
+			Compression::ZLib(..) => true,
+			_ => false
+		}
+	}
+
+	pub fn is_deflate(&self) -> bool {
+		match self {
+			Compression::Deflate(..) => true,
+			_ => false
+		}
+	}
+
+	pub fn is_gzip(&self) -> bool {
+		match self {
+			Compression::GZip(..) => true,
+			_ => false
+		}
+	}
 }
 
 impl Compression {
@@ -88,6 +191,15 @@ impl Compression {
 			}
 			Compression::ZStd(level) => {
 				Ok(Compress(CompressInner::ZStd(zstd::stream::write::Encoder::new(input, *level as _)?)))
+			}
+			Compression::ZLib(level) => {
+				Ok(Compress(CompressInner::ZLib(flate2::write::ZlibEncoder::new(input, flate2::Compression::new(*level as _)))))
+			}
+			Compression::Deflate(level) => {
+				Ok(Compress(CompressInner::Deflate(flate2::write::DeflateEncoder::new(input, flate2::Compression::new(*level as _)))))
+			}
+			Compression::GZip(level) => {
+				Ok(Compress(CompressInner::GZip(flate2::write::GzEncoder::new(input, flate2::Compression::new(*level as _)))))
 			}
 		}
 	}
@@ -100,13 +212,25 @@ impl Compression {
 			Compression::ZStd(..) => {
 				Ok(Decompress(DecompressInner::ZStd(zstd::stream::read::Decoder::new(input)?)))
 			}
+			Compression::ZLib(..) => {
+				Ok(Decompress(DecompressInner::ZLib(flate2::read::ZlibDecoder::new(input))))
+			}
+			Compression::Deflate(..) => {
+				Ok(Decompress(DecompressInner::Deflate(flate2::read::DeflateDecoder::new(input))))
+			}
+			Compression::GZip(..) => {
+				Ok(Decompress(DecompressInner::GZip(flate2::read::GzDecoder::new(input))))
+			}
 		}
 	}
 }
 
 enum CompressInner<'a, T: Write> {
 	None(T),
-	ZStd(zstd::stream::write::Encoder<'a, T>)
+	ZStd(zstd::stream::write::Encoder<'a, T>),
+	ZLib(flate2::write::ZlibEncoder<T>),
+	Deflate(flate2::write::DeflateEncoder<T>),
+	GZip(flate2::write::GzEncoder<T>),
 }
 
 impl<T: Write> CompressInner<'_, T> {
@@ -115,6 +239,9 @@ impl<T: Write> CompressInner<'_, T> {
 		match self {
 			CompressInner::None(x) => Ok(x),
 			CompressInner::ZStd(x) => Ok(x.finish()?),
+			CompressInner::ZLib(x) => Ok(x.finish()?),
+			CompressInner::Deflate(x) => Ok(x.finish()?),
+			CompressInner::GZip(x) => Ok(x.finish()?),
 		}
 	}
 }
@@ -125,6 +252,9 @@ impl<T: Write> Write for CompressInner<'_, T> {
 		match self {
 			CompressInner::None(x) => x.write(buf),
 			CompressInner::ZStd(x) => x.write(buf),
+			CompressInner::ZLib(x) => x.write(buf),
+			CompressInner::Deflate(x) => x.write(buf),
+			CompressInner::GZip(x) => x.write(buf),
 		}
 	}
 	#[inline]
@@ -132,6 +262,9 @@ impl<T: Write> Write for CompressInner<'_, T> {
 		match self {
 			CompressInner::None(x) => x.flush(),
 			CompressInner::ZStd(x) => x.flush(),
+			CompressInner::ZLib(x) => x.flush(),
+			CompressInner::Deflate(x) => x.flush(),
+			CompressInner::GZip(x) => x.flush(),
 		}
 	}
 }
@@ -159,7 +292,10 @@ impl<T: Write> Write for Compress<'_, T> {
 
 enum DecompressInner<'a, T: Read> {
 	None(T),
-	ZStd(zstd::stream::read::Decoder<'a, BufReader<T>>)
+	ZStd(zstd::stream::read::Decoder<'a, BufReader<T>>),
+	ZLib(flate2::read::ZlibDecoder<T>),
+	Deflate(flate2::read::DeflateDecoder<T>),
+	GZip(flate2::read::GzDecoder<T>),
 }
 
 impl<T: Read> DecompressInner<'_ ,T> {
@@ -168,6 +304,9 @@ impl<T: Read> DecompressInner<'_ ,T> {
 		match self {
 			DecompressInner::None(x) => Ok(x),
 			DecompressInner::ZStd(x) => Ok(x.finish().into_inner()),
+			DecompressInner::ZLib(x) => Ok(x.into_inner()),
+			DecompressInner::Deflate(x) => Ok(x.into_inner()),
+			DecompressInner::GZip(x) => Ok(x.into_inner()),
 		}
 	}
 }
@@ -178,6 +317,9 @@ impl<T: Read> Read for DecompressInner<'_, T> {
 		match self {
 			DecompressInner::None(x) => x.read(buf),
 			DecompressInner::ZStd(x) => x.read(buf),
+			DecompressInner::ZLib(x) => x.read(buf),
+			DecompressInner::Deflate(x) => x.read(buf),
+			DecompressInner::GZip(x) => x.read(buf),
 		}
 	}
 }
