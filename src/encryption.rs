@@ -71,13 +71,25 @@ impl AesBits {
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
+pub enum CfbFeedback {
+	#[display("1")]
+	N1,
+	#[display("8")]
+	N8,
+	#[display("128")]
+	N128
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
+#[repr(u8)]
+#[ende(variant: 8)]
 pub enum AesMode {
 	#[display("ECB")]
 	Ecb,
 	#[display("CBC")]
 	Cbc,
-	#[display("CFB")]
-	Cfb,
+	#[display("CFB{0}")]
+	Cfb(CfbFeedback),
 	#[display("OFB")]
 	Ofb,
 	#[display("CTR")]
@@ -101,7 +113,7 @@ impl AesMode {
 
 	pub fn is_cfb(&self) -> bool {
 		match self {
-			AesMode::Cfb => true,
+			AesMode::Cfb(..) => true,
 			_ => false
 		}
 	}
@@ -126,7 +138,7 @@ impl AesMode {
 pub enum Encryption {
 	#[display("no encryption")]
 	None,
-	#[display("{1} {0}-bit AES")]
+	#[display("{0}-bit key AES/{1}")]
 	Aes(AesBits, AesMode)
 }
 
@@ -161,10 +173,22 @@ impl Encryption {
 					AesBits::N192 => Cipher::aes_192_cbc(),
 					AesBits::N256 => Cipher::aes_256_cbc()
 				}
-				AesMode::Cfb => match bits {
-					AesBits::N128 => Cipher::aes_128_cfb128(),
-					AesBits::N192 => Cipher::aes_192_cfb128(),
-					AesBits::N256 => Cipher::aes_256_cfb128()
+				AesMode::Cfb(cfb_bits) => match cfb_bits {
+					CfbFeedback::N1 => match bits {
+						AesBits::N128 => Cipher::aes_128_cfb1(),
+						AesBits::N192 => Cipher::aes_192_cfb1(),
+						AesBits::N256 => Cipher::aes_256_cfb1()
+					},
+					CfbFeedback::N8 => match bits {
+						AesBits::N128 => Cipher::aes_128_cfb8(),
+						AesBits::N192 => Cipher::aes_192_cfb8(),
+						AesBits::N256 => Cipher::aes_256_cfb8()
+					},
+					CfbFeedback::N128 => match bits {
+						AesBits::N128 => Cipher::aes_128_cfb128(),
+						AesBits::N192 => Cipher::aes_192_cfb128(),
+						AesBits::N256 => Cipher::aes_256_cfb128()
+					}
 				}
 				AesMode::Ofb => match bits {
 					AesBits::N128 => Cipher::aes_128_ofb(),
@@ -177,32 +201,6 @@ impl Encryption {
 					AesBits::N256 => Cipher::aes_256_ctr()
 				}
 			})
-		}
-	}
-	
-	pub fn decrypt<T: Read>(&self, input: T, key: Option<&[u8]>, iv: Option<&[u8]>) -> Result<Decrypt<T>, CryptoError> {
-		match self {
-			Encryption::None => {
-				Ok(Decrypt(DecryptInner::None(input)))
-			}
-			_ => {
-				let key = key.ok_or(CryptoError::NoKey)?;
-				let cipher = self.cipher().unwrap();
-				
-				if cipher.key_len() != key.len() {
-					return Err(CryptoError::WrongKeySize(cipher.key_len()));
-				}
-
-				if let Some(iv_len) = cipher.iv_len() {
-					let iv = iv.ok_or(CryptoError::NoIV)?;
-					if iv.len() != iv_len {
-						return Err(CryptoError::WrongIvSize(iv_len));
-					}
-				}
-
-				let crypto_stream = Decryptor::new(input, cipher, &key, iv.unwrap_or(&[]))?;
-				Ok(Decrypt(DecryptInner::Decryptor(crypto_stream)))
-			}
 		}
 	}
 
@@ -228,6 +226,32 @@ impl Encryption {
 
 				let crypto_stream = Encryptor::new(input, cipher, &key, iv.unwrap_or(&[]))?;
 				Ok(Encrypt(EncryptInner::Cryptor(crypto_stream)))
+			}
+		}
+	}
+
+	pub fn decrypt<T: Read>(&self, input: T, key: Option<&[u8]>, iv: Option<&[u8]>) -> Result<Decrypt<T>, CryptoError> {
+		match self {
+			Encryption::None => {
+				Ok(Decrypt(DecryptInner::None(input)))
+			}
+			_ => {
+				let key = key.ok_or(CryptoError::NoKey)?;
+				let cipher = self.cipher().unwrap();
+
+				if cipher.key_len() != key.len() {
+					return Err(CryptoError::WrongKeySize(cipher.key_len()));
+				}
+
+				if let Some(iv_len) = cipher.iv_len() {
+					let iv = iv.ok_or(CryptoError::NoIV)?;
+					if iv.len() != iv_len {
+						return Err(CryptoError::WrongIvSize(iv_len));
+					}
+				}
+
+				let crypto_stream = Decryptor::new(input, cipher, &key, iv.unwrap_or(&[]))?;
+				Ok(Decrypt(DecryptInner::Decryptor(crypto_stream)))
 			}
 		}
 	}
