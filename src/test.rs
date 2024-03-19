@@ -13,10 +13,7 @@ pub struct StructStruct {
 }
 
 #[derive(Encode, Decode)]
-#[ende(num: little_endian)]
-#[allow(unused)]
 pub struct TupleStruct(
-	#[ende(skip)]
 	u64,
 	f64
 );
@@ -82,6 +79,18 @@ pub struct VersionContainer {
 	name_present: bool,
 	#[ende(if = *name_present)]
 	name: String,
+}
+
+#[cfg(feature = "encryption")]
+#[derive(Encode, Decode)]
+pub enum EncryptionTest {
+	A {
+		iv: [u8; 16],
+		key: [u8; 16],
+		encryption: crate::encryption::Encryption,
+		#[ende(encrypted = "128-bit AES/CFB8", key, iv)]
+		secret: u64,
+	}
 }
 
 #[test]

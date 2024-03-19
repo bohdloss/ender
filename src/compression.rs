@@ -1,8 +1,37 @@
 use std::io;
 use std::io::{BufReader, Read, Write};
-use ende_derive::{Decode, Encode};
 use parse_display::Display;
 use thiserror::Error;
+use crate::{BinStream, EncodingResult, Encode, Decode, Finish};
+
+pub fn encode_with_compression<T, F>(
+	encoder: &mut BinStream<T>,
+	compression: Compression,
+	f: F
+) -> EncodingResult<()>
+	where T: Write,
+	      F: FnOnce(&mut BinStream<Compress<&mut T>>) -> EncodingResult<()>
+{
+	let mut encoder = encoder.add_compression(compression)?;
+	let v = f(&mut encoder);
+	encoder.finish()?.finish()?;
+	v
+}
+
+pub fn decode_with_compression<T, F, V>(
+	decoder: &mut BinStream<T>,
+	compression: Compression,
+	f: F
+) -> EncodingResult<V>
+	where T: Read,
+	      F: FnOnce(&mut BinStream<Decompress<&mut T>>) -> EncodingResult<V>,
+	      V: Decode
+{
+	let mut decoder = decoder.add_decompression(compression)?;
+	let v = f(&mut decoder);
+	decoder.finish()?.finish()?;
+	v
+}
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
@@ -136,7 +165,7 @@ pub enum GZipLevel {
 pub enum Compression {
 	#[display("no compression")]
 	None,
-	#[display("level {0} ZStandard compression")]
+	#[display("level {0} ZStd compression")]
 	ZStd(ZStdLevel),
 	#[display("level {0} ZLib compression")]
 	ZLib(ZLibLevel),
@@ -225,17 +254,18 @@ impl Compression {
 	}
 }
 
-enum CompressInner<'a, T: Write> {
+enum CompressInner<T: Write> {
 	None(T),
-	ZStd(zstd::stream::write::Encoder<'a, T>),
+	ZStd(zstd::stream::write::Encoder<'static, T>),
 	ZLib(flate2::write::ZlibEncoder<T>),
 	Deflate(flate2::write::DeflateEncoder<T>),
 	GZip(flate2::write::GzEncoder<T>),
 }
 
-impl<T: Write> CompressInner<'_, T> {
+impl<T: Write> Finish for CompressInner<T> {
+	type Output = T;
 	#[inline]
-	fn finish(self) -> Result<T, CompressionError> {
+	fn finish(self) -> EncodingResult<Self::Output> {
 		match self {
 			CompressInner::None(x) => Ok(x),
 			CompressInner::ZStd(x) => Ok(x.finish()?),
@@ -246,7 +276,7 @@ impl<T: Write> CompressInner<'_, T> {
 	}
 }
 
-impl<T: Write> Write for CompressInner<'_, T> {
+impl<T: Write> Write for CompressInner<T> {
 	#[inline]
 	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
 		match self {
@@ -270,16 +300,17 @@ impl<T: Write> Write for CompressInner<'_, T> {
 }
 
 #[repr(transparent)]
-pub struct Compress<'a, T: Write>(CompressInner<'a, T>);
+pub struct Compress<T: Write>(CompressInner<T>);
 
-impl<T: Write> Compress<'_, T> {
+impl<T: Write> Finish for Compress<T> {
+	type Output = T;
 	#[inline]
-	pub fn finish(self) -> Result<T, CompressionError> {
+	fn finish(self) -> EncodingResult<Self::Output> {
 		self.0.finish()
 	}
 }
 
-impl<T: Write> Write for Compress<'_, T> {
+impl<T: Write> Write for Compress<T> {
 	#[inline]
 	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
 		self.0.write(buf)
@@ -290,17 +321,18 @@ impl<T: Write> Write for Compress<'_, T> {
 	}
 }
 
-enum DecompressInner<'a, T: Read> {
+enum DecompressInner<T: Read> {
 	None(T),
-	ZStd(zstd::stream::read::Decoder<'a, BufReader<T>>),
+	ZStd(zstd::stream::read::Decoder<'static, BufReader<T>>),
 	ZLib(flate2::read::ZlibDecoder<T>),
 	Deflate(flate2::read::DeflateDecoder<T>),
 	GZip(flate2::read::GzDecoder<T>),
 }
 
-impl<T: Read> DecompressInner<'_ ,T> {
+impl<T: Read> Finish for DecompressInner<T> {
+	type Output = T;
 	#[inline]
-	fn finish(self) -> Result<T, CompressionError> {
+	fn finish(self) -> EncodingResult<Self::Output> {
 		match self {
 			DecompressInner::None(x) => Ok(x),
 			DecompressInner::ZStd(x) => Ok(x.finish().into_inner()),
@@ -311,7 +343,7 @@ impl<T: Read> DecompressInner<'_ ,T> {
 	}
 }
 
-impl<T: Read> Read for DecompressInner<'_, T> {
+impl<T: Read> Read for DecompressInner<T> {
 	#[inline]
 	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
 		match self {
@@ -325,16 +357,17 @@ impl<T: Read> Read for DecompressInner<'_, T> {
 }
 
 #[repr(transparent)]
-pub struct Decompress<'a, T: Read>(DecompressInner<'a, T>);
+pub struct Decompress<T: Read>(DecompressInner<T>);
 
-impl<T: Read> Decompress<'_, T> {
+impl<T: Read> Finish for Decompress<T> {
+	type Output = T;
 	#[inline]
-	pub fn finish(self) -> Result<T, CompressionError> {
+	fn finish(self) -> EncodingResult<Self::Output> {
 		self.0.finish()
 	}
 }
 
-impl<T: Read> Read for Decompress<'_ ,T> {
+impl<T: Read> Read for Decompress<T> {
 	#[inline]
 	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
 		self.0.read(buf)

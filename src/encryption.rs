@@ -8,18 +8,54 @@ use openssl::rsa::{Padding, Rsa};
 use openssl::symm::Cipher;
 use parse_display::Display;
 use thiserror::Error;
-use crate::{Encode, Decode, EncodingResult, BinStream, EncodingError};
+use crate::{Encode, Decode, EncodingResult, BinStream, EncodingError, Finish};
+use crate::encryption::CryptoError::NoKey;
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
-#[display("rsa = ({rsa})")]
+pub fn encode_with_encryption<T, F>(
+	encoder: &mut BinStream<T>,
+	encryption: Encryption,
+	key: Option<&[u8]>,
+	iv: Option<&[u8]>,
+	f: F
+) -> EncodingResult<()>
+where T: Write, 
+      F: FnOnce(&mut BinStream<Encrypt<&mut T>>) -> EncodingResult<()>
+{
+	let mut encoder = encoder.add_encryption(encryption, key, iv)?;
+	let v = f(&mut encoder);
+	encoder.finish()?.finish()?;
+	v
+}
+
+pub fn decode_with_encryption<T, F, V>(
+	decoder: &mut BinStream<T>,
+	encryption: Encryption,
+	key: Option<&[u8]>,
+	iv: Option<&[u8]>,
+	f: F
+) -> EncodingResult<V>
+	where T: Read,
+	      F: FnOnce(&mut BinStream<Decrypt<&mut T>>) -> EncodingResult<V>, 
+	      V: Decode
+{
+	let mut decoder = decoder.add_decryption(encryption, key, iv)?;
+	let v = f(&mut decoder);
+	decoder.finish()?.finish()?;
+	v
+}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[display("rsa = ({rsa}), symm = ({symm})")]
 pub struct CryptoState {
 	pub rsa: RsaState,
+	pub symm: SymmState,
 }
 
 impl CryptoState {
 	pub const fn new() -> Self {
 		Self {
-			rsa: RsaState::new()
+			rsa: RsaState::new(),
+			symm: SymmState::new(),
 		}
 	}
 }
@@ -30,18 +66,28 @@ impl CryptoState {
 #[allow(non_camel_case_types)]
 pub enum RsaPadding {
 	None,
-	PKCS1,
-	PKCS1_OAEP,
-	PKCS1_PSS
+	Pkcs1,
+	Pkcs1Oaep,
+	Pkcs1Pss
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
+#[repr(u8)]
+#[ende(variant: 8)]
+#[allow(non_camel_case_types)]
+pub enum RsaBits {
+	N1024,
+	N2048,
+	N4096,
 }
 
 impl RsaPadding {
 	fn to_openssl_padding(&self) -> Padding {
 		match self {
 			RsaPadding::None => Padding::NONE,
-			RsaPadding::PKCS1 => Padding::PKCS1,
-			RsaPadding::PKCS1_OAEP => Padding::PKCS1_OAEP,
-			RsaPadding::PKCS1_PSS => Padding::PKCS1_PSS,
+			RsaPadding::Pkcs1 => Padding::PKCS1,
+			RsaPadding::Pkcs1Oaep => Padding::PKCS1_OAEP,
+			RsaPadding::Pkcs1Pss => Padding::PKCS1_PSS,
 		}
 	}
 }
@@ -54,10 +100,10 @@ pub enum RsaMode {
 	Reverse
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("padding: {padding}, mode = {mode}")]
 pub struct RsaState {
-	pub key: Vec<u8>,
+	key: Vec<u8>,
 	pub padding: RsaPadding,
 	pub mode: RsaMode,
 }
@@ -72,14 +118,100 @@ impl RsaState {
 	}
 	
 	pub fn store_key<T: AsRef<[u8]>>(&mut self, bytes: &T) {
-		self.key.clear();
+		self.reset_key();
 		for byte in bytes.as_ref() {
 			self.key.push(*byte);
 		}
 	}
+
+	pub fn reset_key(&mut self) {
+		for byte in self.key.iter_mut() {
+			*byte = 0;
+		}
+		self.key.clear();
+	}
 	
-	pub fn get_key(&self) -> &[u8] {
-		&self.key
+	pub fn get_key(&self) -> Option<&[u8]> {
+		if self.key.is_empty() {
+			Some(&self.key)
+		} else {
+			None
+		}
+	}
+}
+
+impl Drop for RsaState {
+	fn drop(&mut self) {
+		self.reset_key();
+	}
+}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[display("encryption: {encryption}")]
+pub struct SymmState {
+	iv: Vec<u8>,
+	key: Vec<u8>,
+	pub encryption: Encryption
+}
+
+impl SymmState {
+	pub const fn new() -> Self {
+		Self {
+			iv: Vec::new(),
+			key: Vec::new(),
+			encryption: Encryption::None
+		}
+	}
+
+	pub fn store_iv<T: AsRef<[u8]>>(&mut self, bytes: &T) {
+		self.reset_iv();
+		for byte in bytes.as_ref() {
+			self.iv.push(*byte);
+		}
+	}
+
+	pub fn reset_iv(&mut self) {
+		for byte in self.iv.iter_mut() {
+			*byte = 0;
+		}
+		self.iv.clear();
+	}
+
+	pub fn get_iv(&self) -> Option<&[u8]> {
+		if self.iv.is_empty() {
+			Some(&self.iv)
+		} else {
+			None
+		}
+	}
+
+	pub fn store_key<T: AsRef<[u8]>>(&mut self, bytes: &T) {
+		self.reset_key();
+		for byte in bytes.as_ref() {
+			self.key.push(*byte);
+		}
+	}
+
+	pub fn reset_key(&mut self) {
+		for byte in self.key.iter_mut() {
+			*byte = 0;
+		}
+		self.key.clear();
+	}
+
+	pub fn get_key(&self) -> Option<&[u8]> {
+		if self.key.is_empty() {
+			Some(&self.key)
+		} else {
+			None
+		}
+	}
+}
+
+impl Drop for SymmState {
+	fn drop(&mut self) {
+		self.reset_iv();
+		self.reset_key();
 	}
 }
 
@@ -89,14 +221,14 @@ fn rsa_encrypt<const BLOCK_SIZE: usize, T: Write>(encoder: &mut BinStream<T>, da
 	let mut temp = [0u8; BLOCK_SIZE];
 	match encoder.crypto.rsa.mode {
 		RsaMode::Normal => {
-			let rsa: Rsa<Public> = Rsa::public_key_from_der(encoder.crypto.rsa.get_key())
+			let rsa: Rsa<Public> = Rsa::public_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
 
 			rsa.public_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
 		}
 		RsaMode::Reverse => {
-			let rsa: Rsa<Private> = Rsa::private_key_from_der(encoder.crypto.rsa.get_key())
+			let rsa: Rsa<Private> = Rsa::private_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
 
 			rsa.private_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
@@ -112,14 +244,14 @@ fn rsa_decrypt<const BLOCK_SIZE: usize, T: Read>(decoder: &mut BinStream<T>) -> 
 	decoder.read_raw_bytes(&mut temp)?;
 	match decoder.crypto.rsa.mode {
 		RsaMode::Normal => {
-			let rsa: Rsa<Private> = Rsa::private_key_from_der(decoder.crypto.rsa.get_key())
+			let rsa: Rsa<Private> = Rsa::private_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
 
 			rsa.private_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
 		}
 		RsaMode::Reverse => {
-			let rsa: Rsa<Public> = Rsa::public_key_from_der(decoder.crypto.rsa.get_key())
+			let rsa: Rsa<Public> = Rsa::public_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
 
 			rsa.public_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
@@ -267,7 +399,7 @@ impl AesMode {
 pub enum Encryption {
 	#[display("no encryption")]
 	None,
-	#[display("{0}-bit key AES/{1}")]
+	#[display("{0}-bit AES/{1}")]
 	Aes(AesBits, AesMode)
 }
 
@@ -391,9 +523,11 @@ enum EncryptInner<T: Write> {
 	Cryptor(Encryptor<T>)
 }
 
-impl<T: Write> EncryptInner<T> {
+impl<T: Write> Finish for EncryptInner<T> {
+	type Output = T;
+
 	#[inline]
-	fn finish(self) -> Result<T, CryptoError> {
+	fn finish(self) -> EncodingResult<T> {
 		match self {
 			EncryptInner::None(x) => Ok(x),
 			EncryptInner::Cryptor(x) => Ok(x.finish()?)
@@ -421,9 +555,10 @@ impl<T: Write> Write for EncryptInner<T> {
 #[repr(transparent)]
 pub struct Encrypt<T: Write>(EncryptInner<T>);
 
-impl<T: Write> Encrypt<T> {
+impl<T: Write> Finish for Encrypt<T> {
+	type Output = T;
 	#[inline]
-	pub fn finish(self) -> Result<T, CryptoError> {
+	fn finish(self) -> EncodingResult<T> {
 		self.0.finish()
 	}
 }
@@ -444,9 +579,10 @@ enum DecryptInner<T: Read> {
 	Decryptor(Decryptor<T>)
 }
 
-impl<T: Read> DecryptInner<T> {
+impl<T: Read> Finish for DecryptInner<T> {
+	type Output = T;
 	#[inline]
-	fn finish(self) -> Result<T, CryptoError> {
+	fn finish(self) -> EncodingResult<T> {
 		match self {
 			DecryptInner::None(x) => Ok(x),
 			DecryptInner::Decryptor(x) => Ok(x.finish()),
@@ -467,9 +603,10 @@ impl<T: Read> Read for DecryptInner<T> {
 #[repr(transparent)]
 pub struct Decrypt<T: Read>(DecryptInner<T>);
 
-impl<T: Read> Decrypt<T> {
+impl<T: Read> Finish for Decrypt<T> {
+	type Output = T;
 	#[inline]
-	pub fn finish(self) -> Result<T, CryptoError> {
+	fn finish(self) -> EncodingResult<T> {
 		self.0.finish()
 	}
 }

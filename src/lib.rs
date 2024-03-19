@@ -8,7 +8,7 @@ pub mod compression;
 
 use std::ffi::{CStr, CString, FromVecWithNulError};
 use std::io;
-use std::io::{BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::string::FromUtf8Error;
 use array_init::array_init;
@@ -158,6 +158,11 @@ impl Default for BinOptions {
 	}
 }
 
+pub trait Finish {
+	type Output;
+	fn finish(self) -> EncodingResult<Self::Output>;
+}
+
 pub struct BinStream<T>{
 	pub stream: T,
 	pub options: BinOptions,
@@ -183,41 +188,40 @@ impl<T> BinStream<T> {
 			crypto: encryption::CryptoState::new()
 		}
 	}
+}
 
-	pub fn finish(self) -> T {
-		self.stream
+impl<T> Finish for BinStream<T> {
+	type Output = T;
+	fn finish(self) -> EncodingResult<Self::Output> {
+		Ok(self.stream)
 	}
 }
 
-impl<T: Write> Write for BinStream<T> {
-	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-		self.stream.write(buf)
+impl<T: Write> BinStream<T> {
+	#[cfg(feature = "encryption")]
+	pub fn add_encryption(&mut self, encryption: encryption::Encryption, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<BinStream<encryption::Encrypt<&mut T>>> {
+		let options = self.options;
+		Ok(BinStream::new(encryption.encrypt(&mut self.stream, key, iv)?, options))
 	}
 
-	fn flush(&mut self) -> io::Result<()> {
-		self.stream.flush()
-	}
-}
-
-impl<T: Read> Read for BinStream<T> {
-	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-		self.stream.read(buf)
+	#[cfg(feature = "compression")]
+	pub fn add_compression(&mut self, compression: compression::Compression) -> EncodingResult<BinStream<compression::Compress<&mut T>>> {
+		let options = self.options;
+		Ok(BinStream::new(compression.compress(&mut self.stream)?, options))
 	}
 }
 
-impl<T: BufRead> BufRead for BinStream<T> {
-	fn fill_buf(&mut self) -> io::Result<&[u8]> {
-		self.stream.fill_buf()
+impl<T: Read> BinStream<T> {
+	#[cfg(feature = "encryption")]
+	pub fn add_decryption(&mut self, encryption: encryption::Encryption, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<BinStream<encryption::Decrypt<&mut T>>> {
+		let options = self.options;
+		Ok(BinStream::new(encryption.decrypt(&mut self.stream, key, iv)?, options))
 	}
 
-	fn consume(&mut self, amt: usize) {
-		self.stream.consume(amt)
-	}
-}
-
-impl<T: Seek> Seek for BinStream<T> {
-	fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-		self.stream.seek(pos)
+	#[cfg(feature = "compression")]
+	pub fn add_decompression(&mut self, compression: compression::Compression) -> EncodingResult<BinStream<compression::Decompress<&mut T>>> {
+		let options = self.options;
+		Ok(BinStream::new(compression.decompress(&mut self.stream)?, options))
 	}
 }
 
@@ -619,6 +623,13 @@ pub enum EncodingError {
 		#[source]
 		#[from]
 		encryption::CryptoError
+	),
+	#[cfg(feature = "compression")]
+	#[error("Compression error: {0}")]
+	CompressionError(
+		#[source]
+		#[from]
+		compression::CompressionError
 	)
 }
 
