@@ -1,5 +1,6 @@
 use std::io;
 use std::io::{Read, Write};
+use std::ops::{Index, Range, RangeFrom, RangeFull, RangeTo};
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
 use openssl::error::ErrorStack;
@@ -215,7 +216,42 @@ impl Drop for SymmState {
 	}
 }
 
-pub struct RsaBlock<const BLOCK_SIZE: usize>([u8; BLOCK_SIZE]);
+pub struct RsaBlock<const BLOCK_SIZE: usize>(pub [u8; BLOCK_SIZE]);
+
+impl<const BLOCK_SIZE: usize> Index<usize> for RsaBlock<BLOCK_SIZE> {
+	type Output = u8;
+	fn index(&self, index: usize) -> &Self::Output {
+		self.0.index(index)
+	}
+}
+
+impl<const BLOCK_SIZE: usize> Index<Range<usize>> for RsaBlock<BLOCK_SIZE> {
+	type Output = [u8];
+	fn index(&self, index: Range<usize>) -> &Self::Output {
+		self.0.index(index)
+	}
+}
+
+impl<const BLOCK_SIZE: usize> Index<RangeTo<usize>> for RsaBlock<BLOCK_SIZE> {
+	type Output = [u8];
+	fn index(&self, index: RangeTo<usize>) -> &Self::Output {
+		self.0.index(index)
+	}
+}
+
+impl<const BLOCK_SIZE: usize> Index<RangeFrom<usize>> for RsaBlock<BLOCK_SIZE> {
+	type Output = [u8];
+	fn index(&self, index: RangeFrom<usize>) -> &Self::Output {
+		self.0.index(index)
+	}
+}
+
+impl<const BLOCK_SIZE: usize> Index<RangeFull> for RsaBlock<BLOCK_SIZE> {
+	type Output = [u8];
+	fn index(&self, index: RangeFull) -> &Self::Output {
+		self.0.index(index)
+	}
+}
 
 fn rsa_encrypt<const BLOCK_SIZE: usize, T: Write>(encoder: &mut BinStream<T>, data: &[u8; BLOCK_SIZE]) -> EncodingResult<()> {
 	let mut temp = [0u8; BLOCK_SIZE];
@@ -223,6 +259,10 @@ fn rsa_encrypt<const BLOCK_SIZE: usize, T: Write>(encoder: &mut BinStream<T>, da
 		RsaMode::Normal => {
 			let rsa: Rsa<Public> = Rsa::public_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
+			let num_bytes = rsa.n().num_bytes() as usize;
+			if num_bytes != BLOCK_SIZE {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(num_bytes)))
+			}
 
 			rsa.public_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
@@ -230,6 +270,10 @@ fn rsa_encrypt<const BLOCK_SIZE: usize, T: Write>(encoder: &mut BinStream<T>, da
 		RsaMode::Reverse => {
 			let rsa: Rsa<Private> = Rsa::private_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
+			let num_bytes = rsa.n().num_bytes() as usize;
+			if num_bytes != BLOCK_SIZE {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(num_bytes)))
+			}
 
 			rsa.private_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
@@ -246,6 +290,10 @@ fn rsa_decrypt<const BLOCK_SIZE: usize, T: Read>(decoder: &mut BinStream<T>) -> 
 		RsaMode::Normal => {
 			let rsa: Rsa<Private> = Rsa::private_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
+			let num_bytes = rsa.n().num_bytes() as usize;
+			if num_bytes != BLOCK_SIZE {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(num_bytes)))
+			}
 
 			rsa.private_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
@@ -253,6 +301,10 @@ fn rsa_decrypt<const BLOCK_SIZE: usize, T: Read>(decoder: &mut BinStream<T>) -> 
 		RsaMode::Reverse => {
 			let rsa: Rsa<Public> = Rsa::public_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
+			let num_bytes = rsa.n().num_bytes() as usize;
+			if num_bytes != BLOCK_SIZE {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(num_bytes)))
+			}
 
 			rsa.public_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
@@ -485,7 +537,8 @@ impl Encryption {
 					}
 				}
 
-				let crypto_stream = Encryptor::new(input, cipher, &key, iv.unwrap_or(&[]))?;
+				let crypto_stream = Encryptor::new(input, cipher, &key, iv.unwrap_or(&[]))
+					.map_err(|_| CryptoError::Generic)?;
 				Ok(Encrypt(EncryptInner::Cryptor(crypto_stream)))
 			}
 		}
@@ -511,7 +564,8 @@ impl Encryption {
 					}
 				}
 
-				let crypto_stream = Decryptor::new(input, cipher, &key, iv.unwrap_or(&[]))?;
+				let crypto_stream = Decryptor::new(input, cipher, &key, iv.unwrap_or(&[]))
+					.map_err(|_| CryptoError::Generic)?;
 				Ok(Decrypt(DecryptInner::Decryptor(crypto_stream)))
 			}
 		}
@@ -636,15 +690,11 @@ pub enum CryptoError {
 	WrongIvSize(usize),
 	#[error("Wrong decryption key provided")]
 	WrongKey,
-	#[error("Generic Encryption/Decryption error: {0}")]
-	Generic (
-		#[source]
-		#[from]
-		ErrorStack
-	),
+	#[error("Generic Encryption/Decryption error")]
+	Generic,
 }
 
 /// Error Stack Error to Encoding Error
-fn ese_to_ee(x: ErrorStack) -> EncodingError {
-	EncodingError::EncryptionError(CryptoError::Generic(x))
+fn ese_to_ee(_: ErrorStack) -> EncodingError {
+	EncodingError::EncryptionError(CryptoError::Generic)
 }

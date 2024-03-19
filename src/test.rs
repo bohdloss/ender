@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{Seek, Write};
 use crate::{BinOptions, BinStream, Decode, Encode, NumEncoding};
+use crate::encryption::RsaBlock;
 
 #[derive(Encode, Decode)]
 #[ende(num: little_endian)]
@@ -85,10 +86,12 @@ pub struct VersionContainer {
 #[derive(Encode, Decode)]
 pub enum EncryptionTest {
 	A {
+		rsa_private: [u8; 512],
 		iv: [u8; 16],
-		key: [u8; 16],
+		#[ende(encrypted = "2048-bit RSA/ECB/PKCS1", rsa_private)]
+		key: RsaBlock<256>,
 		encryption: crate::encryption::Encryption,
-		#[ende(encrypted = "128-bit AES/CFB8", key, iv)]
+		#[ende(encrypted = "128-bit AES/CFB8", &key[..16], iv)]
 		secret: u64,
 	}
 }

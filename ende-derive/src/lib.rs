@@ -177,6 +177,18 @@ enum RsaPadding {
 	Pkcs1Pss
 }
 
+impl ToTokens for RsaPadding {
+	fn to_tokens(&self, tokens: &mut TokenStream2) {
+		let dollar_crate = dollar_crate(ENDE);
+		tokens.append_all(match self {
+			RsaPadding::None => quote!(#dollar_crate::encryption::RsaPadding::None),
+			RsaPadding::Pkcs1 => quote!(#dollar_crate::encryption::RsaPadding::Pkcs1),
+			RsaPadding::Pkcs1Oaep => quote!(#dollar_crate::encryption::RsaPadding::Pkcs1Oaep),
+			RsaPadding::Pkcs1Pss => quote!(#dollar_crate::encryption::RsaPadding::Pkcs1Pss),
+		});
+	}
+}
+
 #[allow(unused)]
 enum RsaBits {
 	N1024,
@@ -185,9 +197,25 @@ enum RsaBits {
 }
 
 #[allow(unused)]
+enum RsaMode {
+	Normal,
+	Reverse
+}
+
+impl ToTokens for RsaMode {
+	fn to_tokens(&self, tokens: &mut TokenStream2) {
+		let dollar_crate = dollar_crate(ENDE);
+		tokens.append_all(match self {
+			RsaMode::Normal => quote!(#dollar_crate::encryption::RsaMode::Normal),
+			RsaMode::Reverse => quote!(#dollar_crate::encryption::RsaMode::Reverse),
+		});
+	}
+}
+
+#[allow(unused)]
 enum Encryption {
 	Aes(AesBits, AesMode),
-	Rsa(RsaBits, RsaPadding)
+	Rsa(RsaBits, RsaPadding, RsaMode)
 }
 
 impl ToTokens for Encryption {
@@ -195,7 +223,7 @@ impl ToTokens for Encryption {
 		let dollar_crate = dollar_crate(ENDE);
 		tokens.append_all(match self {
 			Encryption::Aes(bits, mode) => quote!(#dollar_crate::encryption::Encryption::Aes(#bits, #mode)),
-			Encryption::Rsa(_, _) => unimplemented!(),
+			Encryption::Rsa(..) => unimplemented!(),
 		})
 	}
 }
@@ -249,7 +277,7 @@ impl FromStr for Encryption {
 
 				Encryption::Aes(bits, mode)
 			},
-			"RSA" => {
+			"RSA" | "revRSA" => {
 				let bits = match key_size {
 					"1024" => RsaBits::N1024,
 					"2048" => RsaBits::N2048,
@@ -270,9 +298,11 @@ impl FromStr for Encryption {
 					_ => return Err(r#"Allowed padding modes for RSA are: PKCS1, PKCS1_OAEP, PKCS1_PSS"#)
 				};
 
-				Encryption::Rsa(bits, padding)
+				let rsa_mode = if cipher.starts_with("rev") { RsaMode::Reverse } else { RsaMode::Normal };
+
+				Encryption::Rsa(bits, padding, rsa_mode)
 			}
-			_ => return Err(r#"Allowed ciphers are: AES, RSA"#)
+			_ => return Err(r#"Allowed ciphers are: AES, RSA, revRSA"#)
 		})
 	}
 }
@@ -955,19 +985,21 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 				)
 			}
 			Flag::Encrypted { encryption, key, .. } => {
-				if encryption.is_rsa() {
-					rsa_found = true;
+				if let EncryptionParam::Static(x) = encryption {
+					if let Encryption::Rsa(_bits, padding, mode) = x {
+						rsa_found = true;
 
-					let key = if let Some(key) = key { key } else {
-						make_error!(??? key.span(), "RSA requires a key to be specified")
-					};
+						let key = if let Some(key) = key { key } else {
+							make_error!(??? key.span(), "RSA requires a key to be specified")
+						};
 
-					quote!(
-						#source.crypto.rsa.store_key(#key);
-					)
-				} else {
-					continue
-				}
+						quote!(
+							#source.crypto.rsa.padding = #padding;
+							#source.crypto.rsa.mode = #mode;
+							#source.crypto.rsa.store_key(#key);
+						)
+					} else { continue }
+				} else { continue }
 			}
 			_ => continue
 		};
