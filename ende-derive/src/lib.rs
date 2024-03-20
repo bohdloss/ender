@@ -641,6 +641,13 @@ impl Flag {
 		}
 	}
 
+	fn flatten(&self) -> bool {
+		match self {
+			Flag::Flatten { .. } => true,
+			_ => false
+		}
+	}
+
 	fn stream_modifier(&self) -> bool {
 		match self {
 			Flag::Encrypted { .. } | Flag::Compressed { .. } => true,
@@ -894,6 +901,7 @@ impl Ende {
 			x.condition() ||
 				x.default() ||
 				x.with() ||
+				x.flatten() ||
 				x.stream_modifier()
 		)
 	}
@@ -977,7 +985,7 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 				aggregate
 			}
 			Flag::Flatten { depth, .. } => {
-				let depth = depth.as_ref().map(ToTokens::to_token_stream).unwrap_or(quote!(1u64));
+				let depth = depth.as_ref().map(ToTokens::to_token_stream).unwrap_or(quote!(1usize));
 
 				quote!(
 					#source.options.flatten = { #depth };

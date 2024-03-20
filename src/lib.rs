@@ -143,7 +143,7 @@ pub struct BinOptions {
 	pub num_repr: NumRepr,
 	pub size_repr: SizeRepr,
 	pub variant_repr: VariantRepr,
-	pub flatten: u64,
+	pub flatten: usize,
 }
 
 impl BinOptions {
@@ -155,14 +155,15 @@ impl BinOptions {
 			flatten: 0
 		}
 	}
-
-	pub fn flatten(&mut self) -> bool {
-		if self.flatten == 0 {
-			false
+	
+	pub fn flatten(&mut self, sub: usize) -> usize {
+		let old = self.flatten;
+		if sub == 0 {
+			self.flatten = 0;
 		} else {
-			self.flatten -= 1;
-			true
+			self.flatten = self.flatten.saturating_sub(sub);
 		}
+		old
 	}
 }
 
@@ -475,6 +476,12 @@ impl<T: Write> BinStream<T> {
 	make_signed_write_fn!(_write_i32 => _write_i32_size => _write_i32_variant => write_i32 => i32);
 	make_signed_write_fn!(_write_i64 => _write_i64_size => _write_i64_variant => write_i64 => i64);
 	make_signed_write_fn!(_write_i128 => _write_i128_size => _write_i128_variant => write_i128 => i128);
+	pub fn write_length(&mut self, value: usize) -> EncodingResult<()> {
+		if self.options.flatten(0) == 0 {
+			self.write_usize(value)?;
+		}
+		Ok(())
+	}
 	pub fn write_usize(&mut self, value: usize) -> EncodingResult<()> {
 		if value > self.options.size_repr.max_size {
 			return Err(EncodingError::MaxLengthExceeded {
@@ -551,6 +558,14 @@ impl<T: Read> BinStream<T> {
 	make_signed_read_fn!(_read_i32 => _read_i32_size => _read_i32_variant => read_i32 => i32);
 	make_signed_read_fn!(_read_i64 => _read_i64_size => _read_i64_variant => read_i64 => i64);
 	make_signed_read_fn!(_read_i128 => _read_i128_size => _read_i128_variant => read_i128 => i128);
+	pub fn read_length(&mut self) -> EncodingResult<usize> {
+		let flatten = self.options.flatten(0);
+		if flatten == 0 {
+			self.read_usize()
+		} else {
+			Ok(flatten)
+		}
+	}
 	pub fn read_usize(&mut self) -> EncodingResult<usize> {
 		let value = match self.options.size_repr.width {
 			BitWidth::Bit8 => self._read_u8_size()? as usize,
@@ -728,14 +743,14 @@ impl_primitives!{
 
 impl Encode for String {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		encoder.write_usize(self.len())?;
+		encoder.write_length(self.len())?;
 		encoder.write_raw_bytes(self.as_bytes())
 	}
 }
 
 impl Decode for String {
 	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		let len = decoder.read_usize()?;
+		let len = decoder.read_length()?;
 		let mut buffer = vec![0u8; len];
 		decoder.read_raw_bytes(&mut buffer)?;
 		Ok(String::from_utf8(buffer)?)
@@ -744,7 +759,7 @@ impl Decode for String {
 
 impl Encode for &str {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		encoder.write_usize(self.len())?;
+		encoder.write_length(self.len())?;
 		encoder.write_raw_bytes(self.as_bytes())
 	}
 }
@@ -779,7 +794,7 @@ impl Encode for CStr {
 
 impl<T: Encode> Encode for Option<T> {
 	fn encode<G: Write>(&self, encoder: &mut BinStream<G>) -> EncodingResult<()> {
-		if encoder.options.flatten() {
+		if encoder.options.flatten(1) > 0 {
 			match self {
 				None => Ok(()),
 				Some(x) => {
@@ -800,7 +815,7 @@ impl<T: Encode> Encode for Option<T> {
 
 impl<T: Decode> Decode for Option<T> {
 	fn decode<G: Read>(decoder: &mut BinStream<G>) -> EncodingResult<Self> where Self: Sized {
-		if decoder.options.flatten() {
+		if decoder.options.flatten(1) > 0 {
 			Ok(Some(T::decode(decoder)?))
 		} else {
 			Ok(match decoder.read_bool()? {
@@ -815,7 +830,7 @@ impl<T: Decode> Decode for Option<T> {
 
 impl<T: Encode> Encode for &[T] {
 	fn encode<G: Write>(&self, encoder: &mut BinStream<G>) -> EncodingResult<()> {
-		encoder.write_usize(self.len())?;
+		encoder.write_length(self.len())?;
 		for i in 0..self.len() {
 			self[i].encode(encoder)?;
 		}
@@ -852,7 +867,7 @@ impl<T: Encode> Encode for Vec<T> {
 
 impl<T: Decode> Decode for Vec<T> {
 	fn decode<G: Read>(decoder: &mut BinStream<G>) -> EncodingResult<Self> where Self: Sized {
-		let size = decoder.read_usize()?;
+		let size = decoder.read_length()?;
 		let mut vec = Vec::with_capacity(size);
 		for _ in 0..size {
 			vec.push(Decode::decode(decoder)?);
@@ -865,7 +880,7 @@ impl<T: Decode> Decode for Vec<T> {
 
 impl<K: Encode, V: Encode> Encode for HashMap<K, V> {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		encoder.write_usize(self.len())?;
+		encoder.write_length(self.len())?;
 		for (k, v) in self.iter() {
 			k.encode(encoder)?;
 			v.encode(encoder)?;
@@ -876,7 +891,7 @@ impl<K: Encode, V: Encode> Encode for HashMap<K, V> {
 
 impl<K: Decode + Eq + Hash, V: Decode> Decode for HashMap<K, V> {
 	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		let size = decoder.read_usize()?;
+		let size = decoder.read_length()?;
 		let mut map = HashMap::with_capacity(size);
 		for _ in 0..size {
 			map.insert(K::decode(decoder)?, V::decode(decoder)?);
@@ -1062,11 +1077,16 @@ mod serde {
 		}
 
 		fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-			self.write_bool(false)
+			if self.options.flatten(1) == 0 {
+				self.write_bool(false)?;
+			}
+			Ok(())
 		}
 
 		fn serialize_some<G: ?Sized>(self, value: &G) -> Result<Self::Ok, Self::Error> where G: Serialize {
-			self.write_bool(true)?;
+			if self.options.flatten(1) == 0 {
+				self.write_bool(true)?;
+			}
 			value.serialize(self)
 		}
 
@@ -1093,7 +1113,7 @@ mod serde {
 
 		fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
 			let len = len.ok_or(EncodingError::SerdeError("Length must be known upfront".to_string()))?;
-			self.write_usize(len)?;
+			self.write_length(len)?;
 			Ok(self)
 		}
 
@@ -1112,7 +1132,7 @@ mod serde {
 
 		fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
 			let len = len.ok_or(EncodingError::SerdeError("Length must be known upfront".to_string()))?;
-			self.write_usize(len)?;
+			self.write_length(len)?;
 			Ok(self)
 		}
 
@@ -1305,7 +1325,7 @@ mod serde {
 		}
 
 		fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-			if self.read_bool()? {
+			if self.options.flatten(1) > 0 || self.read_bool()? {
 				visitor.visit_some(self)
 			} else {
 				visitor.visit_none()
@@ -1325,7 +1345,7 @@ mod serde {
 		}
 
 		fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-			let len = self.read_usize()?;
+			let len = self.read_length()?;
 			visitor.visit_seq(BinSeqDeserializer {
 				stream: self,
 				len,
@@ -1347,7 +1367,7 @@ mod serde {
 		}
 
 		fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-			let len = self.read_usize()?;
+			let len = self.read_length()?;
 			visitor.visit_map(BinMapDeserializer {
 				stream: self,
 				len
