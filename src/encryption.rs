@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Formatter};
 use std::io;
 use std::io::{Read, Write};
 use std::ops::{Index, Range, RangeFrom, RangeFull, RangeTo};
@@ -58,6 +59,19 @@ impl CryptoState {
 			rsa: RsaState::new(),
 			symm: SymmState::new(),
 		}
+	}
+	
+	pub fn with_rsa_key<T: AsRef<[u8]>>(key: &T) -> Self {
+		let mut self_ = Self::new();
+		self_.rsa.store_key(key);
+		self_
+	}
+
+	pub fn with_symm_iv_and_key<T: AsRef<[u8]>, F: AsRef<[u8]>>(key: &T, iv: &F) -> Self {
+		let mut self_ = Self::new();
+		self_.symm.store_key(key);
+		self_.symm.store_iv(iv);
+		self_
 	}
 }
 
@@ -134,9 +148,9 @@ impl RsaState {
 	
 	pub fn get_key(&self) -> Option<&[u8]> {
 		if self.key.is_empty() {
-			Some(&self.key)
-		} else {
 			None
+		} else {
+			Some(&self.key)
 		}
 	}
 }
@@ -180,9 +194,9 @@ impl SymmState {
 
 	pub fn get_iv(&self) -> Option<&[u8]> {
 		if self.iv.is_empty() {
-			Some(&self.iv)
-		} else {
 			None
+		} else {
+			Some(&self.iv)
 		}
 	}
 
@@ -202,9 +216,9 @@ impl SymmState {
 
 	pub fn get_key(&self) -> Option<&[u8]> {
 		if self.key.is_empty() {
-			Some(&self.key)
-		} else {
 			None
+		} else {
+			Some(&self.key)
 		}
 	}
 }
@@ -217,6 +231,12 @@ impl Drop for SymmState {
 }
 
 pub struct RsaBlock<const BLOCK_SIZE: usize>(pub [u8; BLOCK_SIZE]);
+
+impl<const BLOCK_SIZE: usize> Debug for RsaBlock<BLOCK_SIZE> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{}-bit RSA block", BLOCK_SIZE * 8)
+	}
+}
 
 impl<const BLOCK_SIZE: usize> Index<usize> for RsaBlock<BLOCK_SIZE> {
 	type Output = u8;

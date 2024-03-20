@@ -6,7 +6,9 @@ pub mod encryption;
 #[cfg(feature = "compression")]
 pub mod compression;
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, FromVecWithNulError};
+use std::hash::Hash;
 use std::io;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
@@ -17,13 +19,25 @@ use thiserror::Error;
 pub use ende_derive::{Encode, Decode};
 use parse_display::Display;
 
-pub fn encode_with<T: Write, V: Encode>(writer: T, options: BinOptions, value: V) -> EncodingResult<()> {
+pub fn encode_with<T: Write, V: Encode>(writer: &mut T, options: BinOptions, value: V) -> EncodingResult<()> {
 	let mut stream = BinStream::new(writer, options);
 	value.encode(&mut stream)
 }
 
-pub fn decode_with<T: Read, V: Decode>(reader: T, options: BinOptions) -> EncodingResult<V> {
+#[cfg(feature = "encryption")]
+pub fn encode_with_crypto_params<T: Write, V: Encode>(writer: &mut T, options: BinOptions, crypto: encryption::CryptoState, value: V) -> EncodingResult<()> {
+	let mut stream = BinStream::with_crypto_params(writer, options, crypto);
+	value.encode(&mut stream)
+}
+
+pub fn decode_with<T: Read, V: Decode>(reader: &mut T, options: BinOptions) -> EncodingResult<V> {
 	let mut stream = BinStream::new(reader, options);
+	V::decode(&mut stream)
+}
+
+#[cfg(feature = "encryption")]
+pub fn decode_with_crypto_params<T: Read, V: Decode>(writer: &mut T, options: BinOptions, crypto: encryption::CryptoState) -> EncodingResult<V> {
+	let mut stream = BinStream::with_crypto_params(writer, options, crypto);
 	V::decode(&mut stream)
 }
 
@@ -179,6 +193,15 @@ impl<T> BinStream<T> {
 			crypto: encryption::CryptoState::new()
 		}
 	}
+
+	#[cfg(feature = "encryption")]
+	pub fn with_crypto_params(stream: T, options: BinOptions, crypto: encryption::CryptoState) -> Self {
+		Self {
+			stream,
+			options,
+			crypto
+		}
+	}
 	
 	pub fn new_default(stream: T) -> Self {
 		Self {
@@ -201,6 +224,16 @@ impl<T: Write> BinStream<T> {
 	#[cfg(feature = "encryption")]
 	pub fn add_encryption(&mut self, encryption: encryption::Encryption, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<BinStream<encryption::Encrypt<&mut T>>> {
 		let options = self.options;
+		let key = if let Some(key) = key {
+			Some(key)
+		} else {
+			self.crypto.symm.get_key()
+		};
+		let iv = if let Some(iv) = iv {
+			Some(iv)
+		} else {
+			self.crypto.symm.get_iv()
+		};
 		Ok(BinStream::new(encryption.encrypt(&mut self.stream, key, iv)?, options))
 	}
 
@@ -215,6 +248,16 @@ impl<T: Read> BinStream<T> {
 	#[cfg(feature = "encryption")]
 	pub fn add_decryption(&mut self, encryption: encryption::Encryption, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<BinStream<encryption::Decrypt<&mut T>>> {
 		let options = self.options;
+		let key = if let Some(key) = key {
+			Some(key)
+		} else {
+			self.crypto.symm.get_key()
+		};
+		let iv = if let Some(iv) = iv {
+			Some(iv)
+		} else {
+			self.crypto.symm.get_iv()
+		};
 		Ok(BinStream::new(encryption.decrypt(&mut self.stream, key, iv)?, options))
 	}
 
@@ -815,6 +858,30 @@ impl<T: Decode> Decode for Vec<T> {
 			vec.push(Decode::decode(decoder)?);
 		}
 		Ok(vec)
+	}
+}
+
+// Maps
+
+impl<K: Encode, V: Encode> Encode for HashMap<K, V> {
+	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
+		encoder.write_usize(self.len())?;
+		for (k, v) in self.iter() {
+			k.encode(encoder)?;
+			v.encode(encoder)?;
+		}
+		Ok(())
+	}
+}
+
+impl<K: Decode + Eq + Hash, V: Decode> Decode for HashMap<K, V> {
+	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
+		let size = decoder.read_usize()?;
+		let mut map = HashMap::with_capacity(size);
+		for _ in 0..size {
+			map.insert(K::decode(decoder)?, V::decode(decoder)?);
+		}
+		Ok(map)
 	}
 }
 

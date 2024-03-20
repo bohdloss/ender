@@ -927,7 +927,6 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
     let mut aggregate = TokenStream2::new();
 
 	let mut found = false;
-	let mut rsa_found = false;
 
 	for flag in attrs.iter() {
 		let middle = match flag {
@@ -987,16 +986,15 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 			Flag::Encrypted { encryption, key, .. } => {
 				if let EncryptionParam::Static(x) = encryption {
 					if let Encryption::Rsa(_bits, padding, mode) = x {
-						rsa_found = true;
 
-						let key = if let Some(key) = key { key } else {
-							make_error!(??? key.span(), "RSA requires a key to be specified")
-						};
+						let key = key.as_ref().map(|key| {
+							quote!(#source.crypto.rsa.store_key(#key);)
+						});
 
 						quote!(
 							#source.crypto.rsa.padding = #padding;
 							#source.crypto.rsa.mode = #mode;
-							#source.crypto.rsa.store_key(#key);
+							#key
 						)
 					} else { continue }
 				} else { continue }
@@ -1013,14 +1011,11 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 		return Ok((TokenStream2::new(), TokenStream2::new()));
 	}
 
-	let rsa_reset = rsa_found.then_some(quote!(#source.crypto.rsa.reset_key();));
-
 	Ok((quote!(
 		let #ident: #dollar_crate::BinOptions = #source.options;
 		#aggregate
 	),
 	quote!(
-		#rsa_reset
 		#source.options = #ident;
 	)))
 }
