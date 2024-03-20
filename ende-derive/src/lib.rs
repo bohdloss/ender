@@ -196,6 +196,17 @@ enum RsaBits {
 	N4096,
 }
 
+impl ToTokens for RsaBits {
+	fn to_tokens(&self, tokens: &mut TokenStream2) {
+		let dollar_crate = dollar_crate(ENDE);
+		tokens.append_all(match self {
+			RsaBits::N1024 => quote!(#dollar_crate::encryption::RsaBits::N1024),
+			RsaBits::N2048 => quote!(#dollar_crate::encryption::RsaBits::N2048),
+			RsaBits::N4096 => quote!(#dollar_crate::encryption::RsaBits::N4096),
+		})
+	}
+}
+
 #[allow(unused)]
 enum RsaMode {
 	Normal,
@@ -991,15 +1002,20 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 					#source.options.flatten = { #depth };
 				)
 			}
-			Flag::Encrypted { encryption, key, .. } => {
+			Flag::Encrypted { encryption, key, iv, .. } => {
 				if let EncryptionParam::Static(x) = encryption {
-					if let Encryption::Rsa(_bits, padding, mode) = x {
+					if let Encryption::Rsa(bits, padding, mode) = x {
+
+						if iv.is_some() {
+							make_error!(??? iv.span(), "IVs are not needed for RSA encryption");
+						}
 
 						let key = key.as_ref().map(|key| {
 							quote!(#source.crypto.rsa.store_key(#key);)
 						});
 
 						quote!(
+							#source.crypto.rsa.bits = #bits;
 							#source.crypto.rsa.padding = #padding;
 							#source.crypto.rsa.mode = #mode;
 							#key

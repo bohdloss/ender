@@ -36,8 +36,8 @@ pub fn decode_with<T: Read, V: Decode>(reader: &mut T, options: BinOptions) -> E
 }
 
 #[cfg(feature = "encryption")]
-pub fn decode_with_crypto_params<T: Read, V: Decode>(writer: &mut T, options: BinOptions, crypto: encryption::CryptoState) -> EncodingResult<V> {
-	let mut stream = BinStream::with_crypto_params(writer, options, crypto);
+pub fn decode_with_crypto_params<T: Read, V: Decode>(reader: &mut T, options: BinOptions, crypto: encryption::CryptoState) -> EncodingResult<V> {
+	let mut stream = BinStream::with_crypto_params(reader, options, crypto);
 	V::decode(&mut stream)
 }
 
@@ -768,25 +768,40 @@ impl Encode for &str {
 
 impl Encode for CString {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		encoder.write_raw_bytes(self.as_bytes_with_nul())
+		if encoder.options.flatten(0) == 0 {
+			encoder.write_raw_bytes(self.as_bytes_with_nul())
+		} else {
+			encoder.write_raw_bytes(self.as_bytes())
+		}
 	}
 }
 
 impl Decode for CString {
 	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		let mut last_byte: u8;
-		let mut buffer = Vec::new();
-		while { last_byte = decoder.read_u8()?; last_byte != 0 } {
-			buffer.push(last_byte);
+		let flatten = decoder.options.flatten(0);
+		if flatten == 0 {
+			let mut last_byte: u8;
+			let mut buffer = Vec::new();
+			while { last_byte = decoder.read_u8()?; last_byte != 0 } {
+				buffer.push(last_byte);
+			}
+			buffer.push(0u8);
+			Ok(CString::from_vec_with_nul(buffer)?)
+		} else {
+			let mut buffer = vec![0; flatten + 1];
+			decoder.read_raw_bytes(&mut buffer[..flatten])?;
+			Ok(CString::from_vec_with_nul(buffer)?)
 		}
-		buffer.push(0u8);
-		Ok(CString::from_vec_with_nul(buffer)?)
 	}
 }
 
 impl Encode for CStr {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		encoder.write_raw_bytes(self.to_bytes_with_nul())
+		if encoder.options.flatten(0) == 0 {
+			encoder.write_raw_bytes(self.to_bytes_with_nul())
+		} else {
+			encoder.write_raw_bytes(self.to_bytes())
+		}
 	}
 }
 

@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use std::io;
 use std::io::{Read, Write};
-use std::ops::{Index, Range, RangeFrom, RangeFull, RangeTo};
+use std::ops::{Deref, DerefMut};
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
 use openssl::error::ErrorStack;
@@ -91,9 +91,22 @@ pub enum RsaPadding {
 #[ende(variant: 8)]
 #[allow(non_camel_case_types)]
 pub enum RsaBits {
+	#[display("1024")]
 	N1024,
+	#[display("2048")]
 	N2048,
+	#[display("4096")]
 	N4096,
+}
+
+impl RsaBits {
+	pub fn bits(&self) -> u32 {
+		match self {
+			RsaBits::N1024 => 1024,
+			RsaBits::N2048 => 2048,
+			RsaBits::N4096 => 4096,
+		}
+	}
 }
 
 impl RsaPadding {
@@ -119,6 +132,7 @@ pub enum RsaMode {
 #[display("padding: {padding}, mode = {mode}")]
 pub struct RsaState {
 	key: Vec<u8>,
+	pub bits: RsaBits,
 	pub padding: RsaPadding,
 	pub mode: RsaMode,
 }
@@ -127,7 +141,8 @@ impl RsaState {
 	pub const fn new() -> Self {
 		Self {
 			key: Vec::new(),
-			padding: RsaPadding::None,
+			bits: RsaBits::N2048,
+			padding: RsaPadding::Pkcs1,
 			mode: RsaMode::Normal,
 		}
 	}
@@ -230,58 +245,37 @@ impl Drop for SymmState {
 	}
 }
 
-pub struct RsaBlock<const BLOCK_SIZE: usize>(pub [u8; BLOCK_SIZE]);
+pub struct RsaBlock(pub Vec<u8>);
 
-impl<const BLOCK_SIZE: usize> Debug for RsaBlock<BLOCK_SIZE> {
+impl Deref for RsaBlock {
+	type Target = [u8];
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
+impl DerefMut for RsaBlock {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.0
+	}
+}
+
+impl Debug for RsaBlock {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}-bit RSA block", BLOCK_SIZE * 8)
+		write!(f, "{}-bit RSA block", self.0.len() * 8)
 	}
 }
 
-impl<const BLOCK_SIZE: usize> Index<usize> for RsaBlock<BLOCK_SIZE> {
-	type Output = u8;
-	fn index(&self, index: usize) -> &Self::Output {
-		self.0.index(index)
-	}
-}
-
-impl<const BLOCK_SIZE: usize> Index<Range<usize>> for RsaBlock<BLOCK_SIZE> {
-	type Output = [u8];
-	fn index(&self, index: Range<usize>) -> &Self::Output {
-		self.0.index(index)
-	}
-}
-
-impl<const BLOCK_SIZE: usize> Index<RangeTo<usize>> for RsaBlock<BLOCK_SIZE> {
-	type Output = [u8];
-	fn index(&self, index: RangeTo<usize>) -> &Self::Output {
-		self.0.index(index)
-	}
-}
-
-impl<const BLOCK_SIZE: usize> Index<RangeFrom<usize>> for RsaBlock<BLOCK_SIZE> {
-	type Output = [u8];
-	fn index(&self, index: RangeFrom<usize>) -> &Self::Output {
-		self.0.index(index)
-	}
-}
-
-impl<const BLOCK_SIZE: usize> Index<RangeFull> for RsaBlock<BLOCK_SIZE> {
-	type Output = [u8];
-	fn index(&self, index: RangeFull) -> &Self::Output {
-		self.0.index(index)
-	}
-}
-
-fn rsa_encrypt<const BLOCK_SIZE: usize, T: Write>(encoder: &mut BinStream<T>, data: &[u8; BLOCK_SIZE]) -> EncodingResult<()> {
-	let mut temp = [0u8; BLOCK_SIZE];
+fn rsa_encrypt<T: Write>(encoder: &mut BinStream<T>, data: &[u8]) -> EncodingResult<()> {
+	let expected_bytes = (encoder.crypto.rsa.bits.bits() / 8) as usize;
+	let mut temp = vec![0u8; data.len()];
 	match encoder.crypto.rsa.mode {
 		RsaMode::Normal => {
 			let rsa: Rsa<Public> = Rsa::public_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			let num_bytes = rsa.n().num_bytes() as usize;
-			if num_bytes != BLOCK_SIZE {
-				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(num_bytes)))
+			let key_length = rsa.n().num_bytes() as usize;
+			if key_length != expected_bytes || data.len() != expected_bytes {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(key_length)))
 			}
 
 			rsa.public_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
@@ -290,29 +284,40 @@ fn rsa_encrypt<const BLOCK_SIZE: usize, T: Write>(encoder: &mut BinStream<T>, da
 		RsaMode::Reverse => {
 			let rsa: Rsa<Private> = Rsa::private_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			let num_bytes = rsa.n().num_bytes() as usize;
-			if num_bytes != BLOCK_SIZE {
-				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(num_bytes)))
+			let key_length = rsa.n().num_bytes() as usize;
+			if key_length != expected_bytes || data.len() != expected_bytes {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(key_length)))
 			}
 
 			rsa.private_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
 		}
 	}
-	encoder.write_raw_bytes(&temp)
+	
+	// Our custom flatten condition is handled just fine
+	// by the default encode implementation
+	data.encode(encoder)
 }
 
-fn rsa_decrypt<const BLOCK_SIZE: usize, T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<[u8; BLOCK_SIZE]> {
-	let mut temp = [0u8; BLOCK_SIZE];
-	let mut data = [0u8; BLOCK_SIZE];
-	decoder.read_raw_bytes(&mut temp)?;
+fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
+	let expected_bytes = (decoder.crypto.rsa.bits.bits() / 8) as usize;
+	let temp: Vec<u8> = {
+		// Flatten behaves differently here:
+		// we ignore its value and use the number of rsa bits if it is present
+		if decoder.options.flatten != 0 {
+			decoder.options.flatten = expected_bytes;
+		}
+		
+		Vec::decode(decoder)?
+	};
+	let mut data = vec![0u8; temp.len()];
 	match decoder.crypto.rsa.mode {
 		RsaMode::Normal => {
 			let rsa: Rsa<Private> = Rsa::private_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			let num_bytes = rsa.n().num_bytes() as usize;
-			if num_bytes != BLOCK_SIZE {
-				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(num_bytes)))
+			let key_length = rsa.n().num_bytes() as usize;
+			if key_length != expected_bytes || data.len() != expected_bytes {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(key_length)))
 			}
 
 			rsa.private_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
@@ -321,9 +326,9 @@ fn rsa_decrypt<const BLOCK_SIZE: usize, T: Read>(decoder: &mut BinStream<T>) -> 
 		RsaMode::Reverse => {
 			let rsa: Rsa<Public> = Rsa::public_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			let num_bytes = rsa.n().num_bytes() as usize;
-			if num_bytes != BLOCK_SIZE {
-				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(num_bytes)))
+			let key_length = rsa.n().num_bytes() as usize;
+			if key_length != expected_bytes || data.len() != expected_bytes {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(key_length)))
 			}
 
 			rsa.public_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
@@ -333,37 +338,13 @@ fn rsa_decrypt<const BLOCK_SIZE: usize, T: Read>(decoder: &mut BinStream<T>) -> 
 	Ok(data)
 }
 
-impl Encode for RsaBlock<128> {
+impl Encode for RsaBlock {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
 		rsa_encrypt(encoder, &self.0)
 	}
 }
 
-impl Decode for RsaBlock<128> {
-	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		Ok(Self(rsa_decrypt(decoder)?))
-	}
-}
-
-impl Encode for RsaBlock<256> {
-	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		rsa_encrypt(encoder, &self.0)
-	}
-}
-
-impl Decode for RsaBlock<256> {
-	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		Ok(Self(rsa_decrypt(decoder)?))
-	}
-}
-
-impl Encode for RsaBlock<512> {
-	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		rsa_encrypt(encoder, &self.0)
-	}
-}
-
-impl Decode for RsaBlock<512> {
+impl Decode for RsaBlock {
 	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
 		Ok(Self(rsa_decrypt(decoder)?))
 	}
