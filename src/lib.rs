@@ -156,13 +156,9 @@ impl BinOptions {
 		}
 	}
 	
-	pub fn flatten(&mut self, sub: usize) -> usize {
+	pub fn flatten(&mut self) -> usize {
 		let old = self.flatten;
-		if sub == 0 {
-			self.flatten = 0;
-		} else {
-			self.flatten = self.flatten.saturating_sub(sub);
-		}
+		self.flatten = 0;
 		old
 	}
 }
@@ -477,7 +473,7 @@ impl<T: Write> BinStream<T> {
 	make_signed_write_fn!(_write_i64 => _write_i64_size => _write_i64_variant => write_i64 => i64);
 	make_signed_write_fn!(_write_i128 => _write_i128_size => _write_i128_variant => write_i128 => i128);
 	pub fn write_length(&mut self, value: usize) -> EncodingResult<()> {
-		if self.options.flatten(0) == 0 {
+		if self.options.flatten() == 0 {
 			self.write_usize(value)?;
 		}
 		Ok(())
@@ -559,7 +555,7 @@ impl<T: Read> BinStream<T> {
 	make_signed_read_fn!(_read_i64 => _read_i64_size => _read_i64_variant => read_i64 => i64);
 	make_signed_read_fn!(_read_i128 => _read_i128_size => _read_i128_variant => read_i128 => i128);
 	pub fn read_length(&mut self) -> EncodingResult<usize> {
-		let flatten = self.options.flatten(0);
+		let flatten = self.options.flatten();
 		if flatten == 0 {
 			self.read_usize()
 		} else {
@@ -768,7 +764,7 @@ impl Encode for &str {
 
 impl Encode for CString {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		if encoder.options.flatten(0) == 0 {
+		if encoder.options.flatten() == 0 {
 			encoder.write_raw_bytes(self.as_bytes_with_nul())
 		} else {
 			encoder.write_raw_bytes(self.as_bytes())
@@ -778,7 +774,7 @@ impl Encode for CString {
 
 impl Decode for CString {
 	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		let flatten = decoder.options.flatten(0);
+		let flatten = decoder.options.flatten();
 		if flatten == 0 {
 			let mut last_byte: u8;
 			let mut buffer = Vec::new();
@@ -797,7 +793,7 @@ impl Decode for CString {
 
 impl Encode for CStr {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		if encoder.options.flatten(0) == 0 {
+		if encoder.options.flatten() == 0 {
 			encoder.write_raw_bytes(self.to_bytes_with_nul())
 		} else {
 			encoder.write_raw_bytes(self.to_bytes())
@@ -809,7 +805,7 @@ impl Encode for CStr {
 
 impl<T: Encode> Encode for Option<T> {
 	fn encode<G: Write>(&self, encoder: &mut BinStream<G>) -> EncodingResult<()> {
-		if encoder.options.flatten(1) > 0 {
+		if encoder.options.flatten() > 0 {
 			match self {
 				None => Ok(()),
 				Some(x) => {
@@ -830,7 +826,7 @@ impl<T: Encode> Encode for Option<T> {
 
 impl<T: Decode> Decode for Option<T> {
 	fn decode<G: Read>(decoder: &mut BinStream<G>) -> EncodingResult<Self> where Self: Sized {
-		if decoder.options.flatten(1) > 0 {
+		if decoder.options.flatten() > 0 {
 			Ok(Some(T::decode(decoder)?))
 		} else {
 			Ok(match decoder.read_bool()? {
@@ -1092,14 +1088,14 @@ mod serde {
 		}
 
 		fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-			if self.options.flatten(1) == 0 {
+			if self.options.flatten() == 0 {
 				self.write_bool(false)?;
 			}
 			Ok(())
 		}
 
 		fn serialize_some<G: ?Sized>(self, value: &G) -> Result<Self::Ok, Self::Error> where G: Serialize {
-			if self.options.flatten(1) == 0 {
+			if self.options.flatten() == 0 {
 				self.write_bool(true)?;
 			}
 			value.serialize(self)
@@ -1340,7 +1336,7 @@ mod serde {
 		}
 
 		fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-			if self.options.flatten(1) > 0 || self.read_bool()? {
+			if self.options.flatten() > 0 || self.read_bool()? {
 				visitor.visit_some(self)
 			} else {
 				visitor.visit_none()

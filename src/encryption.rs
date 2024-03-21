@@ -269,26 +269,39 @@ impl Debug for RsaBlock {
 fn rsa_encrypt<T: Write>(encoder: &mut BinStream<T>, data: &[u8]) -> EncodingResult<()> {
 	let expected_bytes = (encoder.crypto.rsa.bits.bits() / 8) as usize;
 	let mut temp = vec![0u8; data.len()];
+
+	// A mismatch between the data length and the key length is only expected
+	// when the padding scheme is set to None, otherwise we return an error
+	// However, if the data length is greater than the key length we error out anyway
+	if data.len() > expected_bytes || (data.len() != expected_bytes && encoder.crypto.rsa.padding != RsaPadding::None) {
+		return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
+	}
+	
 	match encoder.crypto.rsa.mode {
 		RsaMode::Normal => {
+			// In "normal" RSA encryption mode, we interpret the key as a public key
 			let rsa: Rsa<Public> = Rsa::public_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			let key_length = rsa.n().num_bytes() as usize;
-			if key_length != expected_bytes || data.len() != expected_bytes {
-				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(key_length)))
+			
+			// A mismatch in key lengths is always an error
+			if rsa.n().num_bytes() as usize != expected_bytes {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 			}
 
+			// Encrypt with the public key - as expected
 			rsa.public_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
 		}
 		RsaMode::Reverse => {
+			// In "reverse" mode, we interpret the key as a private key
 			let rsa: Rsa<Private> = Rsa::private_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			let key_length = rsa.n().num_bytes() as usize;
-			if key_length != expected_bytes || data.len() != expected_bytes {
-				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(key_length)))
+			
+			if rsa.n().num_bytes() as usize != expected_bytes {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 			}
 
+			// And do a private key encryption (useful for signatures)
 			rsa.private_encrypt(data, &mut temp, encoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
 		}
@@ -303,7 +316,7 @@ fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 	let expected_bytes = (decoder.crypto.rsa.bits.bits() / 8) as usize;
 	let temp: Vec<u8> = {
 		// Flatten behaves differently here:
-		// we ignore its value and use the number of rsa bits if it is present
+		// we ignore its value and use the number of rsa bits if the attribute is present
 		if decoder.options.flatten != 0 {
 			decoder.options.flatten = expected_bytes;
 		}
@@ -311,26 +324,38 @@ fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 		Vec::decode(decoder)?
 	};
 	let mut data = vec![0u8; temp.len()];
+
+	// A mismatch between the data length and the key length is only expected
+	// when the padding scheme is set to None, otherwise we return an error
+	// However, if the data length is greater than the key length we error out anyway
+	if data.len() > expected_bytes || (data.len() != expected_bytes && decoder.crypto.rsa.padding != RsaPadding::None) {
+		return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
+	}
+	
 	match decoder.crypto.rsa.mode {
 		RsaMode::Normal => {
+			// In "normal" RSA decryption mode, we interpret the key as a private key
 			let rsa: Rsa<Private> = Rsa::private_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			let key_length = rsa.n().num_bytes() as usize;
-			if key_length != expected_bytes || data.len() != expected_bytes {
-				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(key_length)))
+			
+			if rsa.n().num_bytes() as usize != expected_bytes {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 			}
 
+			// And use it to decrypt just like you would expect
 			rsa.private_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
 		}
 		RsaMode::Reverse => {
+			// In "reverse" mode we instead interpret it as a public key
 			let rsa: Rsa<Public> = Rsa::public_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			let key_length = rsa.n().num_bytes() as usize;
-			if key_length != expected_bytes || data.len() != expected_bytes {
-				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(key_length)))
+			
+			if rsa.n().num_bytes() as usize != expected_bytes {
+				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 			}
 
+			// And do a public key decryption (useful for signatures)
 			rsa.public_decrypt(&temp, &mut data, decoder.crypto.rsa.padding.to_openssl_padding())
 				.map_err(ese_to_ee)?;
 		}
