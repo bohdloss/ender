@@ -25,7 +25,8 @@ bitflags = "2.4.2"
 semver = { version = "1.0.22", features = ["serde"] }
 
 [features]
-all = ["serde", "encryption", "compression"]
+all = ["derive", "serde", "encryption", "compression"]
 serde = ["dep:serde"]
 encryption = ["dep:openssl", "dep:cryptostream"]
 compression = ["dep:flate2", "dep:zstd"]
+derive = []

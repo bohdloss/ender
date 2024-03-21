@@ -2,7 +2,9 @@ use std::io;
 use std::io::{BufReader, Read, Write};
 use parse_display::Display;
 use thiserror::Error;
-use crate::{BinStream, EncodingResult, Encode, Decode, Finish};
+use crate::{BinStream, EncodingResult, Finish};
+
+use ende_derive::{Encode, Decode};
 
 pub fn encode_with_compression<T, F>(
 	encoder: &mut BinStream<T>,
@@ -25,7 +27,7 @@ pub fn decode_with_compression<T, F, V>(
 ) -> EncodingResult<V>
 	where T: Read,
 	      F: FnOnce(&mut BinStream<Decompress<&mut T>>) -> EncodingResult<V>,
-	      V: Decode
+	      V: crate::Decode
 {
 	let mut decoder = decoder.add_decompression(compression)?;
 	let v = f(&mut decoder);

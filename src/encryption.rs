@@ -10,8 +10,10 @@ use openssl::rsa::{Padding, Rsa};
 use openssl::symm::Cipher;
 use parse_display::Display;
 use thiserror::Error;
-use crate::{Encode, Decode, EncodingResult, BinStream, EncodingError, Finish};
+use crate::{EncodingResult, BinStream, EncodingError, Finish};
 use crate::encryption::CryptoError::NoKey;
+
+use ende_derive::{Encode, Decode};
 
 pub fn encode_with_encryption<T, F>(
 	encoder: &mut BinStream<T>,
@@ -38,7 +40,7 @@ pub fn decode_with_encryption<T, F, V>(
 ) -> EncodingResult<V>
 	where T: Read,
 	      F: FnOnce(&mut BinStream<Decrypt<&mut T>>) -> EncodingResult<V>, 
-	      V: Decode
+	      V: crate::Decode
 {
 	let mut decoder = decoder.add_decryption(encryption, key, iv)?;
 	let v = f(&mut decoder);
@@ -309,7 +311,7 @@ fn rsa_encrypt<T: Write>(encoder: &mut BinStream<T>, data: &[u8]) -> EncodingRes
 	
 	// Our custom flatten condition is handled just fine
 	// by the default encode implementation
-	data.encode(encoder)
+	crate::Encode::encode(&data, encoder)
 }
 
 fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
@@ -321,7 +323,7 @@ fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 			decoder.options.flatten = Some(expected_bytes);
 		}
 		
-		Vec::decode(decoder)?
+		crate::Decode::decode(decoder)?
 	};
 	let mut data = vec![0u8; temp.len()];
 
@@ -363,13 +365,13 @@ fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 	Ok(data)
 }
 
-impl Encode for RsaBlock {
+impl crate::Encode for RsaBlock {
 	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
 		rsa_encrypt(encoder, &self.0)
 	}
 }
 
-impl Decode for RsaBlock {
+impl crate::Decode for RsaBlock {
 	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
 		Ok(Self(rsa_decrypt(decoder)?))
 	}

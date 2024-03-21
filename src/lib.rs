@@ -18,6 +18,7 @@ use std::string::FromUtf8Error;
 use array_init::array_init;
 use thiserror::Error;
 
+#[cfg(feature = "derive")]
 pub use ende_derive::{Encode, Decode};
 use parse_display::Display;
 
@@ -291,7 +292,9 @@ impl<T> Finish for BinStream<T> {
 
 impl<T: Write> BinStream<T> {
 	/// Returns a BinStream with the same options and crypto state,
-	/// but wraps the underlying stream in an [`encryption::Encrypt`]
+	/// but wraps the underlying stream in an [`encryption::Encrypt`].
+	/// When either the key or the iv are None, this function will try to fetch them
+	/// from the cryptostate
 	#[cfg(feature = "encryption")]
 	pub fn add_encryption(&mut self, encryption: encryption::Encryption, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<BinStream<encryption::Encrypt<&mut T>>> {
 		let options = self.options;
@@ -327,6 +330,8 @@ impl<T: Write> BinStream<T> {
 impl<T: Read> BinStream<T> {
 	/// Returns a BinStream with the same options and crypto state,
 	/// but wraps the underlying stream in an [`encryption::Decrypt`]
+	/// When either the key or the iv are None, this function will try to fetch them
+	/// from the cryptostate
 	#[cfg(feature = "encryption")]
 	pub fn add_decryption(&mut self, encryption: encryption::Encryption, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<BinStream<encryption::Decrypt<&mut T>>> {
 		let options = self.options;
