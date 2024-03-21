@@ -88,7 +88,7 @@ pub enum EncryptionTest {
 	A {
 		rsa_private: [u8; 512],
 		iv: [u8; 16],
-		#[ende(encrypted = "2048-bit RSA/ECB/PKCS1", rsa_private)]
+		#[ende(encrypted = "2048-bit RSA/ECB/PKCS1", key: rsa_private)]
 		key: RsaBlock,
 		encryption: crate::encryption::Encryption,
 		#[ende(encrypted = "128-bit AES/CFB8")]

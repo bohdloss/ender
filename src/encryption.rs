@@ -276,13 +276,13 @@ fn rsa_encrypt<T: Write>(encoder: &mut BinStream<T>, data: &[u8]) -> EncodingRes
 	if data.len() > expected_bytes || (data.len() != expected_bytes && encoder.crypto.rsa.padding != RsaPadding::None) {
 		return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 	}
-	
+
 	match encoder.crypto.rsa.mode {
 		RsaMode::Normal => {
 			// In "normal" RSA encryption mode, we interpret the key as a public key
 			let rsa: Rsa<Public> = Rsa::public_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			
+
 			// A mismatch in key lengths is always an error
 			if rsa.n().num_bytes() as usize != expected_bytes {
 				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
@@ -296,7 +296,7 @@ fn rsa_encrypt<T: Write>(encoder: &mut BinStream<T>, data: &[u8]) -> EncodingRes
 			// In "reverse" mode, we interpret the key as a private key
 			let rsa: Rsa<Private> = Rsa::private_key_from_der(encoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			
+
 			if rsa.n().num_bytes() as usize != expected_bytes {
 				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 			}
@@ -331,13 +331,13 @@ fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 	if data.len() > expected_bytes || (data.len() != expected_bytes && decoder.crypto.rsa.padding != RsaPadding::None) {
 		return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 	}
-	
+
 	match decoder.crypto.rsa.mode {
 		RsaMode::Normal => {
 			// In "normal" RSA decryption mode, we interpret the key as a private key
 			let rsa: Rsa<Private> = Rsa::private_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			
+
 			if rsa.n().num_bytes() as usize != expected_bytes {
 				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 			}
@@ -350,7 +350,7 @@ fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 			// In "reverse" mode we instead interpret it as a public key
 			let rsa: Rsa<Public> = Rsa::public_key_from_der(decoder.crypto.rsa.get_key().ok_or(NoKey)?)
 				.map_err(ese_to_ee)?;
-			
+
 			if rsa.n().num_bytes() as usize != expected_bytes {
 				return Err(EncodingError::EncryptionError(CryptoError::WrongKeySize(expected_bytes)))
 			}
@@ -479,6 +479,20 @@ pub enum Encryption {
 	None,
 	#[display("{0}-bit AES/{1}")]
 	Aes(AesBits, AesMode)
+}
+
+impl Encryption {
+	pub fn key_len(&self) -> usize {
+		self.cipher().map(|cipher| cipher.key_len()).unwrap_or(0)
+	}
+
+	pub fn iv_len(&self) -> usize {
+		self.cipher().and_then(|cipher| cipher.iv_len()).unwrap_or(0)
+	}
+	
+	pub fn block_size(&self) -> usize {
+		self.cipher().map(|cipher| cipher.block_size()).unwrap_or(1)
+	}
 }
 
 impl Encryption {

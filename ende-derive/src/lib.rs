@@ -4,7 +4,7 @@ use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned, TokenStreamExt, ToTokens};
 use syn::{Attribute, Data, DataEnum, DataStruct, DeriveInput, Expr, Fields, LitInt, LitStr, parse_macro_input, token, Type, Variant};
 use syn::{Token, parenthesized, Error};
-use syn::token::{Paren, Comma, If, Semi};
+use syn::token::{Paren, Comma, If, Semi, Colon};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -75,6 +75,9 @@ mod kw {
 	custom_keyword!(num);
 	custom_keyword!(size);
 	custom_keyword!(variant);
+
+	custom_keyword!(key);
+	custom_keyword!(iv);
 }
 
 mod repr {
@@ -541,6 +544,49 @@ impl CompressionParam {
 }
 
 #[allow(unused)]
+enum EncryptionParameters {
+	Key {
+		kw: kw::key,
+		colon: Colon,
+		key: Expr,
+	},
+	Iv {
+		kw: kw::iv,
+		colon: Colon,
+		iv: Expr,
+	},
+}
+
+impl EncryptionParameters {
+	fn span(&self) -> Span {
+		match self {
+			EncryptionParameters::Key { kw, .. } => kw.span,
+			EncryptionParameters::Iv { kw, .. } => kw.span
+		}
+	}
+}
+
+impl Parse for EncryptionParameters {
+	fn parse(input: ParseStream) -> syn::Result<Self> {
+		Ok(if input.peek(kw::key) {
+			Self::Key {
+				kw: input.parse()?,
+				colon: input.parse()?,
+				key: input.parse()?,
+			}
+		} else if input.peek(kw::iv) {
+			Self::Iv {
+				kw: input.parse()?,
+				colon: input.parse()?,
+				iv: input.parse()?,
+			}
+		} else {
+			return Err(Error::new(input.span(), "Unknown encryption parameter"))
+		})
+	}
+}
+
+#[allow(unused)]
 enum Flag {
 	Serde(kw::serde),
 	Skip(kw::skip),
@@ -577,9 +623,9 @@ enum Flag {
 		eq: token::Eq,
 		encryption: EncryptionParam,
 		comma1: Option<Comma>,
-		key: Option<Expr>,
+		params1: Option<EncryptionParameters>,
 		comma2: Option<Comma>,
-		iv: Option<Expr>
+		params2: Option<EncryptionParameters>,
 	},
 	Compressed {
 		kw: kw::compressed,
@@ -781,13 +827,13 @@ impl Parse for Flag {
 				EncryptionParam::Expr(input.parse()?)
 			};
 
-			let (comma1, key) = if input.peek(Comma) {
+			let (comma1, params1) = if input.peek(Comma) {
 				(Some(input.parse()?), Some(input.parse()?))
 			} else {
 				(None, None)
 			};
 
-			let (comma2, iv) = if input.peek(Comma) {
+			let (comma2, params2) = if input.peek(Comma) {
 				(Some(input.parse()?), Some(input.parse()?))
 			} else {
 				(None, None)
@@ -798,9 +844,9 @@ impl Parse for Flag {
 				eq,
 				encryption,
 				comma1,
-				key,
+				params1,
 				comma2,
-				iv,
+				params2,
 			}
 		} else if input.peek(kw::compressed) {
 			let kw = input.parse()?;
@@ -1002,15 +1048,24 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 					#source.options.flatten = { #depth };
 				)
 			}
-			Flag::Encrypted { encryption, key, iv, .. } => {
+			Flag::Encrypted { encryption, params1, params2, .. } => {
 				if let EncryptionParam::Static(x) = encryption {
 					if let Encryption::Rsa(bits, padding, mode) = x {
-
-						if iv.is_some() {
-							make_error!(??? iv.span(), "IVs are not needed for RSA encryption");
+						let mut key = None;
+						if let Some(x) = params1 {
+							match x {
+								EncryptionParameters::Key { key: _key, .. } => key = Some(_key),
+								EncryptionParameters::Iv { .. } => make_error!(??? x.span(), "IVs are not needed for RSA encryption")
+							}
+						}
+						if let Some(x) = params2 {
+							match x {
+								EncryptionParameters::Key { key: _key, .. } => key = Some(_key),
+								EncryptionParameters::Iv { .. } => make_error!(??? x.span(), "IVs are not needed for RSA encryption")
+							}
 						}
 
-						let key = key.as_ref().map(|key| {
+						let key = key.map(|key| {
 							quote!(#source.crypto.rsa.store_key(#key);)
 						});
 
@@ -1072,8 +1127,25 @@ fn apply_stream_modifiers(is_encode: bool, code: TokenStream2, attrs: &[Flag]) -
 					)
 				};
 			},
-			Flag::Encrypted { encryption, key, iv, .. } => {
+			Flag::Encrypted { encryption, params1, params2, .. } => {
 				if encryption.is_rsa() { continue }
+
+				let mut key = None;
+				let mut iv = None;
+
+				if let Some(x) = params1 {
+					match x {
+						EncryptionParameters::Key { key: _key, .. } => key = Some(_key),
+						EncryptionParameters::Iv { iv: _iv, .. } => iv = Some(_iv),
+					}
+				}
+				if let Some(x) = params2 {
+					match x {
+						EncryptionParameters::Key { key: _key, .. } => key = Some(_key),
+						EncryptionParameters::Iv { iv: _iv, .. } => iv = Some(_iv),
+					}
+				}
+
 
 				let key: TokenStream2 = key.as_ref().map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
 				let iv: TokenStream2 = iv.as_ref().map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
