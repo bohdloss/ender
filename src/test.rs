@@ -24,7 +24,7 @@ pub struct UnitStruct;
 
 #[derive(Encode, Decode)]
 #[repr(isize)]
-#[ende(size: 64; variant: 64)]
+#[ende(size: 64; variant: 64, leb128)]
 pub enum Enum {
 	StructVariant {
 		value1: u64,
@@ -100,7 +100,7 @@ pub enum EncryptionTest {
 pub fn test() {
 	let mem = File::options().create(true).write(true).read(true).open("./test.bin").unwrap();
 	let mut options = BinOptions::default();
-	options.num_repr.num_encoding = NumEncoding::Leb128Int;
+	options.num_repr.num_encoding = NumEncoding::Leb128;
 	let mut stream = BinStream::new(mem, options);
 
 	let orig = i128::MIN;

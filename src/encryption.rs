@@ -317,8 +317,8 @@ fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 	let temp: Vec<u8> = {
 		// Flatten behaves differently here:
 		// we ignore its value and use the number of rsa bits if the attribute is present
-		if decoder.options.flatten != 0 {
-			decoder.options.flatten = expected_bytes;
+		if decoder.options.flatten.is_some() {
+			decoder.options.flatten = Some(expected_bytes);
 		}
 		
 		Vec::decode(decoder)?

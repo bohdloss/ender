@@ -1000,16 +1000,16 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 				for modifier in modifiers.iter() {
 					aggregate.append_all(match &modifier {
 						Modifier::FixedInt(_) => {quote!(
-							#source.options.#target.num_encoding = #dollar_crate::NumEncoding::FixedInt;
+							#source.options.#target.num_encoding = #dollar_crate::NumEncoding::Fixed;
 						)}
 						Modifier::Leb128Int(_) => {quote!(
-							#source.options.#target.num_encoding = #dollar_crate::NumEncoding::Leb128Int;
+							#source.options.#target.num_encoding = #dollar_crate::NumEncoding::Leb128;
 						)}
 						Modifier::BigEndian(_) => {quote!(
 							#source.options.#target.endianness = #dollar_crate::Endianness::BigEndian;
 						)}
 						Modifier::LittleEndian(_) => {quote!(
-							#source.options.#target.endianness = #dollar_crate::Endianness::BigEndian;
+							#source.options.#target.endianness = #dollar_crate::Endianness::LittleEndian;
 						)}
 						Modifier::MaxSize { max, .. } => {
 							match target {
@@ -1045,10 +1045,11 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 				let depth = depth.as_ref().map(ToTokens::to_token_stream).unwrap_or(quote!(1usize));
 
 				quote!(
-					#source.options.flatten = { #depth };
+					#source.options.flatten = Some({ #depth });
 				)
 			}
 			Flag::Encrypted { encryption, params1, params2, .. } => {
+				// Rsa encryption acts like a modifier, so we handle it here
 				if let EncryptionParam::Static(x) = encryption {
 					if let Encryption::Rsa(bits, padding, mode) = x {
 						let mut key = None;
@@ -1831,8 +1832,8 @@ fn do_derive(input: &DeriveInput, is_encode: bool) -> Result<TokenStream2, Token
 /// deserialized (`Default::default()`)
 /// * `#[ende(skip)]` - Will not encode/decode this field.
 /// When decoding, computes the default value
-/// * `#[ende(validate = $expr)]` - Before encoding/after decoding, returns an error if the
-/// expression evaluates to false
+/// * `#[ende(validate = $expr, $format_string, $arg1, $arg2, $arg3, ...)]` - Before encoding/after decoding, returns an error if the
+/// expression evaluates to false. The error message will use the given formatting (if present)
 /// * `#[ende(flatten = $expr)]` - Indicates that the length of the given field (for example
 /// a Vec or HashMap) doesn't need to be encoded/decoded, because it is known from the context.
 /// Can also be used with an `Option` in conjunction with the `if` flag and without the `$expr`
@@ -1858,10 +1859,10 @@ fn do_derive(input: &DeriveInput, is_encode: bool) -> Result<TokenStream2, Token
 ///     #[ende(flatten; if = *name_present)]
 ///     name: Option<String>,
 ///     /// Only present if the name is also present, but we want to provide a custom default!
-///     #[ende(default = String::new("Smith"); if = *name_present)]
+///     #[ende(default = String::from("Smith"); if = *name_present)]
 ///     surname: String,
 ///     /// No-one allowed before 18!
-///     #[ende(validate = *age >= 18)]
+///     #[ende(validate = *age >= 18, "User is too young: {}", age)]
 ///     age: u32
 /// }
 /// ```
@@ -1959,8 +1960,8 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
 /// deserialized (`Default::default()`)
 /// * `#[ende(skip)]` - Will not encode/decode this field.
 /// When decoding, computes the default value
-/// * `#[ende(validate = $expr)]` - Before encoding/after decoding, returns an error if the
-/// expression evaluates to false
+/// * `#[ende(validate = $expr, $format_string, $arg1, $arg2, $arg3, ...)]` - Before encoding/after decoding, returns an error if the
+/// expression evaluates to false. The error message will use the given formatting (if present)
 /// * `#[ende(flatten = $expr)]` - Indicates that the length of the given field (for example
 /// a Vec or HashMap) doesn't need to be encoded/decoded, because it is known from the context.
 /// Can also be used with an `Option` in conjunction with the `if` flag and without the `$expr`
@@ -1986,10 +1987,10 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
 ///     #[ende(flatten; if = *name_present)]
 ///     name: Option<String>,
 ///     /// Only present if the name is also present, but we want to provide a custom default!
-///     #[ende(default = String::new("Smith"); if = *name_present)]
+///     #[ende(default = String::from("Smith"); if = *name_present)]
 ///     surname: String,
 ///     /// No-one allowed before 18!
-///     #[ende(validate = *age >= 18)]
+///     #[ende(validate = *age >= 18, "User is too young: {}", age)]
 ///     age: u32
 /// }
 /// ```
