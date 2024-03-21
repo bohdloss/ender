@@ -21,22 +21,38 @@ use thiserror::Error;
 pub use ende_derive::{Encode, Decode};
 use parse_display::Display;
 
+/// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
+/// with the given options.
+/// If you have the need of preserving resources, it is recommended to keep an instance
+/// of [`BinStream`] instead of continuously calling this method.
 pub fn encode_with<T: Write, V: Encode>(writer: &mut T, options: BinOptions, value: V) -> EncodingResult<()> {
 	let mut stream = BinStream::new(writer, options);
 	value.encode(&mut stream)
 }
 
+/// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
+/// with the given options and cryptostate.
+/// If you have the need of preserving resources, it is recommended to keep an instance
+/// of [`BinStream`] instead of continuously calling this method.
 #[cfg(feature = "encryption")]
 pub fn encode_with_crypto_params<T: Write, V: Encode>(writer: &mut T, options: BinOptions, crypto: encryption::CryptoState, value: V) -> EncodingResult<()> {
 	let mut stream = BinStream::with_crypto_params(writer, options, crypto);
 	value.encode(&mut stream)
 }
 
+/// Decodes the given type by constructing an encoder on the fly and using it to wrap the reader,
+/// with the given options.
+/// If you have the need of preserving resources, it is recommended to keep an instance
+/// of [`BinStream`] instead of continuously calling this method.
 pub fn decode_with<T: Read, V: Decode>(reader: &mut T, options: BinOptions) -> EncodingResult<V> {
 	let mut stream = BinStream::new(reader, options);
 	V::decode(&mut stream)
 }
 
+/// Decodes the given type by constructing an encoder on the fly and using it to wrap the reader,
+/// with the given options and cryptostate.
+/// If you have the need of preserving resources, it is recommended to keep an instance
+/// of [`BinStream`] instead of continuously calling this method.
 #[cfg(feature = "encryption")]
 pub fn decode_with_crypto_params<T: Read, V: Decode>(reader: &mut T, options: BinOptions, crypto: encryption::CryptoState) -> EncodingResult<V> {
 	let mut stream = BinStream::with_crypto_params(reader, options, crypto);
@@ -826,7 +842,7 @@ pub enum EncodingError {
 	/// Tried to decode an unrecognized enum variant
 	#[error("Unrecognized enum variant")]
 	InvalidVariant,
-	/// A '#[ende(validate = ...)]` check failed
+	/// A `#[ende(validate = ...)]` check failed
 	#[error("Validation error: {0}")]
 	ValidationError(String),
 	/// A generic serde error occurred
