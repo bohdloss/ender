@@ -319,7 +319,7 @@ impl<T: Write> BinStream<T> {
 		let options = self.options;
 		#[cfg(feature = "encryption")]
 		let crypto = self.crypto.clone();
-		
+
 		#[cfg(not(feature = "encryption"))]
 		return Ok(BinStream::new(compression.compress(&mut self.stream)?, options));
 		#[cfg(feature = "encryption")]
@@ -582,7 +582,7 @@ impl<T: Write> BinStream<T> {
 	make_signed_write_fn!(_write_i32 => _write_i32_size => _write_i32_variant => write_i32 => i32);
 	make_signed_write_fn!(_write_i64 => _write_i64_size => _write_i64_variant => write_i64 => i64);
 	make_signed_write_fn!(_write_i128 => _write_i128_size => _write_i128_variant => write_i128 => i128);
-	
+
 	/// Encodes a length. If the flatten attribute is set to Some, this function is a no-op,
 	/// otherwise it will behave identically to [`Self::write_usize`].
 	pub fn write_length(&mut self, value: usize) -> EncodingResult<()> {
@@ -591,7 +591,7 @@ impl<T: Write> BinStream<T> {
 		}
 		Ok(())
 	}
-	
+
 	/// Encodes a `usize` to the underlying stream, according to the endianness,
 	/// numerical encoding, bit-width and max size in the encoder's state
 	pub fn write_usize(&mut self, value: usize) -> EncodingResult<()> {
@@ -658,12 +658,12 @@ impl<T: Write> BinStream<T> {
 	pub fn write_bool(&mut self, value: bool) -> EncodingResult<()> {
 		self._write_u8(value as u8, NumEncoding::Fixed, Endianness::LittleEndian)
 	}
-	
+
 	/// FIXME Decide how chars should be encoded
 	pub fn write_char(&mut self, value: char) -> EncodingResult<()> {
 		self.write_u32(value as u32)
 	}
-	
+
 	/// Encodes a `f32` to the underlying stream, ignoring the numeric encoding but respecting
 	/// the endianness. Equivalent of `Self::write_u32(value.to_bits())` with the numeric
 	/// encoding set to Fixed
@@ -677,7 +677,7 @@ impl<T: Write> BinStream<T> {
 	pub fn write_f64(&mut self, value: f64) -> EncodingResult<()> {
 		self._write_u64(value.to_bits(), NumEncoding::Fixed, self.options.num_repr.endianness)
 	}
-	
+
 	/// Writes the given slice to the underlying stream as-is.
 	pub fn write_raw_bytes(&mut self, bytes: &[u8]) -> EncodingResult<()> {
 		Ok(self.stream.write_all(bytes)?)
@@ -881,7 +881,7 @@ pub trait Encode {
 	/// Encodes `self` into a binary format.<br>
 	/// If the result is Ok,
 	/// implementations should guarantee that the state of the encoder
-	/// is the same as before calling this function. If the result is Err, 
+	/// is the same as before calling this function. If the result is Err,
 	/// no guarantees should be made about the state of the encoder,
 	/// and users should reset it before reuse.<br>
 	/// Implementation are discouraged from writing `encode` implementations
@@ -895,7 +895,7 @@ pub trait Decode {
 	/// Decodes `Self` from a binary format.<br>
 	/// If the result is Ok,
 	/// implementations should guarantee that the state of the encoder
-	/// is the same as before calling this function. If the result is Err, 
+	/// is the same as before calling this function. If the result is Err,
 	/// no guarantees should be made about the state of the encoder,
 	/// and users should reset it before reuse.<br>
 	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized;

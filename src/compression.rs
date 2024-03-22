@@ -6,6 +6,9 @@ use crate::{BinStream, EncodingResult, Finish};
 
 use ende_derive::{Encode, Decode};
 
+/// Function for convenience.<br>
+/// It calls [`BinStream::add_compression`] on the encoder with the given compression parameter,
+/// calls the closure with the transformed encoder, then finalizes the compressor before returning
 pub fn encode_with_compression<T, F>(
 	encoder: &mut BinStream<T>,
 	compression: Compression,
@@ -20,6 +23,9 @@ pub fn encode_with_compression<T, F>(
 	v
 }
 
+/// Function for convenience.<br>
+/// It calls [`BinStream::add_decompression`] on the decoder with the given compression parameter,
+/// calls the closure with the transformed decoder, then finalizes the decompressor before returning
 pub fn decode_with_compression<T, F, V>(
 	decoder: &mut BinStream<T>,
 	compression: Compression,
@@ -35,6 +41,7 @@ pub fn decode_with_compression<T, F, V>(
 	v
 }
 
+/// ZStandard compression level
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
@@ -85,6 +92,7 @@ pub enum ZStdLevel {
 	L22 = 22,
 }
 
+/// ZLib compression level
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
@@ -111,6 +119,7 @@ pub enum ZLibLevel {
 	L9 = 9,
 }
 
+/// Deflate compression level
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
@@ -137,6 +146,7 @@ pub enum DeflateLevel {
 	L9 = 9,
 }
 
+/// GZip compression level
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
@@ -161,6 +171,8 @@ pub enum GZipLevel {
 	L9 = 9,
 }
 
+/// Compression algorithm and level, or None to indicate absence of compression.
+/// Can be used to wrap a type implementing Write/Read in order to provide Compression/Decompression
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
@@ -178,6 +190,7 @@ pub enum Compression {
 }
 
 impl Compression {
+	/// Returns true if the compression is None
 	pub fn is_none(&self) -> bool {
 		match self {
 			Compression::None => true,
@@ -185,6 +198,7 @@ impl Compression {
 		}
 	}
 
+	/// Returns true if the compression is XZstd
 	pub fn is_zstd(&self) -> bool {
 		match self {
 			Compression::ZStd(..) => true,
@@ -192,6 +206,7 @@ impl Compression {
 		}
 	}
 
+	/// Returns true if the compression is ZLib
 	pub fn is_zlib(&self) -> bool {
 		match self {
 			Compression::ZLib(..) => true,
@@ -199,6 +214,7 @@ impl Compression {
 		}
 	}
 
+	/// Returns true if the compression is Deflate
 	pub fn is_deflate(&self) -> bool {
 		match self {
 			Compression::Deflate(..) => true,
@@ -206,6 +222,7 @@ impl Compression {
 		}
 	}
 
+	/// Returns true if the compression is GZip
 	pub fn is_gzip(&self) -> bool {
 		match self {
 			Compression::GZip(..) => true,
@@ -215,6 +232,7 @@ impl Compression {
 }
 
 impl Compression {
+	/// Wraps a type implementing [`std::io::Write`] in a [`Compress`] using `self` as the parameters.
 	pub fn compress<T: Write>(&self, input: T) -> Result<Compress<T>, CompressionError> {
 		match self {
 			Compression::None => {
@@ -235,6 +253,7 @@ impl Compression {
 		}
 	}
 
+	/// Wraps a type implementing [`std::io::Read`] in a [`Decompress`] using `self` as the parameters.
 	pub fn decompress<T: Read>(&self, input: T) -> Result<Decompress<T>, CompressionError> {
 		match self {
 			Compression::None => {
@@ -301,11 +320,18 @@ impl<T: Write> Write for CompressInner<T> {
 	}
 }
 
+/// A writer that compresses the data written to it before
+/// forwarding it to the underlying stream.<br>
+/// This value can be constructed by calling [`Compression::compress`]
+/// with a type implementing [`std::io::Write`]
 #[repr(transparent)]
 pub struct Compress<T: Write>(CompressInner<T>);
 
 impl<T: Write> Finish for Compress<T> {
 	type Output = T;
+
+	/// Flushes all the data yet to be compressed and potentially pads it to the nearest full
+	/// block before returning the inner stream
 	#[inline]
 	fn finish(self) -> EncodingResult<Self::Output> {
 		self.0.finish()
@@ -358,11 +384,18 @@ impl<T: Read> Read for DecompressInner<T> {
 	}
 }
 
+/// A reader that decompresses the data read from the underlying
+/// stream before returning it.<br>
+/// This value can be constructed by calling [`Compression::decompress`]
+/// with a type implementing [`std::io::Read`]
 #[repr(transparent)]
 pub struct Decompress<T: Read>(DecompressInner<T>);
 
 impl<T: Read> Finish for Decompress<T> {
 	type Output = T;
+
+	/// Potentially reads the remaining bvtes needed for padding up to a
+	/// full block, then returns the inner stream
 	#[inline]
 	fn finish(self) -> EncodingResult<Self::Output> {
 		self.0.finish()
@@ -376,8 +409,11 @@ impl<T: Read> Read for Decompress<T> {
 	}
 }
 
+/// A generic error for anything that might go wrong during Compression/Decompression<br>
+/// FIXME This is still subject to change
 #[derive(Debug, Error)]
 pub enum CompressionError {
+	/// Generic IO Error
 	#[error("IO Error occurred: {0}")]
 	IOError(
 		#[source]
