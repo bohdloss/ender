@@ -190,7 +190,7 @@ pub enum Compression {
 }
 
 impl Compression {
-	/// Returns true if the compression is None
+	/// Returns true if the `self` is None
 	pub fn is_none(&self) -> bool {
 		match self {
 			Compression::None => true,
@@ -198,7 +198,7 @@ impl Compression {
 		}
 	}
 
-	/// Returns true if the compression is XZstd
+	/// Returns true if the `self` is ZStd
 	pub fn is_zstd(&self) -> bool {
 		match self {
 			Compression::ZStd(..) => true,
@@ -206,7 +206,7 @@ impl Compression {
 		}
 	}
 
-	/// Returns true if the compression is ZLib
+	/// Returns true if the `self` is ZLib
 	pub fn is_zlib(&self) -> bool {
 		match self {
 			Compression::ZLib(..) => true,
@@ -214,7 +214,7 @@ impl Compression {
 		}
 	}
 
-	/// Returns true if the compression is Deflate
+	/// Returns true if the `self` is Deflate
 	pub fn is_deflate(&self) -> bool {
 		match self {
 			Compression::Deflate(..) => true,
@@ -222,7 +222,7 @@ impl Compression {
 		}
 	}
 
-	/// Returns true if the compression is GZip
+	/// Returns true if the `self` is GZip
 	pub fn is_gzip(&self) -> bool {
 		match self {
 			Compression::GZip(..) => true,
@@ -394,7 +394,7 @@ pub struct Decompress<T: Read>(DecompressInner<T>);
 impl<T: Read> Finish for Decompress<T> {
 	type Output = T;
 
-	/// Potentially reads the remaining bvtes needed for padding up to a
+	/// Potentially reads the remaining bytes needed for padding up to a
 	/// full block, then returns the inner stream
 	#[inline]
 	fn finish(self) -> EncodingResult<Self::Output> {

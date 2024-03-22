@@ -6,7 +6,7 @@ It's currently working but incomplete. What is there to do?
 - [X] Base functionality and macros
 - [ ] Add other num encodings
 - [ ] Add missing ciphers
-- [ ] Documentation
+- [X] Documentation
 - [ ] More examples
 - [ ] Refactor the proc-macro derive code
 - [ ] Write tests

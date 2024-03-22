@@ -15,6 +15,10 @@ use crate::encryption::CryptoError::NoKey;
 
 use ende_derive::{Encode, Decode};
 
+/// Function for convenience.<br>
+/// It calls [`BinStream::add_encryption`] on the encoder with the given encryption,
+/// key and iv parameters, calls the closure with the transformed encoder,
+/// then finalizes the encryptor before returning
 pub fn encode_with_encryption<T, F>(
 	encoder: &mut BinStream<T>,
 	encryption: Encryption,
@@ -31,6 +35,10 @@ where T: Write,
 	v
 }
 
+/// Function for convenience.<br>
+/// It calls [`BinStream::add_decryption`] on the decoder with the given encryption,
+/// key and iv parameters, calls the closure with the transformed decoder,
+/// then finalizes the decryptor before returning
 pub fn decode_with_encryption<T, F, V>(
 	decoder: &mut BinStream<T>,
 	encryption: Encryption,
@@ -48,6 +56,8 @@ pub fn decode_with_encryption<T, F, V>(
 	v
 }
 
+/// Contains RSA and symmetric encryption data that is known at a higher level than
+/// the encoding/decoding step. Consists of a [`RsaState`] and a [`SymmState`].
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("rsa = ({rsa}), symm = ({symm})")]
 pub struct CryptoState {
@@ -56,19 +66,25 @@ pub struct CryptoState {
 }
 
 impl CryptoState {
+	/// Constructs the default `CryptoState`, no key or iv is stored,
+	/// the encryption parameters are undefined
 	pub const fn new() -> Self {
 		Self {
 			rsa: RsaState::new(),
 			symm: SymmState::new(),
 		}
 	}
-	
+
+	/// Equivalent to [`CryptoState::new`] except an RSA key is stored in the
+	/// rsa state before returning
 	pub fn with_rsa_key<T: AsRef<[u8]>>(key: &T) -> Self {
 		let mut self_ = Self::new();
 		self_.rsa.store_key(key);
 		self_
 	}
 
+	/// Equivalent to [`CryptoState::new`] except a symmetric key and iv are stored
+	/// in the symmetric state before returning
 	pub fn with_symm_iv_and_key<T: AsRef<[u8]>, F: AsRef<[u8]>>(key: &T, iv: &F) -> Self {
 		let mut self_ = Self::new();
 		self_.symm.store_key(key);
@@ -77,22 +93,26 @@ impl CryptoState {
 	}
 }
 
+/// RSA padding mode. Using None is discouraged as it has been proven insecure.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
 #[allow(non_camel_case_types)]
 pub enum RsaPadding {
+	/// No padding, only use if strictly necessary
 	None,
 	Pkcs1,
 	Pkcs1Oaep,
 	Pkcs1Pss
 }
 
+/// The RSA key length in bits. Using anything under 2048 bits is discouraged because insecure.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
 #[allow(non_camel_case_types)]
 pub enum RsaBits {
+	/// Only use if strictly necessary
 	#[display("1024")]
 	N1024,
 	#[display("2048")]
@@ -102,6 +122,7 @@ pub enum RsaBits {
 }
 
 impl RsaBits {
+	/// Returns the number of RSA key length bits `self` represents
 	pub fn bits(&self) -> u32 {
 		match self {
 			RsaBits::N1024 => 1024,
@@ -112,6 +133,7 @@ impl RsaBits {
 }
 
 impl RsaPadding {
+	// Unstable and for convenience only
 	fn to_openssl_padding(&self) -> Padding {
 		match self {
 			RsaPadding::None => Padding::NONE,
@@ -122,14 +144,26 @@ impl RsaPadding {
 	}
 }
 
+/// The mode the RSA algorithm will operate in. This also affects how the RSA key is interpreted.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
 pub enum RsaMode {
+	/// If you are unsure which to pick, then you probably want to use this one.<br>
+	/// <br>
+	/// During encoding, key is interpreted as a public key, and used for encryption.<br>
+	/// During decoding, key is interpreted as a private key, and used for decryption.
 	Normal,
+	/// Used for signatures.<br>
+	/// <br>
+	/// During encoding, key is interpreted as a private key, and used for encryption.<br>
+	/// During decoding, key is interpreted as a public key, and used for decryption.<br>
 	Reverse
 }
 
+/// The state of RSA encryption/decryption. This is mainly used by [`RsaBlock`].
+/// Contains they key, only accessible through [`RsaState::get_key`],
+/// the RSA key length in bits, the RSA padding mode, and the RSA operation mode
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("padding: {padding}, mode = {mode}")]
 pub struct RsaState {
@@ -140,6 +174,8 @@ pub struct RsaState {
 }
 
 impl RsaState {
+	/// Constructs a default RSA state, without storing any key, the state of the other
+	/// variables undefined
 	pub const fn new() -> Self {
 		Self {
 			key: Vec::new(),
@@ -148,7 +184,8 @@ impl RsaState {
 			mode: RsaMode::Normal,
 		}
 	}
-	
+
+	/// Stores the given key, discarding the previous one
 	pub fn store_key<T: AsRef<[u8]>>(&mut self, bytes: &T) {
 		self.reset_key();
 		for byte in bytes.as_ref() {
@@ -156,13 +193,15 @@ impl RsaState {
 		}
 	}
 
+	/// Discards the previously stored key, if any
 	pub fn reset_key(&mut self) {
 		for byte in self.key.iter_mut() {
 			*byte = 0;
 		}
 		self.key.clear();
 	}
-	
+
+	/// Retrieves the stored key, or None if no key is stored
 	pub fn get_key(&self) -> Option<&[u8]> {
 		if self.key.is_empty() {
 			None
@@ -178,6 +217,10 @@ impl Drop for RsaState {
 	}
 }
 
+/// The state of symmetric encryption/decryption.
+/// Contains they key, only accessible through [`SymmState::get_key`],
+/// and the iv, only accessible through [`SymmState::get_iv`],
+/// and the encryption mode
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("encryption: {encryption}")]
 pub struct SymmState {
@@ -195,6 +238,7 @@ impl SymmState {
 		}
 	}
 
+	/// Stores the given iv, discarding the previous one
 	pub fn store_iv<T: AsRef<[u8]>>(&mut self, bytes: &T) {
 		self.reset_iv();
 		for byte in bytes.as_ref() {
@@ -202,6 +246,7 @@ impl SymmState {
 		}
 	}
 
+	/// Discards the previously stored iv, if any
 	pub fn reset_iv(&mut self) {
 		for byte in self.iv.iter_mut() {
 			*byte = 0;
@@ -209,6 +254,7 @@ impl SymmState {
 		self.iv.clear();
 	}
 
+	/// Retrieves the stored iv, or None if no iv is stored
 	pub fn get_iv(&self) -> Option<&[u8]> {
 		if self.iv.is_empty() {
 			None
@@ -217,6 +263,7 @@ impl SymmState {
 		}
 	}
 
+	/// Stores the given key, discarding the previous one
 	pub fn store_key<T: AsRef<[u8]>>(&mut self, bytes: &T) {
 		self.reset_key();
 		for byte in bytes.as_ref() {
@@ -224,6 +271,7 @@ impl SymmState {
 		}
 	}
 
+	/// Discards the previously stored key, if any
 	pub fn reset_key(&mut self) {
 		for byte in self.key.iter_mut() {
 			*byte = 0;
@@ -231,6 +279,7 @@ impl SymmState {
 		self.key.clear();
 	}
 
+	/// Retrieves the stored key, or None if no key is stored
 	pub fn get_key(&self) -> Option<&[u8]> {
 		if self.key.is_empty() {
 			None
@@ -247,6 +296,10 @@ impl Drop for SymmState {
 	}
 }
 
+/// A block of data that will be encrypted/decrypted using RSA.
+/// If no `#[ende(encrypted = ...)]` attribute with RSA or revRSA encryption
+/// is specified above a field of this type, then everything will be inferred from the
+/// RSA state
 pub struct RsaBlock(pub Vec<u8>);
 
 impl Deref for RsaBlock {
@@ -268,6 +321,7 @@ impl Debug for RsaBlock {
 	}
 }
 
+// Internal utility function for encrypting data to RSA
 fn rsa_encrypt<T: Write>(encoder: &mut BinStream<T>, data: &[u8]) -> EncodingResult<()> {
 	let expected_bytes = (encoder.crypto.rsa.bits.bits() / 8) as usize;
 	let mut temp = vec![0u8; data.len()];
@@ -314,6 +368,7 @@ fn rsa_encrypt<T: Write>(encoder: &mut BinStream<T>, data: &[u8]) -> EncodingRes
 	crate::Encode::encode(&data, encoder)
 }
 
+// Internal utility function for decrypting RSA data
 fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 	let expected_bytes = (decoder.crypto.rsa.bits.bits() / 8) as usize;
 	let temp: Vec<u8> = {
@@ -322,7 +377,7 @@ fn rsa_decrypt<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Vec<u8>> {
 		if decoder.options.flatten.is_some() {
 			decoder.options.flatten = Some(expected_bytes);
 		}
-		
+
 		crate::Decode::decode(decoder)?
 	};
 	let mut data = vec![0u8; temp.len()];
@@ -377,6 +432,7 @@ impl crate::Decode for RsaBlock {
 	}
 }
 
+/// The number of bits of an AES key
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
@@ -390,6 +446,7 @@ pub enum AesBits {
 }
 
 impl AesBits {
+	/// Returns the number of AES key length bits `self` represents
 	pub fn bits(&self) -> u32 {
 		match self {
 			AesBits::N128 => 128,
@@ -399,6 +456,7 @@ impl AesBits {
 	}
 }
 
+/// Number of feedback bits used in CFB mode
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
@@ -412,6 +470,7 @@ pub enum CfbFeedback {
 }
 
 impl CfbFeedback {
+	/// Returns the number of Cfb feedback bits `self` represents
 	pub fn bits(&self) -> u32 {
 		match self {
 			CfbFeedback::N1 => 1,
@@ -421,6 +480,7 @@ impl CfbFeedback {
 	}
 }
 
+/// AES operation mode
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[repr(u8)]
 #[ende(variant: 8)]
@@ -438,6 +498,7 @@ pub enum AesMode {
 }
 
 impl AesMode {
+	/// Returns true if `self` is Ecb
 	pub fn is_ecb(&self) -> bool {
 		match self {
 			AesMode::Ecb => true,
@@ -445,6 +506,7 @@ impl AesMode {
 		}
 	}
 
+	/// Returns true if `self` is Cbc
 	pub fn is_cbc(&self) -> bool {
 		match self {
 			AesMode::Cbc => true,
@@ -452,6 +514,7 @@ impl AesMode {
 		}
 	}
 
+	/// Returns true if `self` is any variation of Cfb
 	pub fn is_cfb(&self) -> bool {
 		match self {
 			AesMode::Cfb(..) => true,
@@ -459,6 +522,7 @@ impl AesMode {
 		}
 	}
 
+	/// Returns true if `self` is Ofb
 	pub fn is_ofb(&self) -> bool {
 		match self {
 			AesMode::Ofb => true,
@@ -466,6 +530,7 @@ impl AesMode {
 		}
 	}
 
+	/// Returns true if `self` is Ctr
 	pub fn is_ctr(&self) -> bool {
 		match self {
 			AesMode::Ctr => true,
@@ -474,6 +539,8 @@ impl AesMode {
 	}
 }
 
+/// Encryption algorithm, or None to indicate absence of compression.
+/// Can be used to wrap a type implementing Write/Read in order to provide Encryption/Decryption
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, Encode, Decode)]
 #[ende(variant: 8)]
 pub enum Encryption {
@@ -484,20 +551,27 @@ pub enum Encryption {
 }
 
 impl Encryption {
+	/// Returns the key length for the encryption algorithm represented by `self`.
+	/// Always returns 0 if `self` is set to None
 	pub fn key_len(&self) -> usize {
 		self.cipher().map(|cipher| cipher.key_len()).unwrap_or(0)
 	}
 
+	/// Returns the iv length for the encryption algorithm represented by `self`.
+	/// Always returns 0 if `self` is set to None
 	pub fn iv_len(&self) -> usize {
 		self.cipher().and_then(|cipher| cipher.iv_len()).unwrap_or(0)
 	}
-	
+
+	/// Returns the block size for the encryption algorithm represented by `self`.
+	/// Always returns 1 if `self` is set to None
 	pub fn block_size(&self) -> usize {
 		self.cipher().map(|cipher| cipher.block_size()).unwrap_or(1)
 	}
 }
 
 impl Encryption {
+	/// Returns true if `self` is None
 	pub fn is_none(&self) -> bool {
 		match self {
 			Encryption::None => true,
@@ -505,6 +579,7 @@ impl Encryption {
 		}
 	}
 
+	/// Returns true if `self` is Aes
 	pub fn is_aes(&self) -> bool {
 		match self {
 			Encryption::Aes(..) => true,
@@ -514,6 +589,7 @@ impl Encryption {
 }
 
 impl Encryption {
+	// Internal convenience function
 	fn cipher(&self) -> Option<Cipher> {
 		match self {
 			Encryption::None => None,
@@ -559,6 +635,8 @@ impl Encryption {
 		}
 	}
 
+	/// Wraps a type implementing [`std::io::Write`] in a [`Encrypt`] using `self` as the algorithm,
+	/// and key and iv as the parameters.
 	pub fn encrypt<T: Write>(&self, input: T, key: Option<&[u8]>, iv: Option<&[u8]>) -> Result<Encrypt<T>, CryptoError> {
 		match self {
 			Encryption::None => {
@@ -586,6 +664,8 @@ impl Encryption {
 		}
 	}
 
+	/// Wraps a type implementing [`std::io::Read`] in a [`Decrypt`] using `self` as the algorithm,
+	/// and key and iv as the parameters.
 	pub fn decrypt<T: Read>(&self, input: T, key: Option<&[u8]>, iv: Option<&[u8]>) -> Result<Decrypt<T>, CryptoError> {
 		match self {
 			Encryption::None => {
@@ -648,11 +728,18 @@ impl<T: Write> Write for EncryptInner<T> {
 	}
 }
 
+/// A writer that encrypts the data written to it before
+/// forwarding it to the underlying stream.<br>
+/// This value can be constructed by calling [`Encryption::encrypt`]
+/// with a type implementing [`std::io::Write`]
 #[repr(transparent)]
 pub struct Encrypt<T: Write>(EncryptInner<T>);
 
 impl<T: Write> Finish for Encrypt<T> {
 	type Output = T;
+
+	/// Flushes all the data yet to be encrypted and potentially pads it to the nearest full
+	/// block before returning the inner stream
 	#[inline]
 	fn finish(self) -> EncodingResult<T> {
 		self.0.finish()
@@ -696,11 +783,18 @@ impl<T: Read> Read for DecryptInner<T> {
 	}
 }
 
+/// A reader that decrypts the data read from the underlying
+/// stream before returning it.<br>
+/// This value can be constructed by calling [`Encryption::decrypt`]
+/// with a type implementing [`std::io::Read`]
 #[repr(transparent)]
 pub struct Decrypt<T: Read>(DecryptInner<T>);
 
 impl<T: Read> Finish for Decrypt<T> {
 	type Output = T;
+
+	/// Potentially reads the remaining bytes needed for padding up to a
+	/// full block, then returns the inner stream
 	#[inline]
 	fn finish(self) -> EncodingResult<T> {
 		self.0.finish()
@@ -714,6 +808,8 @@ impl<T: Read> Read for Decrypt<T> {
 	}
 }
 
+/// An error type for anything that might go wrong during Encryption/Decryption<br>
+/// FIXME This is still subject to change
 #[derive(Debug, Error)]
 pub enum CryptoError {
 	#[error("IO Error occurred: {0}")]
@@ -736,7 +832,7 @@ pub enum CryptoError {
 	Generic,
 }
 
-/// Error Stack Error to Encoding Error
+// Error Stack Error to Encoding Error
 fn ese_to_ee(_: ErrorStack) -> EncodingError {
 	EncodingError::EncryptionError(CryptoError::Generic)
 }
