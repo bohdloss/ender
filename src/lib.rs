@@ -14,49 +14,26 @@ use std::hash::Hash;
 use std::io;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
+use std::mem::replace;
 use std::string::FromUtf8Error;
 use array_init::array_init;
 use thiserror::Error;
 
 #[cfg(feature = "derive")]
-pub use ende_derive::{Encode, Decode};
+pub use ende_derive::{Decode, Encode};
 use parse_display::Display;
 
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
-/// with the given options.
-/// If you have the need of preserving resources, it is recommended to keep an instance
-/// of [`BinStream`] instead of continuously calling this method.
-pub fn encode_with<T: Write, V: Encode>(writer: &mut T, options: BinOptions, value: V) -> EncodingResult<()> {
-	let mut stream = BinStream::new(writer, options);
+/// with the given context.
+pub fn encode_with<T: Write, V: Encode>(writer: T, context: Context, value: V) -> EncodingResult<()> {
+	let mut stream = Encoder::new(writer, context);
 	value.encode(&mut stream)
 }
 
-/// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
-/// with the given options and cryptostate.
-/// If you have the need of preserving resources, it is recommended to keep an instance
-/// of [`BinStream`] instead of continuously calling this method.
-#[cfg(feature = "encryption")]
-pub fn encode_with_crypto_params<T: Write, V: Encode>(writer: &mut T, options: BinOptions, crypto: encryption::CryptoState, value: V) -> EncodingResult<()> {
-	let mut stream = BinStream::with_crypto_params(writer, options, crypto);
-	value.encode(&mut stream)
-}
-
-/// Decodes the given type by constructing an encoder on the fly and using it to wrap the reader,
-/// with the given options.
-/// If you have the need of preserving resources, it is recommended to keep an instance
-/// of [`BinStream`] instead of continuously calling this method.
-pub fn decode_with<T: Read, V: Decode>(reader: &mut T, options: BinOptions) -> EncodingResult<V> {
-	let mut stream = BinStream::new(reader, options);
-	V::decode(&mut stream)
-}
-
-/// Decodes the given type by constructing an encoder on the fly and using it to wrap the reader,
-/// with the given options and cryptostate.
-/// If you have the need of preserving resources, it is recommended to keep an instance
-/// of [`BinStream`] instead of continuously calling this method.
-#[cfg(feature = "encryption")]
-pub fn decode_with_crypto_params<T: Read, V: Decode>(reader: &mut T, options: BinOptions, crypto: encryption::CryptoState) -> EncodingResult<V> {
-	let mut stream = BinStream::with_crypto_params(reader, options, crypto);
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap the writer,
+/// with the given context.
+pub fn decode_with<T: Read, V: Decode>(reader: T, context: Context) -> EncodingResult<V> {
+	let mut stream = Encoder::new(reader, context);
 	V::decode(&mut stream)
 }
 
@@ -182,32 +159,145 @@ impl Default for VariantRepr {
 	}
 }
 
-/// The options (and state) of the [`BinStream`]. It is an aggregation of the [`NumRepr`],
-/// the [`SizeRepr`], the [`VariantRepr`], and a flatten state variable used by `Vec`, `HashMap`
-/// and other data structs with a length to omit writing/reading the length when the user requests
-/// it.
+/// An aggregation of [`NumRepr`], [`SizeRepr`], [`VariantRepr`]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("num_repr = ({num_repr}), size_repr = ({size_repr}), variant_repr = ({variant_repr})")]
-pub struct BinOptions {
+pub struct BinSettings {
 	pub num_repr: NumRepr,
 	pub size_repr: SizeRepr,
 	pub variant_repr: VariantRepr,
-	/// The flatten state variable. When present, for `Option` it indicates in Encode mode
-	/// not to write whether the optional is present, and in Decode mode that it is present (without
-	/// checking), for `Vec`, `HashMap` and other data structures with a length it indicates in
-	/// Encode mode not to write said length, and in Decode mode it indicates the length itself.
-	pub flatten: Option<usize>,
 }
 
-impl BinOptions {
-	/// Returns the default options, with flatten set to None and the default representations.
+impl BinSettings {
+	/// Returns the default options containing the default for each representation.
 	/// See: [`NumRepr::new`], [`SizeRepr::new`], [`VariantRepr::new`]
 	pub const fn new() -> Self {
 		Self {
 			num_repr: NumRepr::new(),
 			size_repr: SizeRepr::new(),
 			variant_repr: VariantRepr::new(),
-			flatten: None
+		}
+	}
+}
+
+impl Default for BinSettings {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+/// The state of the encoder, including its options, `flatten` state variable,
+/// a crypto state if the `encryption` feature is enabled
+#[derive(Clone, Debug)]
+pub struct Context<'a> {
+	/// The lifetime `'a` is used by the crypto state, only present when the `encryption` feature
+	/// is enabled.<br> In order to ensure compatibility, we must use
+	/// the lifetime even when the feature is disabled.
+	pub phantom_lifetime: PhantomData<&'a ()>,
+	/// The actual settings, which determine the numerical representations and the string
+	/// representations. <br>Implementations of [`Encode`] and [`Decode`] are required to
+	/// preserve the state of the settings, even though they are allowed to temporarily modify it.<br>
+	/// In case of an error occurring, no guarantee is made about the state of the settings:
+	/// for this reason it's good practice to store a copy of the settings somewhere.
+	pub settings: BinSettings,
+	/// The flatten state variable. When present, for `Option` it indicates in Encode mode
+	/// not to write whether the optional is present, and in Decode mode that it is present (without
+	/// checking), for `Vec`, `HashMap` and other data structures with a length it indicates in
+	/// Encode mode not to write said length, and in Decode mode the length itself.
+	pub flatten: Option<usize>,
+	/// Keeps track of the lengths of maps and vectors in recursive serde `deserialize` calls
+	#[cfg(feature = "serde")]
+	pub len_stack: smallvec::SmallVec<usize, 8>,
+	/// The cryptographic state. See [`encryption::CryptoState`]
+	#[cfg(feature = "encryption")]
+	pub crypto: encryption::CryptoState<'a>,
+	#[cfg(feature = "compression")]
+	pub compression: compression::CompressionState,
+}
+
+impl<'a> Context<'a> {
+	/// Constructs the default encoder state. Options will be set to default, flatten to None,
+	/// and crypto state to default
+	pub fn new() -> Self {
+		Self {
+			phantom_lifetime: PhantomData,
+			settings: BinSettings::new(),
+			flatten: None,
+			#[cfg(feature = "serde")]
+			len_stack: smallvec::SmallVec::new(),
+			#[cfg(feature = "encryption")]
+			crypto: encryption::CryptoState::new(),
+			#[cfg(feature = "compression")]
+			compression: compression::CompressionState::new(),
+		}
+	}
+
+	/// Similar to clone, but hints that the keys being stored should not be cloned to
+	/// a new memory location, but simply borrowed.
+	/// Only really useful if the `encryption` feature is enabled.
+	pub fn borrow_clone(&self) -> Context {
+		Context {
+			phantom_lifetime: PhantomData,
+			settings: self.settings,
+			flatten: self.flatten,
+			#[cfg(feature = "serde")]
+			len_stack: smallvec::SmallVec::new(),
+			#[cfg(feature = "encryption")]
+			crypto: self.crypto.borrow_clone(),
+			#[cfg(feature = "compression")]
+			compression: self.compression,
+		}
+	}
+
+	/// Uses the given options and, if the `encryption` feature is enabled, the crypto state will
+	/// be initialized to default
+	pub fn with_options(options: BinSettings) -> Self {
+		Self {
+			phantom_lifetime: PhantomData,
+			settings: options,
+			flatten: None,
+			#[cfg(feature = "serde")]
+			len_stack: smallvec::SmallVec::new(),
+			#[cfg(feature = "encryption")]
+			crypto: encryption::CryptoState::new(),
+			#[cfg(feature = "compression")]
+			compression: compression::CompressionState::new(),
+		}
+	}
+
+	/// Uses the given options and crypto state
+	#[cfg(feature = "encryption")]
+	pub fn with_crypto_state(options: BinSettings, crypto: encryption::CryptoState<'a>) -> Self {
+		Self {
+			phantom_lifetime: PhantomData,
+			settings: options,
+			flatten: None,
+			#[cfg(feature = "serde")]
+			len_stack: smallvec::SmallVec::new(),
+			crypto,
+			#[cfg(feature = "compression")]
+			compression: compression::CompressionState::new(),
+		}
+	}
+
+	/// Resets the state to its defaults, then overwrites the options with the given options
+	pub fn reset(&mut self, options: BinSettings) {
+		self.settings = options;
+		self.flatten = None;
+		#[cfg(feature = "serde")]
+		{
+			self.len_stack.clear();
+		}
+		#[cfg(feature = "compression")]
+		{
+			self.compression.compression = compression::Compression::None;
+		}
+		#[cfg(feature = "encryption")]
+		{
+			self.crypto.asymm.reset_public();
+			self.crypto.asymm.reset_private();
+			self.crypto.symm.reset_key();
+			self.crypto.symm.reset_iv();
 		}
 	}
 
@@ -219,147 +309,105 @@ impl BinOptions {
 	}
 }
 
-impl Default for BinOptions {
-	fn default() -> Self {
-		Self::new()
-	}
-}
-
-/// A helper trait used to indicate that a type (usually a steam) can unwrap to its inner type
+/// A helper trait used to indicate that a type (usually a stream) can unwrap to its inner type
 /// and perform some form of cleanup. This trait is implemented for Encryptors and Compressors
-/// for example to pad the inner stream to the next full block size
+/// for example to pad the inner stream to the next full block
 pub trait Finish {
 	type Output;
 	fn finish(self) -> EncodingResult<Self::Output>;
 }
 
-/// The base type for encoding/decoding. Contains a stream, encoding options (and state)
-/// and if the `encryption` feature is enabled, a [`encryption::CryptoState`].<br>
-/// It's recommended to use wrap the stream in a [`std::io::BufReader`] or [`std::io::BufWriter`],
+/// The base type for encoding/decoding. References a stream, and a [`Context`].<br>
+/// It's recommended to wrap the stream in a [`std::io::BufReader`] or [`std::io::BufWriter`],
 /// because many small write and read calls will be made
-pub struct BinStream<T>{
+pub struct Encoder<'a, T>{
 	/// The underlying stream
 	pub stream: T,
-	/// The options/state
-	pub options: BinOptions,
-	#[cfg(feature = "encryption")]
-	/// The cryptographic state. See [`encryption::CryptoState`]
-	pub crypto: encryption::CryptoState
+	/// The state
+	pub ctxt: Context<'a>,
 }
 
-impl<T> BinStream<T> {
-	/// Wraps the given stream and uses the given options.
-	/// If the `encryption` feature is enabled, the cryptostate will
-	/// be initialized to default
-	pub fn new(stream: T, options: BinOptions) -> Self {
+impl<'a, T> Encoder<'a, T> {
+	/// Wraps the given stream and state.
+	pub fn new(stream: T, ctxt: Context<'a>) -> Self {
 		Self {
 			stream,
-			options,
-			#[cfg(feature = "encryption")]
-			crypto: encryption::CryptoState::new()
+			ctxt
 		}
 	}
 
-	/// Wraps the given stream and uses the given options and cryptostate.
-	#[cfg(feature = "encryption")]
-	pub fn with_crypto_params(stream: T, options: BinOptions, crypto: encryption::CryptoState) -> Self {
-		Self {
-			stream,
-			options,
-			crypto
-		}
-	}
-
-	/// Wraps the given stream and uses the default options.
-	/// If the `encryption` feature is enabled, the cryptostate will
-	/// be initialized to default
-	pub fn new_default(stream: T) -> Self {
-		Self {
-			stream,
-			options: Default::default(),
-			#[cfg(feature = "encryption")]
-			crypto: encryption::CryptoState::new()
-		}
+	/// Replaces the underlying stream with the new one, returning the previous value
+	pub fn swap_stream(&mut self, new: T) -> T {
+		replace(&mut self.stream, new)
 	}
 }
 
-impl<T> Finish for BinStream<T> {
-	type Output = T;
-	fn finish(self) -> EncodingResult<Self::Output> {
-		Ok(self.stream)
+impl<T: Write> Encoder<'_, T> {
+	/// Method for convenience.<br>
+	/// Encodes a value using `self` as the encoder.<br>
+	/// This method is not magic - it is literally defined as `value.encode(self)`
+	pub fn encode_value<V: Encode>(&mut self, value: V) -> EncodingResult<()> {
+		value.encode(self)
 	}
 }
 
-impl<T: Write> BinStream<T> {
-	/// Returns a BinStream with the same options and crypto state,
+impl<T: Read> Encoder<'_, T> {
+	/// Method for convenience.<br>
+	/// Decodes a value using `self` as the decoder.<br>
+	/// This method is not magic - it is literally defined as `V::decode(self)`
+	pub fn decode_value<V: Decode>(&mut self) -> EncodingResult<V> {
+		V::decode(self)
+	}
+}
+
+impl<T: Write> Encoder<'_, T> {
+	/// Returns a BinStream with the same context,
 	/// but wraps the underlying stream in an [`encryption::Encrypt`].
 	/// When either the key or the iv are None, this function will try to fetch them
-	/// from the cryptostate
+	/// from the crypto state
 	#[cfg(feature = "encryption")]
-	pub fn add_encryption(&mut self, encryption: encryption::Encryption, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<BinStream<encryption::Encrypt<&mut T>>> {
-		let options = self.options;
-		let crypto = self.crypto.clone();
-		let key = if let Some(key) = key {
-			Some(key)
-		} else {
-			self.crypto.symm.get_key()
-		};
-		let iv = if let Some(iv) = iv {
-			Some(iv)
-		} else {
-			self.crypto.symm.get_iv()
-		};
-		Ok(BinStream::with_crypto_params(encryption.encrypt(&mut self.stream, key, iv)?, options, crypto))
+	pub fn add_encryption(&mut self, encryption: Option<encryption::SymmEncryption>, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<Encoder<encryption::Encrypt<&mut T>>> {
+		let encryption = encryption.unwrap_or(self.ctxt.crypto.symm.encryption);
+		let key = key.or(self.ctxt.crypto.symm.get_key());
+		let iv = iv.or(self.ctxt.crypto.symm.get_iv());
+		Ok(Encoder::new(encryption.encrypt(&mut self.stream, key, iv)?, self.ctxt.borrow_clone()))
 	}
 
-	/// Returns a BinStream with the same options (and crypto state if the `encryption` feature is enabled),
+	/// Returns an Encoder with the same context,
 	/// but wraps the underlying stream in an [`compression::Compress`]
 	#[cfg(feature = "compression")]
-	pub fn add_compression(&mut self, compression: compression::Compression) -> EncodingResult<BinStream<compression::Compress<&mut T>>> {
-		let options = self.options;
-		#[cfg(feature = "encryption")]
-		let crypto = self.crypto.clone();
-
-		#[cfg(not(feature = "encryption"))]
-		return Ok(BinStream::new(compression.compress(&mut self.stream)?, options));
-		#[cfg(feature = "encryption")]
-		return Ok(BinStream::with_crypto_params(compression.compress(&mut self.stream)?, options, crypto));
+	pub fn add_compression(&mut self, compression: Option<compression::Compression>) -> EncodingResult<Encoder<compression::Compress<&mut T>>> {
+		let compression = compression.unwrap_or(self.ctxt.compression.compression);
+		return Ok(Encoder::new(compression.compress(&mut self.stream)?, self.ctxt.borrow_clone()));
 	}
 }
 
-impl<T: Read> BinStream<T> {
-	/// Returns a BinStream with the same options and crypto state,
+impl<T: Read> Encoder<'_, T> {
+	/// Returns an Encoder with the same context,
 	/// but wraps the underlying stream in an [`encryption::Decrypt`]
 	/// When either the key or the iv are None, this function will try to fetch them
-	/// from the cryptostate
+	/// from the crypto state
 	#[cfg(feature = "encryption")]
-	pub fn add_decryption(&mut self, encryption: encryption::Encryption, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<BinStream<encryption::Decrypt<&mut T>>> {
-		let options = self.options;
-		let key = if let Some(key) = key {
-			Some(key)
-		} else {
-			self.crypto.symm.get_key()
-		};
-		let iv = if let Some(iv) = iv {
-			Some(iv)
-		} else {
-			self.crypto.symm.get_iv()
-		};
-		Ok(BinStream::new(encryption.decrypt(&mut self.stream, key, iv)?, options))
+	pub fn add_decryption(&mut self, encryption: Option<encryption::SymmEncryption>, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<Encoder<encryption::Decrypt<&mut T>>> {
+		let encryption = encryption.unwrap_or(self.ctxt.crypto.symm.encryption);
+		let key = key.or(self.ctxt.crypto.symm.get_key());
+		let iv = iv.or(self.ctxt.crypto.symm.get_iv());
+		Ok(Encoder::new(encryption.decrypt(&mut self.stream, key, iv)?, self.ctxt.borrow_clone()))
 	}
 
-	/// Returns a BinStream with the same options (and crypto state if the `encryption` feature is enabled),
+	/// Returns an Encoder with the same context,
 	/// but wraps the underlying stream in an [`compression::Decompress`]
 	#[cfg(feature = "compression")]
-	pub fn add_decompression(&mut self, compression: compression::Compression) -> EncodingResult<BinStream<compression::Decompress<&mut T>>> {
-		let options = self.options;
-		#[cfg(feature = "encryption")]
-			let crypto = self.crypto.clone();
+	pub fn add_decompression(&mut self, compression: Option<compression::Compression>) -> EncodingResult<Encoder<compression::Decompress<&mut T>>> {
+		let compression = compression.unwrap_or(self.ctxt.compression.compression);
+		return Ok(Encoder::new(compression.decompress(&mut self.stream)?, self.ctxt.borrow_clone()));
+	}
+}
 
-		#[cfg(not(feature = "encryption"))]
-		return Ok(BinStream::new(compression.decompress(&mut self.stream)?, options));
-		#[cfg(feature = "encryption")]
-		return Ok(BinStream::with_crypto_params(compression.decompress(&mut self.stream)?, options, crypto));
+impl<'a, T> Finish for Encoder<'a, T> {
+	type Output = (T, Context<'a>);
+	fn finish(self) -> EncodingResult<Self::Output> {
+		Ok((self.stream, self.ctxt))
 	}
 }
 
@@ -369,15 +417,15 @@ macro_rules! make_unsigned_write_fn {
 	    #[doc = stringify!($ty)]
 	    #[doc = "` to the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
 	    pub fn $write(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.options.num_repr.num_encoding, self.options.num_repr.endianness)
+		    self.$write_internal(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 	    
 	    fn $write_size(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.options.size_repr.num_encoding, self.options.size_repr.endianness)
+		    self.$write_internal(value, self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
 	    }
 	    
 	    fn $write_variant(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.options.variant_repr.num_encoding, self.options.variant_repr.endianness)
+		    self.$write_internal(value, self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
 	    }
 
         fn $write_internal(&mut self, value: $ty, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
@@ -418,15 +466,15 @@ macro_rules! make_signed_write_fn {
 	    #[doc = stringify!($ty)]
 	    #[doc = "` to the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
 	    pub fn $write(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.options.num_repr.num_encoding, self.options.num_repr.endianness)
+		    self.$write_internal(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 	    
 	    fn $write_size(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.options.size_repr.num_encoding, self.options.size_repr.endianness)
+		    self.$write_internal(value, self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
 	    }
 	    
 	    fn $write_variant(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.options.variant_repr.num_encoding, self.options.variant_repr.endianness)
+		    self.$write_internal(value, self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
 	    }
 
         fn $write_internal(&mut self, value: $ty, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
@@ -468,15 +516,15 @@ macro_rules! make_unsigned_read_fn {
 	    #[doc = stringify!($ty)]
 	    #[doc = "` from the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
 	    pub fn $read(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.options.num_repr.num_encoding, self.options.num_repr.endianness)
+		    self.$read_internal(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 	    
 	    fn $read_size(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.options.size_repr.num_encoding, self.options.size_repr.endianness)
+		    self.$read_internal(self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
 	    }
 	    
 	    fn $read_variant(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.options.variant_repr.num_encoding, self.options.variant_repr.endianness)
+		    self.$read_internal(self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
 	    }
 	    
         fn $read_internal(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$ty> {
@@ -518,17 +566,17 @@ macro_rules! make_signed_read_fn {
     ($read_internal:ident => $read_size:ident => $read_variant:ident => $read:ident => $ty:ty) => {
 	    #[doc = "Decodes a `"]
 	    #[doc = stringify!($ty)]
-	    #[doc = "` from the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
+	    #[doc = "` from the underlying stream, according to the endianness and numerical encoding in the encoder's context"]
 	    pub fn $read(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.options.num_repr.num_encoding, self.options.num_repr.endianness)
+		    self.$read_internal(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 	    
 	    fn $read_size(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.options.size_repr.num_encoding, self.options.size_repr.endianness)
+		    self.$read_internal(self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
 	    }
 	    
 	    fn $read_variant(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.options.variant_repr.num_encoding, self.options.variant_repr.endianness)
+		    self.$read_internal(self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
 	    }
 	    
         fn $read_internal(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$ty> {
@@ -571,7 +619,7 @@ macro_rules! make_signed_read_fn {
     };
 }
 
-impl<T: Write> BinStream<T> {
+impl<T: Write> Encoder<'_, T> {
 	make_unsigned_write_fn!(_write_u8 => _write_u8_size => _write_u8_variant => write_u8 => u8);
 	make_unsigned_write_fn!(_write_u16 => _write_u16_size => _write_u16_variant => write_u16 => u16);
 	make_unsigned_write_fn!(_write_u32 => _write_u32_size => _write_u32_variant => write_u32 => u32);
@@ -586,7 +634,7 @@ impl<T: Write> BinStream<T> {
 	/// Encodes a length. If the flatten attribute is set to Some, this function is a no-op,
 	/// otherwise it will behave identically to [`Self::write_usize`].
 	pub fn write_length(&mut self, value: usize) -> EncodingResult<()> {
-		if self.options.flatten().is_none() {
+		if self.ctxt.flatten().is_none() {
 			self.write_usize(value)?;
 		}
 		Ok(())
@@ -595,13 +643,13 @@ impl<T: Write> BinStream<T> {
 	/// Encodes a `usize` to the underlying stream, according to the endianness,
 	/// numerical encoding, bit-width and max size in the encoder's state
 	pub fn write_usize(&mut self, value: usize) -> EncodingResult<()> {
-		if value > self.options.size_repr.max_size {
+		if value > self.ctxt.settings.size_repr.max_size {
 			return Err(EncodingError::MaxLengthExceeded {
-				max: self.options.size_repr.max_size,
+				max: self.ctxt.settings.size_repr.max_size,
 				requested: value
 			})
 		}
-		match self.options.size_repr.width {
+		match self.ctxt.settings.size_repr.width {
 			BitWidth::Bit8 => self._write_u8_size(value as _),
 			BitWidth::Bit16 => self._write_u16_size(value as _),
 			BitWidth::Bit32 => self._write_u32_size(value as _),
@@ -613,13 +661,13 @@ impl<T: Write> BinStream<T> {
 	/// Encodes a `isize` to the underlying stream, according to the endianness,
 	/// numerical encoding, bit-width and max size in the encoder's state
 	pub fn write_isize(&mut self, value: isize) -> EncodingResult<()> {
-		if value >= 0 && value as usize > self.options.size_repr.max_size {
+		if value >= 0 && value as usize > self.ctxt.settings.size_repr.max_size {
 			return Err(EncodingError::MaxLengthExceeded {
-				max: self.options.size_repr.max_size,
+				max: self.ctxt.settings.size_repr.max_size,
 				requested: value as usize
 			})
 		}
-		match self.options.size_repr.width {
+		match self.ctxt.settings.size_repr.width {
 			BitWidth::Bit8 => self._write_i8_size(value as _),
 			BitWidth::Bit16 => self._write_i16_size(value as _),
 			BitWidth::Bit32 => self._write_i32_size(value as _),
@@ -631,7 +679,7 @@ impl<T: Write> BinStream<T> {
 	/// Encodes an unsigned enum variant to the underlying stream, according to the endianness,
 	/// numerical encoding and bit-width in the encoder's state
 	pub fn write_uvariant(&mut self, value: u128) -> EncodingResult<()> {
-		match self.options.variant_repr.width {
+		match self.ctxt.settings.variant_repr.width {
 			BitWidth::Bit8 => self._write_u8_variant(value as _),
 			BitWidth::Bit16 => self._write_u16_variant(value as _),
 			BitWidth::Bit32 => self._write_u32_variant(value as _),
@@ -643,7 +691,7 @@ impl<T: Write> BinStream<T> {
 	/// Encodes a signed enum variant to the underlying stream, according to the endianness,
 	/// numerical encoding and bit-width in the encoder's state
 	pub fn write_ivariant(&mut self, value: i128) -> EncodingResult<()> {
-		match self.options.variant_repr.width {
+		match self.ctxt.settings.variant_repr.width {
 			BitWidth::Bit8 => self._write_i8_variant(value as _),
 			BitWidth::Bit16 => self._write_i16_variant(value as _),
 			BitWidth::Bit32 => self._write_i32_variant(value as _),
@@ -668,14 +716,14 @@ impl<T: Write> BinStream<T> {
 	/// the endianness. Equivalent of `Self::write_u32(value.to_bits())` with the numeric
 	/// encoding set to Fixed
 	pub fn write_f32(&mut self, value: f32) -> EncodingResult<()> {
-		self._write_u32(value.to_bits(), NumEncoding::Fixed, self.options.num_repr.endianness)
+		self._write_u32(value.to_bits(), NumEncoding::Fixed, self.ctxt.settings.num_repr.endianness)
 	}
 
 	/// Encodes a `f64` to the underlying stream, ignoring the numeric encoding but respecting
 	/// the endianness. Equivalent of `Self::write_u64(value.to_bits())` with the numeric
 	/// encoding set to Fixed
 	pub fn write_f64(&mut self, value: f64) -> EncodingResult<()> {
-		self._write_u64(value.to_bits(), NumEncoding::Fixed, self.options.num_repr.endianness)
+		self._write_u64(value.to_bits(), NumEncoding::Fixed, self.ctxt.settings.num_repr.endianness)
 	}
 
 	/// Writes the given slice to the underlying stream as-is.
@@ -684,7 +732,7 @@ impl<T: Write> BinStream<T> {
 	}
 }
 
-impl<T: Read> BinStream<T> {
+impl<T: Read> Encoder<'_, T> {
 	make_unsigned_read_fn!(_read_u8 => _read_u8_size => _read_u8_variant => read_u8 => u8);
 	make_unsigned_read_fn!(_read_u16 => _read_u16_size => _read_u16_variant => read_u16 => u16);
 	make_unsigned_read_fn!(_read_u32 => _read_u32_size => _read_u32_variant => read_u32 => u32);
@@ -699,7 +747,7 @@ impl<T: Read> BinStream<T> {
 	/// Decodes a length. If the flatten attribute is set to Some, this function
 	/// will return its value, otherwise it will behave identically to [`Self::read_usize`].
 	pub fn read_length(&mut self) -> EncodingResult<usize> {
-		if let Some(length) = self.options.flatten() {
+		if let Some(length) = self.ctxt.flatten() {
 			Ok(length)
 		} else {
 			self.read_usize()
@@ -709,16 +757,16 @@ impl<T: Read> BinStream<T> {
 	/// Decodes a `usize` from the underlying stream, according to the endianness,
 	/// numerical encoding, bit-width and max size in the encoder's state
 	pub fn read_usize(&mut self) -> EncodingResult<usize> {
-		let value = match self.options.size_repr.width {
+		let value = match self.ctxt.settings.size_repr.width {
 			BitWidth::Bit8 => self._read_u8_size()? as usize,
 			BitWidth::Bit16 => self._read_u16_size()? as usize,
 			BitWidth::Bit32 => self._read_u32_size()? as usize,
 			BitWidth::Bit64 => self._read_u64_size()? as usize,
 			BitWidth::Bit128 => self._read_u128_size()? as usize,
 		};
-		if value > self.options.size_repr.max_size {
+		if value > self.ctxt.settings.size_repr.max_size {
 			return Err(EncodingError::MaxLengthExceeded {
-				max: self.options.size_repr.max_size,
+				max: self.ctxt.settings.size_repr.max_size,
 				requested: value
 			})
 		}
@@ -728,16 +776,16 @@ impl<T: Read> BinStream<T> {
 	/// Decodes a `isize` from the underlying stream, according to the endianness,
 	/// numerical encoding, bit-width and max size in the encoder's state
 	pub fn read_isize(&mut self) -> EncodingResult<isize> {
-		let value = match self.options.size_repr.width {
+		let value = match self.ctxt.settings.size_repr.width {
 			BitWidth::Bit8 => self._read_i8_size()? as isize,
 			BitWidth::Bit16 => self._read_i16_size()? as isize,
 			BitWidth::Bit32 => self._read_i32_size()? as isize,
 			BitWidth::Bit64 => self._read_i64_size()? as isize,
 			BitWidth::Bit128 => self._read_i128_size()? as isize,
 		};
-		if value >= 0 && value as usize > self.options.size_repr.max_size {
+		if value >= 0 && value as usize > self.ctxt.settings.size_repr.max_size {
 			return Err(EncodingError::MaxLengthExceeded {
-				max: self.options.size_repr.max_size,
+				max: self.ctxt.settings.size_repr.max_size,
 				requested: value as usize
 			})
 		}
@@ -747,7 +795,7 @@ impl<T: Read> BinStream<T> {
 	/// Decodes an unsigned enum variant from the underlying stream, according to the endianness,
 	/// numerical encoding and bit-width in the encoder's state
 	pub fn read_uvariant(&mut self) -> EncodingResult<u128> {
-		Ok(match self.options.variant_repr.width {
+		Ok(match self.ctxt.settings.variant_repr.width {
 			BitWidth::Bit8 => self._read_u8_variant()? as _,
 			BitWidth::Bit16 => self._read_u16_variant()? as _,
 			BitWidth::Bit32 => self._read_u32_variant()? as _,
@@ -759,7 +807,7 @@ impl<T: Read> BinStream<T> {
 	/// Decodes a signed enum variant from the underlying stream, according to the endianness,
 	/// numerical encoding and bit-width in the encoder's state
 	pub fn read_ivariant(&mut self) -> EncodingResult<i128> {
-		Ok(match self.options.variant_repr.width {
+		Ok(match self.ctxt.settings.variant_repr.width {
 			BitWidth::Bit8 => self._read_i8_variant()? as _,
 			BitWidth::Bit16 => self._read_i16_variant()? as _,
 			BitWidth::Bit32 => self._read_i32_variant()? as _,
@@ -789,14 +837,14 @@ impl<T: Read> BinStream<T> {
 	/// the endianness. Equivalent of `f32::from_bits(self.read_u32())` with the numeric
 	/// encoding set to Fixed
 	pub fn read_f32(&mut self) -> EncodingResult<f32> {
-		Ok(f32::from_bits(self._read_u32(NumEncoding::Fixed, self.options.num_repr.endianness)?))
+		Ok(f32::from_bits(self._read_u32(NumEncoding::Fixed, self.ctxt.settings.num_repr.endianness)?))
 	}
 
 	/// Decodes a `f64` from the underlying stream, ignoring the numeric encoding but respecting
 	/// the endianness. Equivalent of `f64::from_bits(self.read_u64())` with the numeric
 	/// encoding set to Fixed
 	pub fn read_f64(&mut self) -> EncodingResult<f64> {
-		Ok(f64::from_bits(self._read_u64(NumEncoding::Fixed, self.options.num_repr.endianness)?))
+		Ok(f64::from_bits(self._read_u64(NumEncoding::Fixed, self.ctxt.settings.num_repr.endianness)?))
 	}
 
 	/// Reads `buf.len()` bytes from the stream to the buffer as-is.
@@ -886,19 +934,19 @@ pub trait Encode {
 	/// and users should reset it before reuse.<br>
 	/// Implementation are discouraged from writing `encode` implementations
 	/// that modify `self` through interior mutability
-	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()>;
+	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()>;
 }
 
 /// The base trait for anything that can be Decoded.
 /// Indicates that a sequence of bytes can be converted back into a type
-pub trait Decode {
+pub trait Decode: Sized {
 	/// Decodes `Self` from a binary format.<br>
 	/// If the result is Ok,
 	/// implementations should guarantee that the state of the encoder
 	/// is the same as before calling this function. If the result is Err,
 	/// no guarantees should be made about the state of the encoder,
 	/// and users should reset it before reuse.<br>
-	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized;
+	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self>;
 }
 
 // Primitives
@@ -907,12 +955,12 @@ macro_rules! impl_primitives {
     ($($ty:ty => $write:ident => $read:ident);* $(;)? ) => {
 	    $(
 	    impl Encode for $ty {
-		    fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
+		    fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
 		        encoder.$write(*self)
 		    }
 	    }
 	    impl Decode for $ty {
-		    fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
+		    fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> where Self: Sized {
 		        decoder.$read()
 		    }
 	    }
@@ -942,14 +990,14 @@ impl_primitives!{
 // STRINGS
 
 impl Encode for String {
-	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
+	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
 		encoder.write_length(self.len())?;
 		encoder.write_raw_bytes(self.as_bytes())
 	}
 }
 
 impl Decode for String {
-	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
+	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> where Self: Sized {
 		let len = decoder.read_length()?;
 		let mut buffer = vec![0u8; len];
 		decoder.read_raw_bytes(&mut buffer)?;
@@ -958,7 +1006,7 @@ impl Decode for String {
 }
 
 impl Encode for &str {
-	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
+	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
 		encoder.write_length(self.len())?;
 		encoder.write_raw_bytes(self.as_bytes())
 	}
@@ -967,8 +1015,8 @@ impl Encode for &str {
 // CSTRING
 
 impl Encode for CString {
-	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		if encoder.options.flatten().is_some() {
+	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
+		if encoder.ctxt.flatten().is_some() {
 			encoder.write_raw_bytes(self.as_bytes())
 		} else {
 			encoder.write_raw_bytes(self.as_bytes_with_nul())
@@ -977,8 +1025,8 @@ impl Encode for CString {
 }
 
 impl Decode for CString {
-	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
-		if let Some(length) = decoder.options.flatten() {
+	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> where Self: Sized {
+		if let Some(length) = decoder.ctxt.flatten() {
 			let mut buffer = vec![0; length + 1];
 			decoder.read_raw_bytes(&mut buffer[..length])?;
 			Ok(CString::from_vec_with_nul(buffer)?)
@@ -995,8 +1043,8 @@ impl Decode for CString {
 }
 
 impl Encode for CStr {
-	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
-		if encoder.options.flatten().is_some() {
+	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
+		if encoder.ctxt.flatten().is_some() {
 			encoder.write_raw_bytes(self.to_bytes())
 		} else {
 			encoder.write_raw_bytes(self.to_bytes_with_nul())
@@ -1007,8 +1055,8 @@ impl Encode for CStr {
 // Option
 
 impl<T: Encode> Encode for Option<T> {
-	fn encode<G: Write>(&self, encoder: &mut BinStream<G>) -> EncodingResult<()> {
-		if encoder.options.flatten().is_some() {
+	fn encode<G: Write>(&self, encoder: &mut Encoder<G>) -> EncodingResult<()> {
+		if encoder.ctxt.flatten().is_some() {
 			match self {
 				None => Ok(()),
 				Some(x) => {
@@ -1028,8 +1076,8 @@ impl<T: Encode> Encode for Option<T> {
 }
 
 impl<T: Decode> Decode for Option<T> {
-	fn decode<G: Read>(decoder: &mut BinStream<G>) -> EncodingResult<Self> where Self: Sized {
-		if decoder.options.flatten().is_some() {
+	fn decode<G: Read>(decoder: &mut Encoder<G>) -> EncodingResult<Self> where Self: Sized {
+		if decoder.ctxt.flatten().is_some() {
 			Ok(Some(T::decode(decoder)?))
 		} else {
 			Ok(match decoder.read_bool()? {
@@ -1043,7 +1091,7 @@ impl<T: Decode> Decode for Option<T> {
 // Slice
 
 impl<T: Encode> Encode for &[T] {
-	fn encode<G: Write>(&self, encoder: &mut BinStream<G>) -> EncodingResult<()> {
+	fn encode<G: Write>(&self, encoder: &mut Encoder<G>) -> EncodingResult<()> {
 		encoder.write_length(self.len())?;
 		for i in 0..self.len() {
 			self[i].encode(encoder)?;
@@ -1053,7 +1101,7 @@ impl<T: Encode> Encode for &[T] {
 }
 
 impl<T: Encode, const SIZE: usize> Encode for [T; SIZE] {
-	fn encode<G: Write>(&self, encoder: &mut BinStream<G>) -> EncodingResult<()> {
+	fn encode<G: Write>(&self, encoder: &mut Encoder<G>) -> EncodingResult<()> {
 		for i in 0..SIZE {
 			self[i].encode(encoder)?;
 		}
@@ -1062,7 +1110,7 @@ impl<T: Encode, const SIZE: usize> Encode for [T; SIZE] {
 }
 
 impl<T: Decode + Default, const SIZE: usize> Decode for [T; SIZE] {
-	fn decode<G: Read>(decoder: &mut BinStream<G>) -> EncodingResult<Self> where Self: Sized {
+	fn decode<G: Read>(decoder: &mut Encoder<G>) -> EncodingResult<Self> where Self: Sized {
 		let mut uninit = array_init(|_| T::decode(decoder).unwrap());
 		for i in 0..SIZE {
 			uninit[i] = T::decode(decoder)?;
@@ -1074,13 +1122,13 @@ impl<T: Decode + Default, const SIZE: usize> Decode for [T; SIZE] {
 // Vec
 
 impl<T: Encode> Encode for Vec<T> {
-	fn encode<G: Write>(&self, encoder: &mut BinStream<G>) -> EncodingResult<()> {
+	fn encode<G: Write>(&self, encoder: &mut Encoder<G>) -> EncodingResult<()> {
 		Encode::encode(&self.as_slice(), encoder)
 	}
 }
 
 impl<T: Decode> Decode for Vec<T> {
-	fn decode<G: Read>(decoder: &mut BinStream<G>) -> EncodingResult<Self> where Self: Sized {
+	fn decode<G: Read>(decoder: &mut Encoder<G>) -> EncodingResult<Self> where Self: Sized {
 		let size = decoder.read_length()?;
 		let mut vec = Vec::with_capacity(size);
 		for _ in 0..size {
@@ -1093,7 +1141,7 @@ impl<T: Decode> Decode for Vec<T> {
 // Maps
 
 impl<K: Encode, V: Encode> Encode for HashMap<K, V> {
-	fn encode<T: Write>(&self, encoder: &mut BinStream<T>) -> EncodingResult<()> {
+	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
 		encoder.write_length(self.len())?;
 		for (k, v) in self.iter() {
 			k.encode(encoder)?;
@@ -1104,7 +1152,7 @@ impl<K: Encode, V: Encode> Encode for HashMap<K, V> {
 }
 
 impl<K: Decode + Eq + Hash, V: Decode> Decode for HashMap<K, V> {
-	fn decode<T: Read>(decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
+	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> where Self: Sized {
 		let size = decoder.read_length()?;
 		let mut map = HashMap::with_capacity(size);
 		for _ in 0..size {
@@ -1117,13 +1165,13 @@ impl<K: Decode + Eq + Hash, V: Decode> Decode for HashMap<K, V> {
 // Phantom data
 
 impl<T> Encode for PhantomData<T> {
-	fn encode<G: Write>(&self, _encoder: &mut BinStream<G>) -> EncodingResult<()> {
+	fn encode<G: Write>(&self, _encoder: &mut Encoder<G>) -> EncodingResult<()> {
 		Ok(())
 	}
 }
 
 impl<T> Decode for PhantomData<T> {
-	fn decode<G: Read>(_decoder: &mut BinStream<G>) -> EncodingResult<Self> where Self: Sized {
+	fn decode<G: Read>(_decoder: &mut Encoder<G>) -> EncodingResult<Self> where Self: Sized {
 		Ok(Self)
 	}
 }
@@ -1131,13 +1179,13 @@ impl<T> Decode for PhantomData<T> {
 // Unit
 
 impl Encode for () {
-	fn encode<T: Write>(&self, _encoder: &mut BinStream<T>) -> EncodingResult<()> {
+	fn encode<T: Write>(&self, _encoder: &mut Encoder<T>) -> EncodingResult<()> {
 		Ok(())
 	}
 }
 
 impl Decode for () {
-	fn decode<T: Read>(_decoder: &mut BinStream<T>) -> EncodingResult<Self> where Self: Sized {
+	fn decode<T: Read>(_decoder: &mut Encoder<T>) -> EncodingResult<Self> where Self: Sized {
 		Ok(())
 	}
 }
@@ -1152,10 +1200,9 @@ macro_rules! consume {
 
 macro_rules! tuple_impl {
     ($($name:ident)+) => {
-	    #[automatically_derived]
 	    #[allow(non_snake_case)]
 	    impl<$($name: $crate::Encode),+> $crate::Encode for ($($name),+) {
-		    fn encode<__T: Write>(&self, encoder: &mut BinStream<__T>) -> EncodingResult<()> {
+		    fn encode<__T: Write>(&self, encoder: &mut Encoder<__T>) -> EncodingResult<()> {
 		        let ($($name),*) = self;
 			    $(
 			        $crate::Encode::encode($name, encoder)?;
@@ -1163,11 +1210,10 @@ macro_rules! tuple_impl {
 			    Ok(())
 		    }
 	    }
-	    
-	    #[automatically_derived]
+
 	    #[allow(non_snake_case)]
 	    impl<$($name: $crate::Decode),+> $crate::Decode for ($($name),+) {
-		    fn decode<__T: Read>(decoder: &mut BinStream<__T>) -> EncodingResult<Self> where Self: Sized {
+		    fn decode<__T: Read>(decoder: &mut Encoder<__T>) -> EncodingResult<Self> where Self: Sized {
 			    Ok(($(
 		            consume!($name, $crate::Decode::decode(decoder)?),
 		        )+))

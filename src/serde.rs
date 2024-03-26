@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use serde::{de, Deserializer, ser, Serialize, Serializer};
 use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple, SerializeTupleStruct, SerializeTupleVariant};
 use serde::de::{DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor};
-use crate::{BinStream, Decode, Encode, EncodingError};
+use crate::{Encoder, Decode, Encode, EncodingError};
 
 impl ser::Error for EncodingError {
 	fn custom<T>(msg: T) -> Self where T: Display {
@@ -17,7 +17,7 @@ impl de::Error for EncodingError {
 	}
 }
 
-impl<T: Write> Serializer for &mut BinStream<T> {
+impl<T: Write> Serializer for &mut Encoder<'_, T> {
 	type Ok = ();
 	type Error = EncodingError;
 	type SerializeSeq = Self;
@@ -93,14 +93,14 @@ impl<T: Write> Serializer for &mut BinStream<T> {
 	}
 
 	fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-		if self.options.flatten().is_none() {
+		if self.ctxt.flatten().is_none() {
 			self.write_bool(false)?;
 		}
 		Ok(())
 	}
 
 	fn serialize_some<G: ?Sized>(self, value: &G) -> Result<Self::Ok, Self::Error> where G: Serialize {
-		if self.options.flatten().is_none() {
+		if self.ctxt.flatten().is_none() {
 			self.write_bool(true)?;
 		}
 		value.serialize(self)
@@ -166,7 +166,7 @@ impl<T: Write> Serializer for &mut BinStream<T> {
 	}
 }
 
-impl<T: Write> SerializeSeq for &mut BinStream<T> {
+impl<T: Write> SerializeSeq for &mut Encoder<'_, T> {
 	type Ok = ();
 	type Error = EncodingError;
 
@@ -179,7 +179,7 @@ impl<T: Write> SerializeSeq for &mut BinStream<T> {
 	}
 }
 
-impl<T: Write> SerializeTuple for &mut BinStream<T> {
+impl<T: Write> SerializeTuple for &mut Encoder<'_, T> {
 	type Ok = ();
 	type Error = EncodingError;
 
@@ -192,7 +192,7 @@ impl<T: Write> SerializeTuple for &mut BinStream<T> {
 	}
 }
 
-impl<T: Write> SerializeTupleStruct for &mut BinStream<T> {
+impl<T: Write> SerializeTupleStruct for &mut Encoder<'_, T> {
 	type Ok = ();
 	type Error = EncodingError;
 
@@ -205,7 +205,7 @@ impl<T: Write> SerializeTupleStruct for &mut BinStream<T> {
 	}
 }
 
-impl<T: Write> SerializeTupleVariant for &mut BinStream<T> {
+impl<T: Write> SerializeTupleVariant for &mut Encoder<'_, T> {
 	type Ok = ();
 	type Error = EncodingError;
 
@@ -218,7 +218,7 @@ impl<T: Write> SerializeTupleVariant for &mut BinStream<T> {
 	}
 }
 
-impl<T: Write> SerializeMap for &mut BinStream<T> {
+impl<T: Write> SerializeMap for &mut Encoder<'_, T> {
 	type Ok = ();
 	type Error = EncodingError;
 
@@ -235,7 +235,7 @@ impl<T: Write> SerializeMap for &mut BinStream<T> {
 	}
 }
 
-impl<T: Write> SerializeStruct for &mut BinStream<T> {
+impl<T: Write> SerializeStruct for &mut Encoder<'_, T> {
 	type Ok = ();
 	type Error = EncodingError;
 
@@ -248,7 +248,7 @@ impl<T: Write> SerializeStruct for &mut BinStream<T> {
 	}
 }
 
-impl<T: Write> SerializeStructVariant for &mut BinStream<T> {
+impl<T: Write> SerializeStructVariant for &mut Encoder<'_, T> {
 	type Ok = ();
 	type Error = EncodingError;
 
@@ -261,7 +261,7 @@ impl<T: Write> SerializeStructVariant for &mut BinStream<T> {
 	}
 }
 
-impl<'de, T: Read> Deserializer<'de> for &mut BinStream<T> {
+impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
 	type Error = EncodingError;
 
 	fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
@@ -341,7 +341,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut BinStream<T> {
 	}
 
 	fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		if self.options.flatten().is_some() || self.read_bool()? {
+		if self.ctxt.flatten().is_some() || self.read_bool()? {
 			visitor.visit_some(self)
 		} else {
 			visitor.visit_none()
@@ -362,39 +362,29 @@ impl<'de, T: Read> Deserializer<'de> for &mut BinStream<T> {
 
 	fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
 		let len = self.read_length()?;
-		visitor.visit_seq(BinSeqDeserializer {
-			stream: self,
-			len,
-		})
+		self.ctxt.len_stack.push(len);
+		visitor.visit_seq(self)
 	}
 
 	fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		visitor.visit_seq(BinSeqDeserializer {
-			stream: self,
-			len,
-		})
+		self.ctxt.len_stack.push(len);
+		visitor.visit_seq(self)
 	}
 
 	fn deserialize_tuple_struct<V>(self, _name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		visitor.visit_seq(BinSeqDeserializer {
-			stream: self,
-			len,
-		})
+		self.ctxt.len_stack.push(len);
+		visitor.visit_seq(self)
 	}
 
 	fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
 		let len = self.read_length()?;
-		visitor.visit_map(BinMapDeserializer {
-			stream: self,
-			len
-		})
+		self.ctxt.len_stack.push(len);
+		visitor.visit_map(self)
 	}
 
 	fn deserialize_struct<V>(self, _name: &'static str, fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		visitor.visit_seq(BinSeqDeserializer {
-			stream: self,
-			len: fields.len(),
-		})
+		self.ctxt.len_stack.push(fields.len());
+		visitor.visit_seq(self)
 	}
 
 	fn deserialize_enum<V>(self, _name: &'static str, _variants: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
@@ -414,54 +404,51 @@ impl<'de, T: Read> Deserializer<'de> for &mut BinStream<T> {
 	}
 }
 
-struct BinSeqDeserializer<'a, T: Read> {
-	stream: &'a mut BinStream<T>,
-	len: usize
-}
-
-impl<'de, 'a, T: Read> SeqAccess<'de> for BinSeqDeserializer<'a, T> {
+impl<'de, T: Read> SeqAccess<'de> for Encoder<'de, T> {
 	type Error = EncodingError;
 
 	fn next_element_seed<G>(&mut self, seed: G) -> Result<Option<G::Value>, Self::Error> where G: DeserializeSeed<'de> {
-		if self.len != 0 {
-			seed.deserialize(&mut *self.stream).map(Some)
+		let elem = self.ctxt.len_stack.len();
+		if self.ctxt.len_stack[elem] != 0 {
+			self.ctxt.len_stack[elem] -= 1;
+			seed.deserialize(self).map(Some)
 		} else {
+			self.ctxt.len_stack.pop();
 			Ok(None)
 		}
 	}
 
 	fn size_hint(&self) -> Option<usize> {
-		Some(self.len)
+		let elem = self.ctxt.len_stack.len();
+		self.ctxt.len_stack.get(elem).map(ToOwned::to_owned)
 	}
 }
 
-struct BinMapDeserializer<'a, T: Read> {
-	stream: &'a mut BinStream<T>,
-	len: usize
-}
-
-impl<'de, 'a, T: Read> MapAccess<'de> for BinMapDeserializer<'a, T> {
+impl<'de, T: Read> MapAccess<'de> for Encoder<'de, T> {
 	type Error = EncodingError;
 
 	fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error> where K: DeserializeSeed<'de> {
-		if self.len != 0 {
-			self.len -= 1;
-			seed.deserialize(&mut *self.stream).map(Some)
+		let elem = self.ctxt.len_stack.len();
+		if self.ctxt.len_stack[elem] != 0 {
+			self.ctxt.len_stack[elem] -= 1;
+			seed.deserialize(self).map(Some)
 		} else {
+			self.ctxt.len_stack.pop();
 			Ok(None)
 		}
 	}
 
 	fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error> where V: DeserializeSeed<'de> {
-		seed.deserialize(&mut *self.stream)
+		seed.deserialize(self)
 	}
 
 	fn size_hint(&self) -> Option<usize> {
-		Some(self.len)
+		let elem = self.ctxt.len_stack.len();
+		self.ctxt.len_stack.get(elem).map(ToOwned::to_owned)
 	}
 }
 
-impl<'de, T: Read> EnumAccess<'de> for &mut BinStream<T> {
+impl<'de, T: Read> EnumAccess<'de> for &mut Encoder<'de, T> {
 	type Error = EncodingError;
 	type Variant = Self;
 
@@ -471,7 +458,7 @@ impl<'de, T: Read> EnumAccess<'de> for &mut BinStream<T> {
 	}
 }
 
-impl<'de, T: Read> VariantAccess<'de> for &mut BinStream<T> {
+impl<'de, T: Read> VariantAccess<'de> for &mut Encoder<'de, T> {
 	type Error = EncodingError;
 
 	fn unit_variant(self) -> Result<(), Self::Error> {

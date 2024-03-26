@@ -78,6 +78,8 @@ mod kw {
 
 	custom_keyword!(key);
 	custom_keyword!(iv);
+	custom_keyword!(public);
+	custom_keyword!(private);
 }
 
 mod repr {
@@ -212,7 +214,7 @@ impl ToTokens for RsaBits {
 
 #[allow(unused)]
 enum RsaMode {
-	Normal,
+	Standard,
 	Reverse
 }
 
@@ -220,7 +222,7 @@ impl ToTokens for RsaMode {
 	fn to_tokens(&self, tokens: &mut TokenStream2) {
 		let dollar_crate = dollar_crate(ENDE);
 		tokens.append_all(match self {
-			RsaMode::Normal => quote!(#dollar_crate::encryption::RsaMode::Normal),
+			RsaMode::Standard => quote!(#dollar_crate::encryption::RsaMode::Standard),
 			RsaMode::Reverse => quote!(#dollar_crate::encryption::RsaMode::Reverse),
 		});
 	}
@@ -236,8 +238,8 @@ impl ToTokens for Encryption {
 	fn to_tokens(&self, tokens: &mut TokenStream2) {
 		let dollar_crate = dollar_crate(ENDE);
 		tokens.append_all(match self {
-			Encryption::Aes(bits, mode) => quote!(#dollar_crate::encryption::Encryption::Aes(#bits, #mode)),
-			Encryption::Rsa(..) => unimplemented!(),
+			Encryption::Aes(bits, mode) => quote!(#dollar_crate::encryption::SymmEncryption::Aes(#bits, #mode)),
+			Encryption::Rsa(bits, padding, mode) => quote!(#dollar_crate::encryption::AsymmEncryption::Rsa(#bits, #padding, #mode)),
 		})
 	}
 }
@@ -312,7 +314,7 @@ impl FromStr for Encryption {
 					_ => return Err(r#"Allowed padding modes for RSA are: PKCS1, PKCS1_OAEP, PKCS1_PSS"#)
 				};
 
-				let rsa_mode = if cipher.starts_with("rev") { RsaMode::Reverse } else { RsaMode::Normal };
+				let rsa_mode = if cipher.starts_with("rev") { RsaMode::Reverse } else { RsaMode::Standard };
 
 				Encryption::Rsa(bits, padding, rsa_mode)
 			}
@@ -508,14 +510,16 @@ enum EncryptionParam {
 	Expr(Expr)
 }
 
-impl EncryptionParam {
-	fn to_expr(&self) -> Expr {
+impl ToTokens for EncryptionParam {
+	fn to_tokens(&self, tokens: &mut TokenStream2) {
 		match self {
-			EncryptionParam::Static(x) => syn::parse2(x.to_token_stream()).unwrap(),
-			EncryptionParam::Expr(x) => x.clone(),
+			EncryptionParam::Static(x) => x.to_tokens(tokens),
+			EncryptionParam::Expr(x) => x.to_tokens(tokens),
 		}
 	}
+}
 
+impl EncryptionParam {
 	// Rsa needs to be treated differently
 	fn is_rsa(&self) -> bool {
 		match self {
@@ -534,11 +538,11 @@ enum CompressionParam {
 	Expr(Expr)
 }
 
-impl CompressionParam {
-	fn to_expr(&self) -> Expr {
+impl ToTokens for CompressionParam {
+	fn to_tokens(&self, tokens: &mut TokenStream2) {
 		match self {
-			CompressionParam::Static(x) => syn::parse2(x.to_token_stream()).unwrap(),
-			CompressionParam::Expr(x) => x.clone(),
+			CompressionParam::Static(x) => x.to_tokens(tokens),
+			CompressionParam::Expr(x) => x.to_tokens(tokens),
 		}
 	}
 }
@@ -555,13 +559,25 @@ enum EncryptionParameters {
 		colon: Colon,
 		iv: Expr,
 	},
+	Public {
+		kw: kw::public,
+		colon: Colon,
+		public: Expr,
+	},
+	Private {
+		kw: kw::private,
+		colon: Colon,
+		private: Expr,
+	}
 }
 
 impl EncryptionParameters {
 	fn span(&self) -> Span {
 		match self {
 			EncryptionParameters::Key { kw, .. } => kw.span,
-			EncryptionParameters::Iv { kw, .. } => kw.span
+			EncryptionParameters::Iv { kw, .. } => kw.span,
+			EncryptionParameters::Public { kw, .. } => kw.span,
+			EncryptionParameters::Private { kw, .. } => kw.span,
 		}
 	}
 }
@@ -579,6 +595,18 @@ impl Parse for EncryptionParameters {
 				kw: input.parse()?,
 				colon: input.parse()?,
 				iv: input.parse()?,
+			}
+		}  else if input.peek(kw::public) {
+			Self::Public {
+				kw: input.parse()?,
+				colon: input.parse()?,
+				public: input.parse()?,
+			}
+		}  else if input.peek(kw::private) {
+			Self::Private {
+				kw: input.parse()?,
+				colon: input.parse()?,
+				private: input.parse()?,
 			}
 		} else {
 			return Err(Error::new(input.span(), "Unknown encryption parameter"))
@@ -620,8 +648,8 @@ enum Flag {
 	},
 	Encrypted {
 		kw: kw::encrypted,
-		eq: token::Eq,
-		encryption: EncryptionParam,
+		eq: Option<token::Eq>,
+		encryption: Option<EncryptionParam>,
 		comma1: Option<Comma>,
 		params1: Option<EncryptionParameters>,
 		comma2: Option<Comma>,
@@ -629,8 +657,8 @@ enum Flag {
 	},
 	Compressed {
 		kw: kw::compressed,
-		eq: token::Eq,
-		compression: CompressionParam
+		eq: Option<token::Eq>,
+		compression: Option<CompressionParam>
 	},
 	ModifierList {
 		target: Target,
@@ -815,9 +843,22 @@ impl Parse for Flag {
 			}
 		} else if input.peek(kw::encrypted) {
 			let kw = input.parse()?;
-			let eq = input.parse()?;
 
-			let encryption = if input.peek(LitStr) {
+			if !input.peek(token::Eq) {
+				return Ok(Flag::Encrypted {
+					kw,
+					eq: None,
+					encryption: None,
+					comma1: None,
+					params1: None,
+					comma2: None,
+					params2: None,
+				})
+			}
+
+			let eq = Some(input.parse()?);
+
+			let encryption = Some(if input.peek(LitStr) {
 				let encryption: LitStr = input.parse()?;
 				let encryption = Encryption::from_str(&encryption.value())
 					.map_err(|x| Error::new(encryption.span(), x))?;
@@ -825,7 +866,7 @@ impl Parse for Flag {
 				EncryptionParam::Static(encryption)
 			} else {
 				EncryptionParam::Expr(input.parse()?)
-			};
+			});
 
 			let (comma1, params1) = if input.peek(Comma) {
 				(Some(input.parse()?), Some(input.parse()?))
@@ -850,9 +891,18 @@ impl Parse for Flag {
 			}
 		} else if input.peek(kw::compressed) {
 			let kw = input.parse()?;
-			let eq = input.parse()?;
 
-			let compression = if input.peek(LitStr) {
+			if !input.peek(token::Eq) {
+				return Ok(Flag::Compressed {
+					kw,
+					eq: None,
+					compression: None
+				});
+			}
+
+			let eq = Some(input.parse()?);
+
+			let compression = Some(if input.peek(LitStr) {
 				let compression: LitStr = input.parse()?;
 				let compression = Compression::from_str(&compression.value())
 					.map_err(|x| Error::new(compression.span(), x))?;
@@ -860,7 +910,7 @@ impl Parse for Flag {
 				CompressionParam::Static(compression)
 			} else {
 				CompressionParam::Expr(input.parse()?)
-			};
+			});
 
 			Flag::Compressed {
 				kw,
@@ -1000,16 +1050,16 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 				for modifier in modifiers.iter() {
 					aggregate.append_all(match &modifier {
 						Modifier::FixedInt(_) => {quote!(
-							#source.options.#target.num_encoding = #dollar_crate::NumEncoding::Fixed;
+							#source.ctxt.settings.#target.num_encoding = #dollar_crate::NumEncoding::Fixed;
 						)}
 						Modifier::Leb128Int(_) => {quote!(
-							#source.options.#target.num_encoding = #dollar_crate::NumEncoding::Leb128;
+							#source.ctxt.settings.#target.num_encoding = #dollar_crate::NumEncoding::Leb128;
 						)}
 						Modifier::BigEndian(_) => {quote!(
-							#source.options.#target.endianness = #dollar_crate::Endianness::BigEndian;
+							#source.ctxt.settings.#target.endianness = #dollar_crate::Endianness::BigEndian;
 						)}
 						Modifier::LittleEndian(_) => {quote!(
-							#source.options.#target.endianness = #dollar_crate::Endianness::LittleEndian;
+							#source.ctxt.settings.#target.endianness = #dollar_crate::Endianness::LittleEndian;
 						)}
 						Modifier::MaxSize { max, .. } => {
 							match target {
@@ -1018,7 +1068,7 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 							}
 
 							quote!(
-							#source.options.size_repr.max_size = { #max };
+							#source.ctxt.settings.size_repr.max_size = { #max };
 						)}
 						Modifier::BitWidth(width) => {
 							match target {
@@ -1034,7 +1084,7 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 								BitWidth::Bit128(x) => quote_spanned!(x.span()=>Bit128),
 							};
 							quote!(
-								#source.options.#target.width = #dollar_crate::BitWidth::#width;
+								#source.ctxt.settings.#target.width = #dollar_crate::BitWidth::#width;
 							)
 						}
 					});
@@ -1045,39 +1095,8 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 				let depth = depth.as_ref().map(ToTokens::to_token_stream).unwrap_or(quote!(1usize));
 
 				quote!(
-					#source.options.flatten = Some({ #depth });
+					#source.ctxt.flatten = Some({ #depth });
 				)
-			}
-			Flag::Encrypted { encryption, params1, params2, .. } => {
-				// Rsa encryption acts like a modifier, so we handle it here
-				if let EncryptionParam::Static(x) = encryption {
-					if let Encryption::Rsa(bits, padding, mode) = x {
-						let mut key = None;
-						if let Some(x) = params1 {
-							match x {
-								EncryptionParameters::Key { key: _key, .. } => key = Some(_key),
-								EncryptionParameters::Iv { .. } => make_error!(??? x.span(), "IVs are not needed for RSA encryption")
-							}
-						}
-						if let Some(x) = params2 {
-							match x {
-								EncryptionParameters::Key { key: _key, .. } => key = Some(_key),
-								EncryptionParameters::Iv { .. } => make_error!(??? x.span(), "IVs are not needed for RSA encryption")
-							}
-						}
-
-						let key = key.map(|key| {
-							quote!(#source.crypto.rsa.store_key(#key);)
-						});
-
-						quote!(
-							#source.crypto.rsa.bits = #bits;
-							#source.crypto.rsa.padding = #padding;
-							#source.crypto.rsa.mode = #mode;
-							#key
-						)
-					} else { continue }
-				} else { continue }
 			}
 			_ => continue
 		};
@@ -1092,11 +1111,11 @@ fn apply_modifiers(ident: &Ident, source: &Ident, attrs: &[Flag]) -> Result<(Tok
 	}
 
 	Ok((quote!(
-		let #ident: #dollar_crate::BinOptions = #source.options;
+		let #ident: #dollar_crate::BinSettings = #source.ctxt.settings;
 		#aggregate
 	),
 	quote!(
-		#source.options = #ident;
+		#source.ctxt.settings = #ident;
 	)))
 }
 
@@ -1106,7 +1125,7 @@ fn apply_stream_modifiers(is_encode: bool, code: TokenStream2, attrs: &[Flag]) -
 	for x in attrs.iter() {
 		match x {
 			Flag::Compressed { compression, .. } => {
-				let compression = compression.to_expr();
+				let compression: TokenStream2 = compression.as_ref().map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
 				aggregate = if is_encode {
 					quote!(
 						#dollar_crate::compression::encode_with_compression(
@@ -1129,7 +1148,9 @@ fn apply_stream_modifiers(is_encode: bool, code: TokenStream2, attrs: &[Flag]) -
 				};
 			},
 			Flag::Encrypted { encryption, params1, params2, .. } => {
-				if encryption.is_rsa() { continue }
+				if encryption.as_ref().is_some_and(|x| x.is_rsa()) {
+					continue;
+				}
 
 				let mut key = None;
 				let mut iv = None;
@@ -1138,20 +1159,22 @@ fn apply_stream_modifiers(is_encode: bool, code: TokenStream2, attrs: &[Flag]) -
 					match x {
 						EncryptionParameters::Key { key: _key, .. } => key = Some(_key),
 						EncryptionParameters::Iv { iv: _iv, .. } => iv = Some(_iv),
+						_ => make_error!(??? x.span(), "public and private keys are only allowed with asymmetric encryption")
 					}
 				}
 				if let Some(x) = params2 {
 					match x {
 						EncryptionParameters::Key { key: _key, .. } => key = Some(_key),
 						EncryptionParameters::Iv { iv: _iv, .. } => iv = Some(_iv),
+						_ => make_error!(??? x.span(), "public and private keys are only allowed with asymmetric encryption")
 					}
 				}
 
 
 				let key: TokenStream2 = key.as_ref().map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
 				let iv: TokenStream2 = iv.as_ref().map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
+				let encryption: TokenStream2 = encryption.as_ref().map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
 
-				let encryption = encryption.to_expr();
 				aggregate = if is_encode {
 					quote!(
 						#dollar_crate::encryption::encode_with_encryption(
@@ -1191,7 +1214,50 @@ fn gen_encode_fn_call(field: TokenStream2, attrs: &[Flag]) -> Result<TokenStream
 		return Ok(quote!());
 	}
 
-	let encode = if let Some(with) = attrs.iter().find(|x| x.with()).and_then(Flag::as_with) {
+	let mut rsa = None;
+	for x in attrs.iter() {
+		match x {
+			Flag::Encrypted { encryption: Some(EncryptionParam::Static(x @ Encryption::Rsa(..))), params1, params2, .. } => {
+				let mut public = None;
+				let mut private = None;
+				if let Some(x) = params1 {
+					match x {
+						EncryptionParameters::Key { ..} => make_error!(??? x.span(), "Symmetric keys are not needed for RSA encryption"),
+						EncryptionParameters::Iv { .. } => make_error!(??? x.span(), "IVs are not needed for RSA encryption"),
+						EncryptionParameters::Public { public: public_, .. } => public = Some(public_),
+						EncryptionParameters::Private { private: private_, .. } => private = Some(private_),
+					}
+				}
+				if let Some(x) = params2 {
+					match x {
+						EncryptionParameters::Key { ..} => make_error!(??? x.span(), "Symmetric keys are not needed for RSA encryption"),
+						EncryptionParameters::Iv { .. } => make_error!(??? x.span(), "IVs are not needed for RSA encryption"),
+						EncryptionParameters::Public { public: public_, .. } => public = Some(public_),
+						EncryptionParameters::Private { private: private_, .. } => private = Some(private_),
+					}
+				}
+
+				let public: TokenStream2 = public.map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
+				let private: TokenStream2 = private.map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
+
+				rsa = Some(quote!(
+					#dollar_crate::encryption::encode_asymm_block(
+						__encoder,
+						Some(#x),
+						#public,
+						#private,
+						#field
+					)?
+				))
+			}
+			_ => {}
+		}
+	}
+	let encode = if let Some(x) = rsa {
+		quote!(
+			{ #x };
+		)
+	} else if let Some(with) = attrs.iter().find(|x| x.with()).and_then(Flag::as_with) {
 		quote!(
 			{ #with };
 		)
@@ -1245,7 +1311,49 @@ fn gen_decode_fn_call(attrs: &[Flag]) -> Result<TokenStream2, TokenStream2> {
 		return Ok(default);
 	}
 
-	let decode = if let Some(with) = attrs.iter().find(|x| x.with()).and_then(Flag::as_with) {
+	let mut rsa = None;
+	for x in attrs.iter() {
+		match x {
+			Flag::Encrypted { encryption: Some(EncryptionParam::Static(x @ Encryption::Rsa(..))), params1, params2, .. } => {
+				let mut public = None;
+				let mut private = None;
+				if let Some(x) = params1 {
+					match x {
+						EncryptionParameters::Key { ..} => make_error!(??? x.span(), "Symmetric keys are not needed for RSA encryption"),
+						EncryptionParameters::Iv { .. } => make_error!(??? x.span(), "IVs are not needed for RSA encryption"),
+						EncryptionParameters::Public { public: public_, .. } => public = Some(public_),
+						EncryptionParameters::Private { private: private_, .. } => private = Some(private_),
+					}
+				}
+				if let Some(x) = params2 {
+					match x {
+						EncryptionParameters::Key { ..} => make_error!(??? x.span(), "Symmetric keys are not needed for RSA encryption"),
+						EncryptionParameters::Iv { .. } => make_error!(??? x.span(), "IVs are not needed for RSA encryption"),
+						EncryptionParameters::Public { public: public_, .. } => public = Some(public_),
+						EncryptionParameters::Private { private: private_, .. } => private = Some(private_),
+					}
+				}
+
+				let public: TokenStream2 = public.map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
+				let private: TokenStream2 = private.map(|x| quote!(Some(#x))).unwrap_or(quote!(None));
+
+				rsa = Some(quote!(
+					#dollar_crate::encryption::decode_asymm_block(
+						__decoder,
+						Some(#x),
+						#public,
+						#private,
+					)?
+				))
+			}
+			_ => {}
+		}
+	}
+	let decode = if let Some(x) = rsa {
+		quote!(
+			{ #x }
+		)
+	} else if let Some(with) = attrs.iter().find(|x| x.with()).and_then(Flag::as_with) {
 		quote!(
 			{ #with }
 		)
@@ -1882,7 +1990,7 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
 	quote!(
 		#[automatically_derived]
 		impl #impl_generics #dollar_crate::Encode for #name #ty_generics #where_clause {
-			fn encode<__T: std::io::Write>(&self, __encoder: &mut #dollar_crate::BinStream<__T>) -> #dollar_crate::EncodingResult<()> {
+			fn encode<__T: std::io::Write>(&self, __encoder: &mut #dollar_crate::Encoder<__T>) -> #dollar_crate::EncodingResult<()> {
 				#body
 			}
 		}
@@ -2010,7 +2118,7 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
 	quote!(
 		#[automatically_derived]
 		impl #impl_generics #dollar_crate::Decode for #name #ty_generics #where_clause {
-			fn decode<__T: std::io::Read>(__decoder: &mut #dollar_crate::BinStream<__T>) -> #dollar_crate::EncodingResult<Self> {
+			fn decode<__T: std::io::Read>(__decoder: &mut #dollar_crate::Encoder<__T>) -> #dollar_crate::EncodingResult<Self> {
 				#body
 			}
 		}

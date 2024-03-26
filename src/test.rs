@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::io::{Seek, Write};
-use crate::{BinOptions, BinStream, Decode, Encode, NumEncoding};
-use crate::encryption::RsaBlock;
+use crate::{BinSettings, Encoder, Decode, Encode, NumEncoding, Context};
 
 #[derive(Encode, Decode)]
 #[ende(num: little_endian)]
@@ -88,9 +87,9 @@ pub enum EncryptionTest {
 	A {
 		rsa_private: [u8; 512],
 		iv: [u8; 16],
-		#[ende(encrypted = "2048-bit RSA/ECB/PKCS1", key: rsa_private)]
-		key: RsaBlock,
-		encryption: crate::encryption::Encryption,
+		#[ende(encrypted = "2048-bit RSA/ECB/PKCS1", private: rsa_private)]
+		key: Vec<u8>,
+		encryption: crate::encryption::SymmEncryption,
 		#[ende(encrypted = "128-bit AES/CFB8")]
 		secret: u64,
 	}
@@ -99,10 +98,10 @@ pub enum EncryptionTest {
 #[test]
 pub fn test() {
 	let mem = File::options().create(true).write(true).read(true).open("./test.bin").unwrap();
-	let mut options = BinOptions::default();
+	let mut options = BinSettings::default();
 	options.num_repr.num_encoding = NumEncoding::Leb128;
-	let mut stream = BinStream::new(mem, options);
-
+	let mut stream = Encoder::new(mem, Context::with_options(options));
+	
 	let orig = i128::MIN;
 	println!("{:#0130b}", orig);
 	println!("{orig}");
