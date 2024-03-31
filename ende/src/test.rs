@@ -1,20 +1,27 @@
-use std::fs::File;
-use std::io::{Seek, Write};
-use crate::{BinSettings, Encoder, Decode, Encode, NumEncoding, Context};
+#![allow(unused)]
+
+use ende_derive::{Encode, Decode};
 
 #[derive(Encode, Decode)]
 #[ende(num: little_endian)]
 #[allow(unused)]
 pub struct StructStruct {
 	#[ende(skip)]
+	#[ende(default: 100)]
 	value1: u64,
-	value2: f64,
-	unit: ()
+	#[ende(if: *value1 > 10)]
+	#[ende(default: *value1 as f32)]
+	#[ende(as simple: u8)]
+	value2: f32,
+	unit: (),
+	#[ende(secret)]
+	secret: Vec<u8>
 }
 
 #[derive(Encode, Decode)]
 pub struct TupleStruct(
 	u64,
+	#[ende(num: leb128, big_endian; size: max = 15, 16, little_endian, fixed; variant: 128, fixed, big_endian; flatten: 12)]
 	f64
 );
 
@@ -27,11 +34,12 @@ pub struct UnitStruct;
 pub enum Enum {
 	StructVariant {
 		value1: u64,
+		#[ende(validate: *value2 == 16.0, "Expected 16.0, got {}", value2)]
 		value2: f64
 	},
 	TupleVariant(
 		u64,
-		#[ende(if = *m0 >= 154)]
+		#[ende(if: *m0 >= 154)]
 		f64
 	) = u16::MAX as isize,
 	UnitVariant
@@ -75,9 +83,10 @@ pub enum EmptyEnum {
 //    |     ^^^^^
 
 #[derive(Encode, Decode)]
+#[ende(encrypted)]
 pub struct VersionContainer {
 	name_present: bool,
-	#[ende(if = *name_present)]
+	#[ende(if: *name_present)]
 	name: String,
 }
 
@@ -86,29 +95,31 @@ pub struct VersionContainer {
 pub enum EncryptionTest {
 	A {
 		rsa_private: [u8; 512],
+		#[ende(serde)]
 		iv: [u8; 16],
-		#[ende(encrypted = "2048-bit RSA/ECB/PKCS1", private: rsa_private)]
+		#[ende(secret: "2048-bit RSA/ECB/PKCS1", private: rsa_private)]
 		key: Vec<u8>,
 		encryption: crate::encryption::SymmEncryption,
-		#[ende(encrypted = "128-bit AES/CFB8")]
+		#[ende(compressed)]
+		#[ende(encrypted: "128-bit AES/CFB8")]
 		secret: u64,
 	}
 }
 
 #[test]
 pub fn test() {
-	let mem = File::options().create(true).write(true).read(true).open("./test.bin").unwrap();
-	let mut options = BinSettings::default();
-	options.num_repr.num_encoding = NumEncoding::Leb128;
-	let mut stream = Encoder::new(mem, Context::with_options(options));
-	
-	let orig = i128::MIN;
-	println!("{:#0130b}", orig);
-	println!("{orig}");
-	stream.write_i128(orig).unwrap();
-	stream.stream.flush().unwrap();
-	stream.stream.rewind().unwrap();
-	let val = stream.read_i128().unwrap();
-	println!("{:#0130b}", val);
-	println!("{val}");
+	// let mut mem = [0u8; 1024];
+	// let mut options = BinSettings::default();
+	// options.num_repr.num_encoding = NumEncoding::Leb128;
+	// let mut stream = Encoder::new(&mut mem, Context::with_options(options));
+	//
+	// let orig = i128::MIN;
+	// println!("{:#0130b}", orig);
+	// println!("{orig}");
+	// stream.write_i128(orig).unwrap();
+	// stream.stream.flush().unwrap();
+	// stream.stream.rewind().unwrap();
+	// let val = stream.read_i128().unwrap();
+	// println!("{:#0130b}", val);
+	// println!("{val}");
 }

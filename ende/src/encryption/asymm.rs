@@ -2,10 +2,11 @@ use std::borrow::Cow;
 use parse_display::Display;
 use std::fmt::Debug;
 use std::io::{Read, Write};
+use std::str::FromStr;
 use openssl::rsa::{Padding, Rsa};
 use openssl::pkey::{Private, Public};
 use zeroize::Zeroize;
-use crate::{Decode, Encode, Encoder, EncodingError, EncodingResult, encryption};
+use crate::{Encoder, EncodingError, EncodingResult, encryption};
 use crate::encryption::CryptoError;
 use crate::encryption::CryptoError::NoKey;
 
@@ -149,36 +150,55 @@ impl<'a> Drop for AsymmState<'a> {
 
 /// A public-key encryption algorithm. Contrary to [`SymmEncryption`], these cannot be used
 /// as stream ciphers, and therefore only operate on blocks rather than `Write`'s and `Read`'s
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
-#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
+#[ende(variant: fixed, 8)]
 pub enum AsymmEncryption {
 	#[display("{0}-bits {2} RSA/ECB/{1}")]
 	Rsa(RsaBits, RsaPadding, RsaMode)
 }
 
-impl Encode for AsymmEncryption {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			AsymmEncryption::Rsa(m0, m1, m2) => {
-				encoder.write_u8(0)?;
-				m0.encode(encoder)?;
-				m1.encode(encoder)?;
-				m2.encode(encoder)?;
-			}
-		}
-		Ok(())
-	}
-}
+impl FromStr for AsymmEncryption {
+	type Err = &'static str;
 
-impl Decode for AsymmEncryption {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Self::Rsa(
-				Decode::decode(decoder)?,
-				Decode::decode(decoder)?,
-				Decode::decode(decoder)?,
-			),
-			_ => return Err(EncodingError::InvalidVariant),
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		const USAGE: &str = r#"Invalid encryption format. Usage: "{key_size}-bit {cipher}/{mode}/{padding}""#;
+
+		let (key_size, rest) = s.split_once("-").ok_or(USAGE)?;
+		let (bit_token, rest) = rest.split_once(" ").ok_or(USAGE)?;
+		let (cipher, rest) = rest.split_once("/").ok_or(USAGE)?;
+		let (mode, padding) = rest.split_once("/").ok_or(USAGE)?;
+
+		if bit_token != "bit" {
+			return Err(USAGE);
+		}
+
+		Ok(match cipher {
+			"RSA" | "revRSA" => {
+				let bits = match key_size {
+					"1024" => RsaBits::N1024,
+					"2048" => RsaBits::N2048,
+					"4096" => RsaBits::N4096,
+					_ => return Err(r#"Allowed key sizes for RSA are: 1024, 2048 (recommended), 4096"#)
+				};
+
+				match mode {
+					"ECB" => {},
+					_ => return Err(r#"Allowed modes for RSA are: ECB"#)
+				}
+
+				let padding = match padding {
+					"None" => RsaPadding::None,
+					"PKCS1" => RsaPadding::Pkcs1,
+					"PKCS1_OAEP" => RsaPadding::Pkcs1Oaep,
+					"PKCS1_PSS" => RsaPadding::Pkcs1Pss,
+					_ => return Err(r#"Allowed padding modes for RSA are: None, PKCS1, PKCS1_OAEP, PKCS1_PSS"#)
+				};
+
+				let rsa_mode = if cipher.starts_with("rev") { RsaMode::Reverse } else { RsaMode::Standard };
+
+				AsymmEncryption::Rsa(bits, padding, rsa_mode)
+			}
+			_ => return Err(r#"Allowed ciphers are: AES, RSA, revRSA"#)
 		})
 	}
 }
@@ -195,84 +215,14 @@ impl AsymmEncryption {
 }
 
 /// RSA padding mode. Using None is discouraged as it has been proven insecure.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
-#[repr(u8)]
-#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
+#[ende(variant: fixed, 8)]
 pub enum RsaPadding {
 	/// No padding, only use if strictly necessary
 	None,
 	Pkcs1,
 	Pkcs1Oaep,
 	Pkcs1Pss
-}
-
-impl Encode for RsaPadding {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			Self::None => encoder.write_u8(0),
-			Self::Pkcs1 => encoder.write_u8(1),
-			Self::Pkcs1Oaep => encoder.write_u8(2),
-			Self::Pkcs1Pss => encoder.write_u8(3),
-		}
-	}
-}
-
-impl Decode for RsaPadding {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Self::None,
-			1 => Self::Pkcs1,
-			2 => Self::Pkcs1Oaep,
-			3 => Self::Pkcs1Pss,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
-}
-
-/// The RSA key length in bits. Using anything under 2048 bits is discouraged because insecure.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
-#[repr(u8)]
-#[allow(non_camel_case_types)]
-pub enum RsaBits {
-	/// Only use if strictly necessary
-	#[display("1024")]
-	N1024,
-	#[display("2048")]
-	N2048,
-	#[display("4096")]
-	N4096,
-}
-
-impl Encode for RsaBits {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			Self::N1024 => encoder.write_u8(0),
-			Self::N2048 => encoder.write_u8(1),
-			Self::N4096 => encoder.write_u8(2),
-		}
-	}
-}
-
-impl Decode for RsaBits {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Self::N1024,
-			1 => Self::N2048,
-			2 => Self::N4096,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
-}
-
-impl RsaBits {
-	/// Returns the number of RSA key length bits `self` represents
-	pub fn bits(&self) -> u32 {
-		match self {
-			RsaBits::N1024 => 1024,
-			RsaBits::N2048 => 2048,
-			RsaBits::N4096 => 4096,
-		}
-	}
 }
 
 impl RsaPadding {
@@ -287,9 +237,33 @@ impl RsaPadding {
 	}
 }
 
+/// The RSA key length in bits. Using anything under 2048 bits is discouraged because insecure.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
+#[ende(variant: fixed, 8)]
+pub enum RsaBits {
+	/// Only use if strictly necessary
+	#[display("1024")]
+	N1024,
+	#[display("2048")]
+	N2048,
+	#[display("4096")]
+	N4096,
+}
+
+impl RsaBits {
+	/// Returns the number of RSA key length bits `self` represents
+	pub fn bits(&self) -> u32 {
+		match self {
+			RsaBits::N1024 => 1024,
+			RsaBits::N2048 => 2048,
+			RsaBits::N4096 => 4096,
+		}
+	}
+}
+
 /// The mode the RSA algorithm will operate in. This also affects how the RSA key is interpreted.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
-#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
+#[ende(variant: fixed, 8)]
 pub enum RsaMode {
 	/// If you are unsure which to pick, then you probably want to use this one.<br>
 	/// <br>
@@ -301,25 +275,6 @@ pub enum RsaMode {
 	/// During encoding, the private key is used for encryption.<br>
 	/// During decoding, the public key is used for decryption.<br>
 	Reverse
-}
-
-impl Encode for RsaMode {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			Self::Standard => encoder.write_u8(0),
-			Self::Reverse => encoder.write_u8(1),
-		}
-	}
-}
-
-impl Decode for RsaMode {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Self::Standard,
-			1 => Self::Reverse,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
 }
 
 // Internal utility function for encrypting data to RSA

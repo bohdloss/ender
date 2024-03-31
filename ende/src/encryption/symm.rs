@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::io::{Read, Write};
+use std::str::FromStr;
 use parse_display::Display;
 use openssl::symm::Cipher;
 use zeroize::Zeroize;
@@ -156,6 +157,65 @@ pub enum SymmEncryption {
 	Aes(AesBits, AesMode)
 }
 
+impl FromStr for SymmEncryption {
+	type Err = &'static str;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		const USAGE: &str = r#"Invalid encryption format. Usage: "{key_size}-bit {cipher}/{mode}/{padding}""#;
+
+		if s == "None" {
+			return Ok(SymmEncryption::None);
+		}
+		
+		let (key_size, rest) = s.split_once("-").ok_or(USAGE)?;
+		let (bit_token, rest) = rest.split_once(" ").ok_or(USAGE)?;
+		let (cipher, rest) = rest.split_once("/").ok_or(USAGE)?;
+		let (mode, padding) = rest.split_once("/").unwrap_or((rest, ""));
+
+		if bit_token != "bit" {
+			return Err(USAGE);
+		}
+
+		Ok(match cipher {
+			"AES" => {
+				let bits = match key_size {
+					"128" => AesBits::N128,
+					"192" => AesBits::N192,
+					"256" => AesBits::N256,
+					_ => return Err(r#"Allowed key sizes for AES are: 128, 192, 256"#)
+				};
+
+				let mode = if mode.starts_with("CFB") {
+					let cfb_feedback = match &mode[3..] {
+						"1" => CfbFeedback::N1,
+						"8" => CfbFeedback::N8,
+						"128" => CfbFeedback::N128,
+						_ => return Err(r#"Allowed CFB feedback sizes are: 1, 8, 128"#)
+					};
+					AesMode::Cfb(cfb_feedback)
+				} else {
+					match mode {
+						"ECB" => AesMode::Ecb,
+						"CBC" => AesMode::Cbc,
+						"OFB" => AesMode::Ofb,
+						"CTR" => AesMode::Ctr,
+						_ => return Err(r#"Allowed modes for AES are: ECB, CBC, CFB, OFB, CTR"#)
+					}
+				};
+
+				let _padding = match padding {
+					"" => {},
+					_ => return Err(r#"Allowed padding modes for AES are: <empty>"#)
+				};
+
+				SymmEncryption::Aes(bits, mode)
+			},
+			
+			_ => return Err(r#"Allowed ciphers are: AES, RSA, revRSA"#)
+		})
+	}
+}
+
 impl Encode for SymmEncryption {
 	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
 		match self {
@@ -271,7 +331,6 @@ impl SymmEncryption {
 
 /// The number of bits of an AES key
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
-#[repr(u8)]
 pub enum AesBits {
 	#[display("128")]
 	N128,
@@ -315,7 +374,6 @@ impl AesBits {
 
 /// Number of feedback bits used in CFB mode
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
-#[repr(u8)]
 pub enum CfbFeedback {
 	#[display("1")]
 	N1,
@@ -359,7 +417,6 @@ impl CfbFeedback {
 
 /// AES operation mode
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
-#[repr(u8)]
 pub enum AesMode {
 	#[display("ECB")]
 	Ecb,

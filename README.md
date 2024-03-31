@@ -10,5 +10,5 @@ It's currently working but incomplete. What is there to do?
 - [ ] Add missing ciphers
 - [X] Documentation
 - [ ] More examples
-- [ ] Refactor the proc-macro derive code
+- [X] Refactor the proc-macro derive code
 - [ ] Write tests

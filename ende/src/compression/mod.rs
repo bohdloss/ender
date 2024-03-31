@@ -2,9 +2,10 @@ mod stream;
 
 use std::io;
 use std::io::{Read, Write};
-use parse_display::Display;
+use std::str::FromStr;
+use parse_display::{Display, FromStr};
 use thiserror::Error;
-use crate::{Decode, Encode, Encoder, EncodingError, EncodingResult, Finish};
+use crate::{Encoder, EncodingResult, Finish};
 
 pub use stream::*;
 
@@ -63,8 +64,21 @@ impl CompressionState {
 }
 
 /// ZStandard compression level
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
-#[repr(u8)]
+#[derive(
+	Copy,
+	Clone,
+	Eq,
+	PartialEq,
+	Ord,
+	PartialOrd,
+	Hash,
+	Debug,
+	Display,
+	FromStr,
+	ende_derive::Encode,
+	ende_derive::Decode,
+)]
+#[ende(variant: fixed, 8)]
 pub enum ZStdLevel {
 	#[display("1")]
 	L1 = 1,
@@ -112,45 +126,22 @@ pub enum ZStdLevel {
 	L22 = 22,
 }
 
-impl Encode for ZStdLevel {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		encoder.write_u8(*self as u8)
-	}
-}
-
-impl Decode for ZStdLevel {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			1 => ZStdLevel::L1,
-			2 => ZStdLevel::L2,
-			3 => ZStdLevel::L3,
-			4 => ZStdLevel::L4,
-			5 => ZStdLevel::L5,
-			6 => ZStdLevel::L6,
-			7 => ZStdLevel::L7,
-			8 => ZStdLevel::L8,
-			9 => ZStdLevel::L9,
-			10 => ZStdLevel::L10,
-			11 => ZStdLevel::L11,
-			12 => ZStdLevel::L12,
-			13 => ZStdLevel::L13,
-			14 => ZStdLevel::L14,
-			15 => ZStdLevel::L15,
-			16 => ZStdLevel::L16,
-			17 => ZStdLevel::L17,
-			18 => ZStdLevel::L18,
-			19 => ZStdLevel::L19,
-			20 => ZStdLevel::L20,
-			21 => ZStdLevel::L21,
-			22 => ZStdLevel::L22,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
-}
-
 /// ZLib compression level
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
-#[repr(u8)]
+#[derive(
+	Copy,
+	Clone,
+	Eq,
+	PartialEq,
+	Ord,
+	PartialOrd,
+	Hash,
+	Debug,
+	Display,
+	FromStr,
+	ende_derive::Encode,
+	ende_derive::Decode,
+)]
+#[ende(variant: fixed, 8)]
 pub enum ZLibLevel {
 	#[display("0")]
 	L0 = 0,
@@ -174,33 +165,22 @@ pub enum ZLibLevel {
 	L9 = 9,
 }
 
-impl Encode for ZLibLevel {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		encoder.write_u8(*self as u8)
-	}
-}
-
-impl Decode for ZLibLevel {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => ZLibLevel::L0,
-			1 => ZLibLevel::L1,
-			2 => ZLibLevel::L2,
-			3 => ZLibLevel::L3,
-			4 => ZLibLevel::L4,
-			5 => ZLibLevel::L5,
-			6 => ZLibLevel::L6,
-			7 => ZLibLevel::L7,
-			8 => ZLibLevel::L8,
-			9 => ZLibLevel::L9,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
-}
-
 /// Deflate compression level
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
-#[repr(u8)]
+#[derive(
+	Copy,
+	Clone,
+	Eq,
+	PartialEq,
+	Ord,
+	PartialOrd,
+	Hash,
+	Debug,
+	Display,
+	FromStr,
+	ende_derive::Encode,
+	ende_derive::Decode,
+)]
+#[ende(variant: fixed, 8)]
 pub enum DeflateLevel {
 	#[display("0")]
 	L0 = 0,
@@ -224,33 +204,22 @@ pub enum DeflateLevel {
 	L9 = 9,
 }
 
-impl Encode for DeflateLevel {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		encoder.write_u8(*self as u8)
-	}
-}
-
-impl Decode for DeflateLevel {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => DeflateLevel::L0,
-			1 => DeflateLevel::L1,
-			2 => DeflateLevel::L2,
-			3 => DeflateLevel::L3,
-			4 => DeflateLevel::L4,
-			5 => DeflateLevel::L5,
-			6 => DeflateLevel::L6,
-			7 => DeflateLevel::L7,
-			8 => DeflateLevel::L8,
-			9 => DeflateLevel::L9,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
-}
-
 /// GZip compression level
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
-#[repr(u8)]
+#[derive(
+	Copy,
+	Clone,
+	Eq,
+	PartialEq,
+	Ord,
+	PartialOrd,
+	Hash,
+	Debug,
+	Display,
+	FromStr,
+	ende_derive::Encode,
+	ende_derive::Decode,
+)]
+#[ende(variant: fixed, 8)]
 pub enum GZipLevel {
 	#[display("1")]
 	L1 = 1,
@@ -272,33 +241,10 @@ pub enum GZipLevel {
 	L9 = 9,
 }
 
-impl Encode for GZipLevel {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		encoder.write_u8(*self as u8)
-	}
-}
-
-impl Decode for GZipLevel {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			1 => GZipLevel::L1,
-			2 => GZipLevel::L2,
-			3 => GZipLevel::L3,
-			4 => GZipLevel::L4,
-			5 => GZipLevel::L5,
-			6 => GZipLevel::L6,
-			7 => GZipLevel::L7,
-			8 => GZipLevel::L8,
-			9 => GZipLevel::L9,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
-}
-
 /// Compression algorithm and level, or None to indicate absence of compression.
 /// Can be used to wrap a type implementing Write/Read in order to provide Compression/Decompression
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
-#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
+#[ende(variant: fixed, 8)]
 pub enum Compression {
 	#[display("no compression")]
 	None,
@@ -312,48 +258,24 @@ pub enum Compression {
 	GZip(GZipLevel),
 }
 
-impl Encode for Compression {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			Compression::None => encoder.write_u8(0)?,
-			Compression::ZStd(m0) => {
-				encoder.write_u8(1)?;
-				m0.encode(encoder)?;
-			}
-			Compression::ZLib(m0) => {
-				encoder.write_u8(2)?;
-				m0.encode(encoder)?;
-			}
-			Compression::Deflate(m0) => {
-				encoder.write_u8(3)?;
-				m0.encode(encoder)?;
-			}
-			Compression::GZip(m0) => {
-				encoder.write_u8(4)?;
-				m0.encode(encoder)?;
-			}
-		}
-		Ok(())
-	}
-}
+impl FromStr for Compression {
+	type Err = &'static str;
 
-impl Decode for Compression {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Compression::None,
-			1 => Compression::ZStd(
-				Decode::decode(decoder)?
-			),
-			2 => Compression::ZLib(
-				Decode::decode(decoder)?
-			),
-			3 => Compression::Deflate(
-				Decode::decode(decoder)?
-			),
-			4 => Compression::GZip(
-				Decode::decode(decoder)?
-			),
-			_ => return Err(EncodingError::InvalidVariant)
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		const USAGE: &str = r#"Invalid compression format. Usage: "{format}/{level}""#;
+
+		if s == "None" {
+			return Ok(Compression::None);
+		}
+
+		let (format, level) = s.split_once("/").ok_or(USAGE)?;
+
+		Ok(match format {
+			"ZStd" => Compression::ZStd(ZStdLevel::from_str(level).map_err(|_| "Out of range 1-22")?),
+			"ZLib" => Compression::ZLib(ZLibLevel::from_str(level).map_err(|_| "Out of range 0-9")?),
+			"Deflate" => Compression::Deflate(DeflateLevel::from_str(level).map_err(|_| "Out of range 0-9")?),
+			"GZip" => Compression::GZip(GZipLevel::from_str(level).map_err(|_| "Out of range 1-9")?),
+			_ => return Err(r#"Allowed compression formats are: ZStd, ZLib, Deflate, GZip"#)
 		})
 	}
 }
