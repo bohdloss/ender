@@ -323,7 +323,7 @@ impl Ctxt {
 		for group in groups {
 			if group.scope.matches(target) {
 				for flag in group.flags {
-					ctxt.flags.apply(flag)?;
+					ctxt.flags.apply(flag, group.scope)?;
 				}
 			}
 		}
@@ -378,7 +378,7 @@ pub fn process_fields<'a>(syn_fields: impl Iterator<Item = &'a syn::Field>, targ
 		for group in groups {
 			if group.scope.matches(target) {
 				for flag in group.flags {
-					field.flags.apply(flag)?;
+					field.flags.apply(flag, group.scope)?;
 				}
 			}
 		}

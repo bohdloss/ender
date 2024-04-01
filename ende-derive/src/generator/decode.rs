@@ -173,6 +173,7 @@ impl Field {
 
 		let (pre, post) = self.flags.mods.derive(ctxt)?;
 		let decode = self.flags.function.derive(ctxt, self)?;
+		let modified = self.flags.derive_stream_modifiers(ctxt, decode)?;
 		let decode = if self.flags.skip {
 			quote!(
 				{
@@ -186,7 +187,7 @@ impl Field {
 					#ref_code
 					if #condition {
 						#pre
-						let __val: #ty = #decode;
+						let __val: #ty = #modified;
 						#post
 						__val
 					} else {
@@ -199,19 +200,18 @@ impl Field {
 				{
 					#ref_code
 					#pre
-					let __val: #ty = #decode;
+					let __val: #ty = #modified;
 					#post
 					__val
 				}
 			)
 		};
 
-		let modified = self.flags.derive_stream_modifiers(ctxt, decode)?;
 		ref_code.append(self);
 		let validate = self.flags.derive_validation(ctxt, &ref_code)?;
 
 		let decode = quote!(
-			let #name: #ty = #modified;
+			let #name: #ty = #decode;
 			#validate
 		);
 

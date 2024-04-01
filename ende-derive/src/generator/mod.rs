@@ -2,7 +2,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, TokenStreamExt, ToTokens};
 use syn::{Expr, parse_quote};
 
-use crate::ctxt::{Ctxt, Field, ItemType, Target, Variant};
+use crate::ctxt::{Ctxt, Field, ItemType, Scope, Target, Variant};
 use crate::flags::{AllModifiers, Flags, Function, ModifierGroup, StreamModifier};
 use crate::generator::tokenize::CtxtToTokens;
 use crate::parse::{AsConversion, Formatting};
@@ -118,7 +118,14 @@ impl Function {
 				Function::Serde(crate_name) => {
 					quote!(#crate_name::Serialize::serialize(#field_name, &mut * #encoder)?)
 				}
-				Function::With(expr) => {
+				Function::With(path, scope) => {
+					match scope {
+						Scope::Encode => quote!(#path.encode(#field_name, &mut * #encoder)?),
+						Scope::Decode => unreachable!(),
+						Scope::Both => quote!(#path::encode(#field_name, &mut * #encoder)?),
+					}
+				}
+				Function::Expr(expr) => {
 					quote!(#expr)
 				}
 				Function::As(ty, method) => {
@@ -154,7 +161,14 @@ impl Function {
 				Function::Serde(crate_name) => {
 					quote!(#crate_name::Deserialize::deserialize(&mut * #encoder)?)
 				}
-				Function::With(expr) => {
+				Function::With(path, scope) => {
+					match scope {
+						Scope::Encode => unreachable!(),
+						Scope::Decode => quote!(#path.decode(&mut * #encoder)?),
+						Scope::Both => quote!(#path::encode(&mut * #encoder)?),
+					}
+				}
+				Function::Expr(expr) => {
 					quote!(#expr)
 				}
 				Function::As(ty, method) => {

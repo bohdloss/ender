@@ -45,8 +45,9 @@ pub fn decode_with_compression<T, F, V>(
 }
 
 /// Contains compression parameters known at a higher level than
-/// the encoding/decoding step. Consists of a [`Compression`] parameter.
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Display)]
+/// the encoding/decoding step. Currently only consists of a [`Compression`] parameter,
+/// but may be expanded in the future to accommodate for custom dictionaries.
+#[derive(Clone, Eq, PartialEq, Debug, Display)]
 #[display("compression = ({compression})")]
 pub struct CompressionState {
 	/// The compression parameter. This will be used to infer the compression mode when
@@ -322,7 +323,7 @@ impl Compression {
 	}
 }
 
-/// A generic error for anything that might go wrong during Compression/Decompression<br>
+/// A generic error for anything that might go wrong during Compression/Decompression.<br>
 /// FIXME This is still subject to change
 #[derive(Debug, Error)]
 pub enum CompressionError {

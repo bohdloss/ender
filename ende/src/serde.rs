@@ -362,28 +362,28 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
 
 	fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
 		let len = self.read_length()?;
-		self.ctxt.len_stack.push(len);
+		self.ctxt.push_len(len);
 		visitor.visit_seq(self)
 	}
 
 	fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		self.ctxt.len_stack.push(len);
+		self.ctxt.push_len(len);
 		visitor.visit_seq(self)
 	}
 
 	fn deserialize_tuple_struct<V>(self, _name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		self.ctxt.len_stack.push(len);
+		self.ctxt.push_len(len);
 		visitor.visit_seq(self)
 	}
 
 	fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
 		let len = self.read_length()?;
-		self.ctxt.len_stack.push(len);
+		self.ctxt.push_len(len);
 		visitor.visit_map(self)
 	}
 
 	fn deserialize_struct<V>(self, _name: &'static str, fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		self.ctxt.len_stack.push(fields.len());
+		self.ctxt.push_len(fields.len());
 		visitor.visit_seq(self)
 	}
 
@@ -408,19 +408,15 @@ impl<'de, T: Read> SeqAccess<'de> for Encoder<'de, T> {
 	type Error = EncodingError;
 
 	fn next_element_seed<G>(&mut self, seed: G) -> Result<Option<G::Value>, Self::Error> where G: DeserializeSeed<'de> {
-		let elem = self.ctxt.len_stack.len();
-		if self.ctxt.len_stack[elem] != 0 {
-			self.ctxt.len_stack[elem] -= 1;
+		if self.ctxt.consume_len() != 0 {
 			seed.deserialize(self).map(Some)
 		} else {
-			self.ctxt.len_stack.pop();
 			Ok(None)
 		}
 	}
 
 	fn size_hint(&self) -> Option<usize> {
-		let elem = self.ctxt.len_stack.len();
-		self.ctxt.len_stack.get(elem).map(ToOwned::to_owned)
+		self.ctxt.get_len()
 	}
 }
 
@@ -428,12 +424,9 @@ impl<'de, T: Read> MapAccess<'de> for Encoder<'de, T> {
 	type Error = EncodingError;
 
 	fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error> where K: DeserializeSeed<'de> {
-		let elem = self.ctxt.len_stack.len();
-		if self.ctxt.len_stack[elem] != 0 {
-			self.ctxt.len_stack[elem] -= 1;
+		if self.ctxt.consume_len() != 0 {
 			seed.deserialize(self).map(Some)
 		} else {
-			self.ctxt.len_stack.pop();
 			Ok(None)
 		}
 	}
@@ -443,8 +436,7 @@ impl<'de, T: Read> MapAccess<'de> for Encoder<'de, T> {
 	}
 
 	fn size_hint(&self) -> Option<usize> {
-		let elem = self.ctxt.len_stack.len();
-		self.ctxt.len_stack.get(elem).map(ToOwned::to_owned)
+		self.ctxt.get_len()
 	}
 }
 

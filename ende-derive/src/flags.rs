@@ -1,10 +1,11 @@
 use proc_macro2::Ident;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::ToTokens;
-use syn::{Error, Expr, parse_quote, Type};
+use syn::{Error, Expr, parse_quote, Path, Type};
 use syn::spanned::Spanned;
 
 use crate::{dollar_crate, ENDE};
+use crate::ctxt::Scope;
 use crate::enums::{BitWidth, Endianness, NumEncoding};
 use crate::parse::{AsConversion, CompressionConstructor, EncryptionConstructor, EncryptionData, Flag, Formatting, Modifier, ModTarget, SecretConstructor, SecretData};
 
@@ -42,7 +43,8 @@ impl<T: ToTokens> ToTokens for Param<T> {
 pub enum Function {
 	Default,
 	Serde(Ident),
-	With(Expr),
+	With(Path, Scope),
+	Expr(Expr),
 	As(Type, AsConversion),
 	Secret {
 		encryption: Option<SecretConstructor>,
@@ -80,6 +82,13 @@ impl ModifierGroup {
 			max: None,
 			bit_width: None,
 		}
+	}
+
+	pub fn empty(&self) -> bool {
+		self.num_encoding.is_none() &&
+			self.endianness.is_none() &&
+			self.max.is_none() &&
+			self.bit_width.is_none()
 	}
 
 	pub fn apply(&mut self, modifier: Modifier) -> syn::Result<()> {
@@ -164,6 +173,13 @@ impl AllModifiers {
 		}
 	}
 
+	pub fn empty(&self) -> bool {
+		self.num.empty() &&
+			self.size.empty() &&
+			self.variant.empty() &&
+			self.flatten.is_none()
+	}
+
 	pub fn apply(&mut self, target: ModTarget, modifier: Modifier) -> syn::Result<()> {
 		match target {
 			ModTarget::Num { .. } => {
@@ -237,11 +253,18 @@ impl Flags {
 			stream_modifiers: Vec::new(),
 		}
 	}
+
+	pub fn skip_compatible(&self) -> bool {
+		self.function.is_default() &&
+			self.mods.empty() &&
+			self.condition.is_none() &&
+			self.stream_modifiers.is_empty()
+	}
 }
 
 impl Flags {
 	/// Applies a flag to the item, performing consistency checks.
-	pub fn apply(&mut self, flag: Flag) -> syn::Result<()> {
+	pub fn apply(&mut self, flag: Flag, scope: Scope) -> syn::Result<()> {
 		let span = flag.span();
 		match flag {
 			Flag::Crate { crate_name, .. } => {
@@ -253,11 +276,11 @@ impl Flags {
 					return Err(Error::new(span, r#""crate" flag declared more than once"#))
 				}
 
-				self.crate_name = Param::Other(dollar_crate(&crate_name.to_string()));
+				self.crate_name = Param::Other(crate_name);
 			}
 			Flag::Serde { crate_name ,.. } => {
 				if !self.function.is_default() {
-					return Err(Error::new(span, r#""serde" flag is incompatible with "as", "secret", "with" flags"#))
+					return Err(Error::new(span, r#""serde" flag is incompatible with "as", "secret", "with", "expr" flags"#))
 				}
 
 				// If no name is specified, it is assumed to be "serde"
@@ -271,13 +294,6 @@ impl Flags {
 				if self.skip {
 					return Err(Error::new(span, r#""skip" flag declared more than once"#))
 				}
-				if !self.function.is_default() ||
-					self.stream_modifiers.len() != 0 ||
-					self.condition.is_some() ||
-					self.validate.is_some() // TODO this needs better validation
-				{
-					return Err(Error::new(span, r#""skip" flag can only be accompanied by "default" flag"#))
-				}
 
 				self.skip = true;
 			}
@@ -288,16 +304,26 @@ impl Flags {
 
 				self.default = Param::Other(expr);
 			}
-			Flag::With { expr, .. } => {
+			Flag::With { path, .. } => {
 				if !self.function.is_default() {
-					return Err(Error::new(span, r#""with" flag is incompatible with "as", "secret", "serde" flags"#))
+					return Err(Error::new(span, r#""with" flag is incompatible with "as", "secret", "serde", "expr" flags"#))
 				}
 
-				self.function = Function::With(expr);
+				self.function = Function::With(path, scope);
+			}
+			Flag::Expr { expr, .. } => {
+				if scope == Scope::Both {
+					return Err(Error::new(span, r#""expr" flag must be scoped"#))
+				}
+				if !self.function.is_default() {
+					return Err(Error::new(span, r#""expr" flag is incompatible with "as", "secret", "serde", "with" flags"#))
+				}
+
+				self.function = Function::Expr(expr);
 			}
 			Flag::As { ty, method, .. } => {
 				if !self.function.is_default() {
-					return Err(Error::new(span, r#""as" flag is incompatible with "with", "secret", "serde" flags"#))
+					return Err(Error::new(span, r#""as" flag is incompatible with "with", "secret", "serde", "expr" flags"#))
 				}
 
 				self.function = Function::As(ty, method);
@@ -390,6 +416,11 @@ impl Flags {
 				return Err(Error::new(span, r#"The flags "en" and "de" must be the first"#))
 			}
 		}
+
+		if self.skip && !self.skip_compatible() {
+			return Err(Error::new(span, r#""skip" flag can only be accompanied by "default" or "validate" flag"#))
+		}
+
 		Ok(())
 	}
 }

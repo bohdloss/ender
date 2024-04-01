@@ -1,30 +1,18 @@
+// Reasoning: many tokens are simply written into the structs and never read.
+// Consider temporarily removing this if you intend to mess with the parser.
+#![allow(unused)]
+
 use std::str::FromStr;
 use parse_display::Display;
 use proc_macro2::{Ident, Span};
-use syn::{Error, Expr, LitInt, LitStr, parenthesized, Token, Type};
+use syn::{Error, Expr, LitInt, LitStr, parenthesized, Path, Token, Type};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Paren;
 use crate::ctxt::Scope;
 use crate::enums::{AsymmEncryption, BitWidth, Compression, SymmEncryption};
 
-const FLAGS_USAGE: &str = r#"Unknown Flag. The following are valid flags:
-	en - Scope flag. All the following flags only apply to the encoding step. Can only be used as the first flag.
-	de - Scope flag. All the following flags only apply to the decoding step. Can only be used as the first flag.
-	crate: $ident - Changes the name of the ende crate, in case it was re-exported with another name.
-	serde: $ident - The field or item should be encoded/decoded using serde. Optionally, the name of the serde crate can be provided in case it was re-exported with another name.
-	skip - The field or item shouldn't be encoded/decoded. During decoding, it will fall back to the default for that field or item (can be overridden by the `default` flag).
-	if: $expr - The field should only be encoded if $expr evaluates to true. If the condition is false while decoding, it will fall back to the default for that field (can be overridden by the `default` flag).
-	default: $expr - The default value for a field or item that cannot be decoded for whatever reason is "Default::default()". This flag allows changing that to $expr.
-	with: $expr - The field should be encoded/decoded using the given $expr. Only valid when the Scope flag is specified.
-	as: $ty - The field should be encoded/decoded as if it was of the given type. It should then be converted back to the appropriate type using From or Into traits
-	flatten: $expr - Changes the flatten state variable. See the documentation for "Encode" and "Decode" for more info.
-	validate: $expr, $literal, $expr, $expr, ... - Performs a check before encoding and after decoding a field. If the check fails, an error is returned. Allows specifying a custom error message with fmt arguments (optional).
-	encrypted: $expr, key: $expr, iv: $expr - The field should be encoded/decoded using encryption. The first argument can be a literal (example: "128-bit AES/CBC") or an expression. Allows specifying a key and iv (optional).
-	secret: $expr, public: $expr, private: $expr - The field is a block of data encrypted using asymmetric encryption. The first argument can be a literal (example: "2048-bit RSA/ECB/PKCS1") or an expression. Allows specifying a public and private key (optional).
-	compressed: $expr - The field should be encoded/decoded using compression. The argument can be a literal (example: "ZLib/6") or an expression.
-	$target: $modifier, $modifier, ... - Temporarily changes the settings while encoding/decoding a field or item. Target can be "num"/"size"/"variant". Modifier can be bit-width (8, 16, 32, 64, 128), endianness (big_endian, little_endian), num-encoding (fixed, leb128), max-size (max = $expr).
-"#;
+const FLAGS_USAGE: &str = r#"Unknown Flag. Please refer to the documentation of the macro for a list of valid flags and their usage."#;
 
 const ENCRYPTION_USAGE: &str = r#"Unknown encryption parameter. Usage example: encrypted: $expr, key: $expr, iv: $expr"#;
 const SECRET_USAGE: &str = r#"Unknown secret parameter. Usage example: secret: $expr, public: $expr, private: $expr"#;
@@ -49,6 +37,7 @@ pub mod kw {
 	custom_keyword!(serde);
 	custom_keyword!(skip);
 	custom_keyword!(with);
+	custom_keyword!(expr);
 	custom_keyword!(flatten);
 	custom_keyword!(validate);
 	custom_keyword!(encrypted);
@@ -389,10 +378,17 @@ pub enum Flag {
 		colon: Token![:],
 		expr: Expr,
 	},
-	/// The field should be encoded/decoded using the given expression. Only valid when the scope
-	/// is specified.
+	/// The field should be encoded/decoded using the given function. If the Encode scope
+	/// is specified, it must be callable as
 	With {
 		kw: kw::with,
+		colon: Token![:],
+		path: Path,
+	},
+	/// The field should be encoded/decoded using the given expression. Only valid when the scope
+	/// is specified.
+	Expr {
+		kw: kw::expr,
 		colon: Token![:],
 		expr: Expr,
 	},
@@ -452,6 +448,7 @@ impl Flag {
 			Flag::If { kw, .. } => kw.span,
 			Flag::Default { kw, .. } => kw.span,
 			Flag::With { kw, .. } => kw.span,
+			Flag::Expr { kw, ..} => kw.span,
 			Flag::As { kw, .. } => kw.span,
 			Flag::Flatten { kw, .. } => kw.span,
 			Flag::Validate { kw, .. } => kw.span,
@@ -748,6 +745,12 @@ impl Parse for Flag {
 			})
 		} else if input.peek(kw::with) {
 			Ok(Self::With {
+				kw: input.parse()?,
+				colon: input.parse()?,
+				path: input.parse()?,
+			})
+		} else if input.peek(kw::expr) {
+			Ok(Self::Expr {
 				kw: input.parse()?,
 				colon: input.parse()?,
 				expr: input.parse()?,

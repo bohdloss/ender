@@ -1,26 +1,165 @@
+#![cfg_attr(doc_cfg, feature(doc_cfg))]
+
 #[cfg(test)]
 mod test;
 
 #[cfg(feature = "encryption")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
 pub mod encryption;
 #[cfg(feature = "compression")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
 pub mod compression;
 #[cfg(feature = "serde")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "serde")))]
 pub mod serde;
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, FromVecWithNulError};
-use std::hash::Hash;
+use core::hash::Hash;
 use std::io;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
-use std::mem::replace;
+use core::marker::PhantomData;
+use core::mem::replace;
 use std::string::FromUtf8Error;
 use array_init::array_init;
 use thiserror::Error;
 
+/// Helper macros to derive [`Encode`] and [`Decode`] for a `struct` or `enum`.<br>
+/// This macro supports a series of helper flags to aid customization<br>
+/// <br>
+/// All flags follow the following format:<br>
+/// `#[ende(flag1; flag2; flag2; ...)]`<br>
+/// <br>
+/// The 2 special flags `en` and `de`, called Scope flags, can be used only at the beginning
+/// of the list to indicate that all the following flags only apply to the encoding process (`en`)
+/// or the decoding process (`de`).<br>
+/// <br>
+/// If neither of those flags are specified, then it is assumed that the following
+/// flags apply to both encoding and decoding<br>
+/// <br>
+/// The flags currently implemented are split into 3 groups:<br>
+/// <br>
+/// Modifiers temporarily change certain properties of the encoder and can be applied
+/// to Fields or Items (the whole struct or enum).<br>
+/// * `#[ende(target: big_endian, little_endian)]` - `target` can be `num`, `size`, `variant`
+/// * `#[ende(target: fixed, leb128)]` - `target` can be `num`, `size`, `variant`
+/// * `#[ende(target: 8, 16, 32, 64, 128)]` - `target` can be `size`, `variant`
+/// * `#[ende(target: max = usize)]` - `target` can only be `size`<br>
+/// <br>
+/// Example:
+/// ```
+/// use ende::{Encode, Decode};
+/// #[derive(Encode, Decode)]
+/// #[ende(crate: ende)]
+/// #[ende(variant: little_endian, fixed, 32)]
+/// enum MyEnum {
+///     VariantA {
+///         #[ende(size: big_endian, fixed, 16, max = 100)]
+///         field: String,
+///     },
+///     VariantB {
+///         #[ende(num: little_endian, leb128)]
+///         field: u64,
+/// 	},
+/// }
+/// ```
+/// Stream-Modifiers temporarily change the underlying reader/writer, and can be applied
+/// to Fields or Items.<br>
+/// * `#[ende(compressed: "{format}/{level}")]`
+/// * `#[ende(encrypted: "{key_size}-bit {cipher}/{mode}/{padding}", iv: iv, key: key)]` -
+/// If either the encryption method, the key or the iv are not specified,
+/// they will be inferred from the [CryptoState][`encryption::CryptoState`]
+/// * `#[ende(secret: "{key_size}-bit {cipher}/{mode}/{padding}", public: public_key, private: private_key)]` -
+/// While not being a proper stream modifier, it's worth listing this other method of encryption
+/// which uses asymmetric encryption (or public-key encryption) like rsa to encode and decode a
+/// block with padding. The field type must be `Vec<u8>` because that's what the
+/// encryption and decryption function accepts. Just like the `encrypted` flag, if  either the
+/// encryption method, the public key, or the private key are not specified, they will be inferred
+/// from the [CryptoState][`encryption::CryptoState`]
+/// <br>
+/// Example:
+/// ```
+/// use ende::{Encode, Decode};
+/// #[derive(Encode, Decode)]
+/// #[ende(crate: ende)]
+/// #[ende(compressed: "ZLib/6")]
+/// struct MyStruct {
+///     secret_key: Vec<u8>,
+///     iv: Vec<u8>,
+///     #[ende(encrypted: "128-bit AES/CBC", key: secret_key, iv: iv)]
+///     super_secret_data: Vec<u8>,
+///     super_extra_secret_rsa_key: Vec<u8>,
+///     #[ende(secret: "2048-bit RSA/ECB/PKCS1", private: super_extra_secret_rsa_key)]
+///     even_more_secret_data: Vec<u8>,
+/// }
+/// ```
+/// Helpers change how a field or item is encoded/decoded.<br>
+/// * `#[ende(crate: $crate)]` - Overwrites the default crate name which is assumed to be `ende`.
+/// Can only be applied to items.
+/// * `#[ende(serde: $crate)]` - Field will be serialized/deserialized with a serde compatibility layer.
+/// Optionally, the serde crate name can be specified (useful if the serde crate was re-exported under
+/// another name)
+/// * `#[ende(with: $path)]` - Uses the given path to find the encoding/decoding function.<br>
+/// If the scope is Encode, the path must be callable as
+/// `fn<T: Write>(&V, &mut ende::Encoder<T>) -> EncodingResult<()>`
+/// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
+/// If the scope is Decode, the path must be callable as
+/// `fn<T: Read>(&mut ende::Encoder<T>) -> EncodingResult<V>`
+/// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
+/// If no scope is specified, the path must point to a module with encoding and decoding functions
+/// with the same signatures as above.
+/// * `#[ende(expr: $expr)]` - Uses the given expression to encode/decode a field. Must be scoped.
+/// * `#[ende(as simple/convert: $ty)]` - Converts the value of the field to `$ty` before encoding it
+/// and back to the original field type after decoding it. When the parameter is set to `simple`,
+/// the conversion is done through the `as` keyword. When the parameter is set to `convert`, the
+/// conversion is done through the `From` and `Into` traits.
+/// * `#[ende(if: $expr)]` - The field will only be encoded/decoded if the given expression
+/// evaluates to true, otherwise the default value is computed
+/// * `#[ende(default: $expr]` - Overrides the default fallback for when a value can't be
+/// deserialized (`Default::default()`)
+/// * `#[ende(skip)]` - Will not encode/decode this field.
+/// When decoding, computes the default value
+/// * `#[ende(validate: $expr, $format_string, $arg1, $arg2, $arg3, ...)]` - Before encoding/after decoding, returns an error if the
+/// expression evaluates to false. The error message will use the given formatting (if present)
+/// * `#[ende(flatten: $expr)]` - Indicates that the length of the given field (for example
+/// a Vec or HashMap) doesn't need to be encoded/decoded, because it is known from the context.
+/// Can also be used with an `Option` in conjunction with the `if` flag and without the `$expr`
+/// to indicate that the presence of an optional value is known from the context.<br>
+/// <br>
+/// Example:
+/// ```
+/// use ende::{Encode, Decode};
+/// use uuid::Uuid;
+///
+/// #[derive(Encode, Decode)]
+/// #[ende(crate: ende)]
+/// struct MyStruct {
+///     /// Will come in handy later
+///     name_present: bool,
+///     /// Has Serialize/Deserialize implementations.
+///     /// Also, we know that it will always be 16 bytes
+///     #[ende(serde; flatten: 16)]
+///     uuid: Uuid,
+///     /// Just the string version of the uuid.
+///     /// We can skip Encoding, and Decode it from the uuid
+///     #[ende(en; skip)]
+///     #[ende(de; expr: uuid.to_string())]
+///     uuid_string: String,
+///     /// We know whether this is present from the context.
+///     #[ende(flatten; if: *name_present)]
+///     name: Option<String>,
+///     /// Only present if the name is also present, but we want to provide a custom default!
+///     #[ende(default: String::from("Smith"); if: *name_present)]
+///     surname: String,
+///     /// No-one allowed before 18!
+///     #[ende(validate: *age >= 18, "User is too young: {}", age)]
+///     age: u32
+/// }
+/// ```
 #[cfg(feature = "derive")]
-pub use ende_derive::{Decode, Encode};
+#[cfg_attr(doc_cfg, doc(cfg(feature = "derive")))]
+pub use ende_derive::{Encode, Decode};
+
 use parse_display::Display;
 
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
@@ -47,13 +186,16 @@ pub enum Endianness {
 	BigEndian
 }
 
-/// Controls the encoding of a numerical value
+/// Controls the encoding of a numerical value. For instance, controls whether the numbers
+/// are compressed through a var-int format or if the entire length of their value is encoded.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 pub enum NumEncoding {
-	/// Its bits are encoded as-is according to endianness
+	/// Its bits are encoded as-is according to the [`Endianness`].
 	Fixed,
-	/// Its bits are encoded according to the LEB128 (Little Endian Base 128) standard
-	/// if unsigned, or ULEB128 standard if signed
+	/// Its bits are encoded according to the [ULEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128)
+	/// (Little Endian Base 128) standard if unsigned, or [LEB128](https://en.wikipedia.org/wiki/LEB128#Signed_LEB128)
+	/// standard if signed. As the name suggests, the bytes are encoded in little endian order,
+	/// ignoring the [`Endianness`].
 	Leb128
 }
 
@@ -204,11 +346,14 @@ pub struct Context<'a> {
 	pub flatten: Option<usize>,
 	/// Keeps track of the lengths of maps and vectors in recursive serde `deserialize` calls
 	#[cfg(feature = "serde")]
-	pub len_stack: smallvec::SmallVec<usize, 8>,
+	len_stack: smallvec::SmallVec<usize, 8>,
 	/// The cryptographic state. See [`encryption::CryptoState`]
 	#[cfg(feature = "encryption")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
 	pub crypto: encryption::CryptoState<'a>,
+	/// The compression state. See [`compression::CompressionState`]
 	#[cfg(feature = "compression")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
 	pub compression: compression::CompressionState,
 }
 
@@ -231,7 +376,6 @@ impl<'a> Context<'a> {
 
 	/// Similar to clone, but hints that the keys being stored should not be cloned to
 	/// a new memory location, but simply borrowed.
-	/// Only really useful if the `encryption` feature is enabled.
 	pub fn borrow_clone(&self) -> Context {
 		Context {
 			phantom_lifetime: PhantomData,
@@ -242,7 +386,7 @@ impl<'a> Context<'a> {
 			#[cfg(feature = "encryption")]
 			crypto: self.crypto.borrow_clone(),
 			#[cfg(feature = "compression")]
-			compression: self.compression,
+			compression: self.compression.clone(),
 		}
 	}
 
@@ -298,11 +442,37 @@ impl<'a> Context<'a> {
 		}
 	}
 
-	/// Returns the state of the `flatten` variable, consuming it
+	/// Returns the state of the `flatten` variable, consuming it.
 	pub fn flatten(&mut self) -> Option<usize> {
-		let old = self.flatten;
-		self.flatten = None;
-		old
+		replace(&mut self.flatten, None)
+	}
+
+	#[cfg(feature = "serde")]
+	pub(crate) fn push_len(&mut self, value: usize) {
+		self.len_stack.push(value);
+	}
+
+	#[cfg(feature = "serde")]
+	pub(crate) fn consume_len(&mut self) -> usize {
+		let len_stack_len = self.len_stack.len();
+		let len = self.len_stack.get_mut(len_stack_len - 1);
+		if let Some(len) = len {
+			let save = *len;
+			if save == 0 {
+				self.len_stack.remove(len_stack_len - 1);
+			} else {
+				*len -= 1;
+			}
+			save
+		} else {
+			0
+		}
+	}
+
+	#[cfg(feature = "serde")]
+	pub(crate) fn get_len(&self) -> Option<usize> {
+		let len_stack_len = self.len_stack.len();
+		self.len_stack.get(len_stack_len - 1).map(|x| *x)
 	}
 }
 
@@ -358,11 +528,12 @@ impl<T: Read> Encoder<'_, T> {
 }
 
 impl<T: Write> Encoder<'_, T> {
-	/// Returns a BinStream with the same context,
+	/// Returns an Encoder with the same context,
 	/// but wraps the underlying stream in an [`encryption::Encrypt`].
-	/// When either the key or the iv are None, this function will try to fetch them
-	/// from the crypto state
+	/// When either the encryption method, the key or the iv are `None`, this function will try to
+	/// fetch them from the [CryptoState][`encryption::CryptoState`].
 	#[cfg(feature = "encryption")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
 	pub fn add_encryption(&mut self, encryption: Option<encryption::SymmEncryption>, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<Encoder<encryption::Encrypt<&mut T>>> {
 		let encryption = encryption.unwrap_or(self.ctxt.crypto.symm.encryption);
 		let key = key.or(self.ctxt.crypto.symm.get_key());
@@ -371,8 +542,11 @@ impl<T: Write> Encoder<'_, T> {
 	}
 
 	/// Returns an Encoder with the same context,
-	/// but wraps the underlying stream in an [`compression::Compress`]
+	/// but wraps the underlying stream in an [`compression::Compress`].
+	/// If the compression method is `None`, this function will try to fetch them from the
+	/// [CompressionState][`compression::CompressionState`].
 	#[cfg(feature = "compression")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
 	pub fn add_compression(&mut self, compression: Option<compression::Compression>) -> EncodingResult<Encoder<compression::Compress<&mut T>>> {
 		let compression = compression.unwrap_or(self.ctxt.compression.compression);
 		return Ok(Encoder::new(compression.compress(&mut self.stream)?, self.ctxt.borrow_clone()));
@@ -382,9 +556,10 @@ impl<T: Write> Encoder<'_, T> {
 impl<T: Read> Encoder<'_, T> {
 	/// Returns an Encoder with the same context,
 	/// but wraps the underlying stream in an [`encryption::Decrypt`]
-	/// When either the key or the iv are None, this function will try to fetch them
-	/// from the crypto state
+	/// When either the encryption method, the key or the iv are `None`, this function will try to
+	/// fetch them from the [CryptoState][`encryption::CryptoState`].
 	#[cfg(feature = "encryption")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
 	pub fn add_decryption(&mut self, encryption: Option<encryption::SymmEncryption>, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<Encoder<encryption::Decrypt<&mut T>>> {
 		let encryption = encryption.unwrap_or(self.ctxt.crypto.symm.encryption);
 		let key = key.or(self.ctxt.crypto.symm.get_key());
@@ -393,8 +568,11 @@ impl<T: Read> Encoder<'_, T> {
 	}
 
 	/// Returns an Encoder with the same context,
-	/// but wraps the underlying stream in an [`compression::Decompress`]
+	/// but wraps the underlying stream in an [`compression::Decompress`].
+	/// If the compression method is `None`, this function will try to fetch them from the
+	/// [CompressionState][`compression::CompressionState`].
 	#[cfg(feature = "compression")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
 	pub fn add_decompression(&mut self, compression: Option<compression::Compression>) -> EncodingResult<Encoder<compression::Decompress<&mut T>>> {
 		let compression = compression.unwrap_or(self.ctxt.compression.compression);
 		return Ok(Encoder::new(compression.decompress(&mut self.stream)?, self.ctxt.borrow_clone()));
@@ -897,10 +1075,12 @@ pub enum EncodingError {
 	ValidationError(String),
 	/// A generic serde error occurred
 	#[cfg(feature = "serde")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "serde")))]
 	#[error("Serde error occurred: {0}")]
 	SerdeError(String),
 	/// A cryptographic error occurred
 	#[cfg(feature = "encryption")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
 	#[error("Cryptographic error: {0}")]
 	EncryptionError(
 		#[source]
@@ -909,6 +1089,7 @@ pub enum EncodingError {
 	),
 	/// A compression error occurred
 	#[cfg(feature = "compression")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
 	#[error("Compression error: {0}")]
 	CompressionError(
 		#[source]
@@ -920,28 +1101,30 @@ pub enum EncodingError {
 /// A convenience alias to `Result<T, EncodingError>`
 pub type EncodingResult<T> = Result<T, EncodingError>;
 
-/// The base trait for anything that can be Encoded.
-/// Indicates that a type can be converted into a sequence of bytes
+/// A binary data structure specification which can be **encoded** into its binary representation.
 pub trait Encode {
-	/// Encodes `self` into a binary format.<br>
+	/// Encodes `self` into its binary format.<br>
+	/// As a baseline, calling `encode` multiple times on the same value without
+	/// changing the encoder settings or the value itself in-between calls must produce
+	/// the same output.<br>
 	/// If the result is Ok,
 	/// implementations should guarantee that the state of the encoder
-	/// is the same as before calling this function. If the result is Err,
-	/// no guarantees should be made about the state of the encoder,
+	/// is preserved. If the result is Err,
+	/// no guarantees are made about the state of the encoder,
 	/// and users should reset it before reuse.<br>
-	/// Implementation are discouraged from writing `encode` implementations
-	/// that modify `self` through interior mutability
 	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()>;
 }
 
-/// The base trait for anything that can be Decoded.
-/// Indicates that a sequence of bytes can be converted back into a type
+/// A binary data structure specification which can be transformed into its binary representation.
 pub trait Decode: Sized {
 	/// Decodes `Self` from a binary format.<br>
+	/// As a baseline, calling `decode` multiple times without changing the
+	/// encoder settings or the underlying binary data in-between calls must produce
+	/// the same output.<br>
 	/// If the result is Ok,
 	/// implementations should guarantee that the state of the encoder
-	/// is the same as before calling this function. If the result is Err,
-	/// no guarantees should be made about the state of the encoder,
+	/// is preserved. If the result is Err,
+	/// no guarantees are made about the state of the encoder,
 	/// and users should reset it before reuse.<br>
 	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self>;
 }

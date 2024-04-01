@@ -8,7 +8,6 @@ use openssl::pkey::{Private, Public};
 use zeroize::Zeroize;
 use crate::{Encoder, EncodingError, EncodingResult, encryption};
 use crate::encryption::CryptoError;
-use crate::encryption::CryptoError::NoKey;
 
 /// Function for convenience.<br>
 /// It calls [`Encoder::add_encryption`] on the encoder with the given encryption,
@@ -148,7 +147,7 @@ impl<'a> Drop for AsymmState<'a> {
 	}
 }
 
-/// A public-key encryption algorithm. Contrary to [`SymmEncryption`], these cannot be used
+/// A public-key encryption algorithm. Contrary to [`encryption::SymmEncryption`], these cannot be used
 /// as stream ciphers, and therefore only operate on blocks rather than `Write`'s and `Read`'s
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
 #[ende(variant: fixed, 8)]
@@ -301,7 +300,7 @@ fn rsa_encrypt<T: Write>(
 		RsaMode::Standard => {
 			// In "normal" RSA encryption mode, we interpret the key as a public key
 			let public = public.or(encoder.ctxt.crypto.asymm.get_public());
-			let rsa: Rsa<Public> = Rsa::public_key_from_der(public.ok_or(NoKey)?)
+			let rsa: Rsa<Public> = Rsa::public_key_from_der(public.ok_or(CryptoError::NoKey)?)
 				.map_err(encryption::ese_to_ee)?;
 
 			// A mismatch in key lengths is always an error
@@ -316,7 +315,7 @@ fn rsa_encrypt<T: Write>(
 		RsaMode::Reverse => {
 			// In "reverse" mode, we interpret the key as a private key
 			let private = private.or(encoder.ctxt.crypto.asymm.get_private());
-			let rsa: Rsa<Private> = Rsa::private_key_from_der(private.ok_or(NoKey)?)
+			let rsa: Rsa<Private> = Rsa::private_key_from_der(private.ok_or(CryptoError::NoKey)?)
 				.map_err(encryption::ese_to_ee)?;
 
 			if rsa.n().num_bytes() as usize != key_len {
@@ -368,7 +367,7 @@ fn rsa_decrypt<T: Read>(
 		RsaMode::Standard => {
 			// In "normal" RSA decryption mode, we interpret the key as a private key
 			let private = private.or(decoder.ctxt.crypto.asymm.get_private());
-			let rsa: Rsa<Private> = Rsa::private_key_from_der(private.ok_or(NoKey)?)
+			let rsa: Rsa<Private> = Rsa::private_key_from_der(private.ok_or(CryptoError::NoKey)?)
 				.map_err(encryption::ese_to_ee)?;
 
 			if rsa.n().num_bytes() as usize != key_len {
@@ -382,7 +381,7 @@ fn rsa_decrypt<T: Read>(
 		RsaMode::Reverse => {
 			// In "reverse" mode we instead interpret it as a public key
 			let public = public.or(decoder.ctxt.crypto.asymm.get_public());
-			let rsa: Rsa<Public> = Rsa::public_key_from_der(public.ok_or(NoKey)?)
+			let rsa: Rsa<Public> = Rsa::public_key_from_der(public.ok_or(CryptoError::NoKey)?)
 				.map_err(encryption::ese_to_ee)?;
 
 			if rsa.n().num_bytes() as usize != key_len {

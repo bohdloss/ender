@@ -12,3 +12,7 @@ It's currently working but incomplete. What is there to do?
 - [ ] More examples
 - [X] Refactor the proc-macro derive code
 - [ ] Write tests
+
+Planned features:
+- [ ] Zero copy Decoding.
+- [ ] `#[no_std]` support
