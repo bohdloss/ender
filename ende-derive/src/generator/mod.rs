@@ -1,11 +1,11 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, TokenStreamExt, ToTokens};
-use syn::{Expr, parse_quote};
+use syn::{Expr, parse_quote, Type};
 
 use crate::ctxt::{Ctxt, Field, ItemType, Scope, Target, Variant};
-use crate::flags::{AllModifiers, Flags, Function, ModifierGroup, StreamModifier};
+use crate::flags::{AllModifiers, Flags, Function, ModifierGroup, StreamModifier, TypeModifier};
 use crate::generator::tokenize::CtxtToTokens;
-use crate::parse::{AsConversion, Formatting};
+use crate::parse::{Formatting};
 
 pub mod encode;
 pub mod decode;
@@ -105,99 +105,116 @@ impl ToTokens for ConstCode<'_> {
 }
 
 impl Function {
-	pub fn derive(&self, ctxt: &Ctxt, field: &Field) -> syn::Result<TokenStream2> {
-		let ref field_name = field.name;
-		let ref field_ty = field.ty;
+	pub fn derive_encode(&self, ctxt: &Ctxt, input: TokenStream2, ty: &Type) -> syn::Result<TokenStream2> {
 		let ref crate_name = ctxt.flags.crate_name;
 		let ref encoder = ctxt.encoder;
-		Ok(match ctxt.target {
-			Target::Encode => match self {
-				Function::Default => {
-					quote!(#crate_name::Encode::encode(#field_name, #encoder)?)
-				}
-				Function::Serde(crate_name) => {
-					quote!(#crate_name::Serialize::serialize(#field_name, &mut * #encoder)?)
-				}
-				Function::With(path, scope) => {
-					match scope {
-						Scope::Encode => quote!(#path.encode(#field_name, &mut * #encoder)?),
-						Scope::Decode => unreachable!(),
-						Scope::Both => quote!(#path::encode(#field_name, &mut * #encoder)?),
-					}
-				}
-				Function::Expr(expr) => {
-					quote!(#expr)
-				}
-				Function::As(ty, method) => {
-					match method {
-						AsConversion::Simple(..) => quote!(#crate_name::Encode::encode(&( * #field_name as #ty), #encoder)?),
-						AsConversion::Convert(..) => quote!(#crate_name::Encode::encode(&<#field_ty as std::convert::Into<#ty>>::into(<#field_ty as std::borrow::ToOwned>::to_owned(#field_name)), #encoder)?),
-					}
-				}
-				Function::Secret { encryption, public_key, private_key } => {
-					let encryption = encryption
-						.as_ref()
-						.map(|x| x.ctxt_tokens(ctxt))
-						.map(|x| syn::parse2::<Expr>(x).unwrap());
-					let encryption = option_expr_to_actual_option_expr(encryption.as_ref());
-					let public_key = option_expr_to_actual_option_expr(public_key.as_ref());
-					let private_key = option_expr_to_actual_option_expr(private_key.as_ref());
-
-					quote!(
-						#crate_name::encryption::encode_asymm_block(
-							#encoder,
-							#encryption,
-							#public_key,
-							#private_key,
-							#field_name
-						)?
-					)
+		Ok(match self {
+			Function::Default => {
+				quote!(<#ty as #crate_name::Encode>::encode(#input, #encoder)?)
+			}
+			Function::Serde(serde_crate) => {
+				quote!(<#ty as #serde_crate::Serialize>::serialize(#input, &mut * #encoder)?)
+			}
+			Function::With(path, scope) => {
+				match scope {
+					Scope::Encode => quote!(#path(#input, &mut * #encoder)?),
+					Scope::Decode => unreachable!(),
+					Scope::Both => quote!(#path::encode(#input, &mut * #encoder)?),
 				}
 			}
-			Target::Decode => match self {
-				Function::Default => {
-					quote!(#crate_name::Decode::decode(#encoder)?)
-				}
-				Function::Serde(crate_name) => {
-					quote!(#crate_name::Deserialize::deserialize(&mut * #encoder)?)
-				}
-				Function::With(path, scope) => {
-					match scope {
-						Scope::Encode => unreachable!(),
-						Scope::Decode => quote!(#path.decode(&mut * #encoder)?),
-						Scope::Both => quote!(#path::encode(&mut * #encoder)?),
-					}
-				}
-				Function::Expr(expr) => {
-					quote!(#expr)
-				}
-				Function::As(ty, method) => {
-					match method {
-						AsConversion::Simple(..) => quote!(<#ty as #crate_name::Decode>::decode(#encoder)? as #field_ty),
-						AsConversion::Convert(..) => quote!(<#field_ty as std::convert::From<#ty>>::from(#crate_name::Decode::decode(#encoder)?)),
-					}
-				}
-				Function::Secret { encryption, public_key, private_key } => {
-					let encryption = encryption
-						.as_ref()
-						.map(|x| x.ctxt_tokens(ctxt))
-						.map(|x| syn::parse2::<Expr>(x).unwrap());
-					let encryption = option_expr_to_actual_option_expr(encryption.as_ref());
-					let public_key = option_expr_to_actual_option_expr(public_key.as_ref());
-					let private_key = option_expr_to_actual_option_expr(private_key.as_ref());
+			Function::Secret { encryption, public_key, private_key } => {
+				let encryption = encryption
+					.as_ref()
+					.map(|x| x.ctxt_tokens(ctxt))
+					.map(|x| syn::parse2::<Expr>(x).unwrap());
+				let encryption = option_expr_to_actual_option_expr(encryption.as_ref());
+				let public_key = option_expr_to_actual_option_expr(public_key.as_ref());
+				let private_key = option_expr_to_actual_option_expr(private_key.as_ref());
 
-					quote!(
-						#crate_name::encryption::decode_asymm_block(
-							#encoder,
-							#encryption,
-							#public_key,
-							#private_key,
-						)?
-					)
+				quote!(
+					#crate_name::encryption::encode_asymm_block(
+						#encoder,
+						#encryption,
+						#public_key,
+						#private_key,
+						#input
+					)?
+				)
+			}
+		})
+	}
+
+	pub fn derive_decode(&self, ctxt: &Ctxt, ty: &Type) -> syn::Result<TokenStream2> {
+		let ref crate_name = ctxt.flags.crate_name;
+		let ref encoder = ctxt.encoder;
+		Ok(match self {
+			Function::Default => {
+				quote!(<#ty as #crate_name::Decode>::decode(#encoder)?)
+			}
+			Function::Serde(serde_crate) => {
+				quote!(<#ty as #serde_crate::Deserialize>::deserialize(&mut * #encoder)?)
+			}
+			Function::With(path, scope) => {
+				match scope {
+					Scope::Encode => unreachable!(),
+					Scope::Decode => quote!(#path(&mut * #encoder)?),
+					Scope::Both => quote!(#path::decode(&mut * #encoder)?),
 				}
 			}
-		}
-		)
+			Function::Secret { encryption, public_key, private_key } => {
+				let encryption = encryption
+					.as_ref()
+					.map(|x| x.ctxt_tokens(ctxt))
+					.map(|x| syn::parse2::<Expr>(x).unwrap());
+				let encryption = option_expr_to_actual_option_expr(encryption.as_ref());
+				let public_key = option_expr_to_actual_option_expr(public_key.as_ref());
+				let private_key = option_expr_to_actual_option_expr(private_key.as_ref());
+
+				quote!(
+					#crate_name::encryption::decode_asymm_block(
+						#encoder,
+						#encryption,
+						#public_key,
+						#private_key,
+					)?
+				)
+			}
+		})
+	}
+}
+
+impl TypeModifier {
+	pub fn convert_into(&self, field: &Field) -> syn::Result<TokenStream2> {
+		let ref name = field.name;
+		let ref field_ty = field.ty;
+		Ok(match self {
+			TypeModifier::As(ty) => {
+				parse_quote!(
+					&(::core::clone::Clone::clone(#name) as #ty)
+				)
+			}
+			TypeModifier::Convert(ty) => {
+				parse_quote!(
+					&(<#ty as ::core::convert::From<#field_ty>>::from(::core::clone::Clone::clone(#name)))
+				)
+			}
+		})
+	}
+
+	pub fn convert_from(&self, field: &Field, input: TokenStream2) -> syn::Result<TokenStream2> {
+		let ref field_ty = field.ty;
+		Ok(match self {
+			TypeModifier::As(_ty) => {
+				parse_quote!(
+					#input as #field_ty
+				)
+			}
+			TypeModifier::Convert(ty) => {
+				parse_quote!(
+					<#field_ty as ::core::convert::From<#ty>>::from(#input)
+				)
+			}
+		})
 	}
 }
 

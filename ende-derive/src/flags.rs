@@ -7,7 +7,7 @@ use syn::spanned::Spanned;
 use crate::{dollar_crate, ENDE};
 use crate::ctxt::Scope;
 use crate::enums::{BitWidth, Endianness, NumEncoding};
-use crate::parse::{AsConversion, CompressionConstructor, EncryptionConstructor, EncryptionData, Flag, Formatting, Modifier, ModTarget, SecretConstructor, SecretData};
+use crate::parse::{CompressionConstructor, EncryptionConstructor, EncryptionData, Flag, Formatting, Modifier, ModTarget, SecretConstructor, SecretData};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FlagTarget {
@@ -44,8 +44,6 @@ pub enum Function {
 	Default,
 	Serde(Ident),
 	With(Path, Scope),
-	Expr(Expr),
-	As(Type, AsConversion),
 	Secret {
 		encryption: Option<SecretConstructor>,
 		public_key: Option<Expr>,
@@ -58,6 +56,21 @@ impl Function {
 		match self {
 			Self::Default => true,
 			_ => false,
+		}
+	}
+}
+
+#[derive(Clone)]
+pub enum TypeModifier {
+	As(Type),
+	Convert(Type),
+}
+
+impl TypeModifier {
+	pub fn ty(&self) -> &Type {
+		match self {
+			TypeModifier::As(ty) => ty,
+			TypeModifier::Convert(ty) => ty,
 		}
 	}
 }
@@ -226,7 +239,9 @@ pub struct Flags {
 	pub default: Param<Expr>,
 	/// The function used for encoding / decoding.
 	pub function: Function,
-	/// The modifiers apply to this item
+	/// The type modifiers of this item.
+	pub ty_mods: Option<TypeModifier>,
+	/// The modifiers to apply to this item
 	pub mods: AllModifiers,
 	/// If present, indicates the item should be validated using the given expression before
 	/// encoding and after decoding.
@@ -247,6 +262,7 @@ impl Flags {
 			skip: false,
 			default: Param::Default(parse_quote!(Default::default())),
 			function: Function::Default,
+			ty_mods: None,
 			mods: AllModifiers::new(),
 			validate: None,
 			condition: None,
@@ -265,6 +281,9 @@ impl Flags {
 impl Flags {
 	/// Applies a flag to the item, performing consistency checks.
 	pub fn apply(&mut self, flag: Flag, scope: Scope) -> syn::Result<()> {
+		const MULTIPLE_FUNCTION_MODS: &str = "Multiple function-modifier flags declared";
+		const MULTIPLE_TY_MODS: &str = "Multiple type-modifier flags declared";
+
 		let span = flag.span();
 		match flag {
 			Flag::Crate { crate_name, .. } => {
@@ -280,7 +299,7 @@ impl Flags {
 			}
 			Flag::Serde { crate_name ,.. } => {
 				if !self.function.is_default() {
-					return Err(Error::new(span, r#""serde" flag is incompatible with "as", "secret", "with", "expr" flags"#))
+					return Err(Error::new(span, MULTIPLE_FUNCTION_MODS))
 				}
 
 				// If no name is specified, it is assumed to be "serde"
@@ -306,27 +325,24 @@ impl Flags {
 			}
 			Flag::With { path, .. } => {
 				if !self.function.is_default() {
-					return Err(Error::new(span, r#""with" flag is incompatible with "as", "secret", "serde", "expr" flags"#))
+					return Err(Error::new(span, MULTIPLE_FUNCTION_MODS))
 				}
 
 				self.function = Function::With(path, scope);
 			}
-			Flag::Expr { expr, .. } => {
-				if scope == Scope::Both {
-					return Err(Error::new(span, r#""expr" flag must be scoped"#))
-				}
-				if !self.function.is_default() {
-					return Err(Error::new(span, r#""expr" flag is incompatible with "as", "secret", "serde", "with" flags"#))
+			Flag::As { ty, .. } => {
+				if self.ty_mods.is_some() {
+					return Err(Error::new(span, MULTIPLE_TY_MODS))
 				}
 
-				self.function = Function::Expr(expr);
+				self.ty_mods = Some(TypeModifier::As(ty));
 			}
-			Flag::As { ty, method, .. } => {
-				if !self.function.is_default() {
-					return Err(Error::new(span, r#""as" flag is incompatible with "with", "secret", "serde", "expr" flags"#))
+			Flag::Convert { ty, .. } => {
+				if self.ty_mods.is_some() {
+					return Err(Error::new(span, MULTIPLE_TY_MODS))
 				}
 
-				self.function = Function::As(ty, method);
+				self.ty_mods = Some(TypeModifier::Convert(ty));
 			}
 			Flag::Flatten { expr, .. } => {
 				if self.mods.flatten.is_some() {
@@ -345,7 +361,7 @@ impl Flags {
 			}
 			Flag::Secret { data, .. } => {
 				if !self.function.is_default() {
-					return Err(Error::new(span, r#""secret" flag is incompatible with "with", "as", "serde" flags"#))
+					return Err(Error::new(span, MULTIPLE_FUNCTION_MODS))
 				}
 
 				let data: Option<SecretData> = data.map(|x| x.1);
@@ -418,7 +434,7 @@ impl Flags {
 		}
 
 		if self.skip && !self.skip_compatible() {
-			return Err(Error::new(span, r#""skip" flag can only be accompanied by "default" or "validate" flag"#))
+			return Err(Error::new(span, r#""skip" flag can only be accompanied by "default" or "validate" flags"#))
 		}
 
 		Ok(())

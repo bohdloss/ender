@@ -28,7 +28,6 @@ pub mod kw {
 	custom_keyword!(repr);
 
 	/* Conversions */
-	custom_keyword!(simple);
 	custom_keyword!(convert);
 
 	/* Keywords used for flags */
@@ -37,7 +36,6 @@ pub mod kw {
 	custom_keyword!(serde);
 	custom_keyword!(skip);
 	custom_keyword!(with);
-	custom_keyword!(expr);
 	custom_keyword!(flatten);
 	custom_keyword!(validate);
 	custom_keyword!(encrypted);
@@ -262,12 +260,6 @@ pub struct CompressionData {
 	pub ctor: CompressionConstructor
 }
 
-#[derive(Clone)]
-pub enum AsConversion {
-	Simple(kw::simple),
-	Convert(kw::convert),
-}
-
 /// Represents every kind of modifiers that can be applied to a [`ModTarget`].
 /// Example: `$target: $modifier, $modifier, ...`
 #[derive(Clone)]
@@ -385,18 +377,17 @@ pub enum Flag {
 		colon: Token![:],
 		path: Path,
 	},
-	/// The field should be encoded/decoded using the given expression. Only valid when the scope
-	/// is specified.
-	Expr {
-		kw: kw::expr,
-		colon: Token![:],
-		expr: Expr,
-	},
 	/// The field should be encoded/decoded as if it was of the given type. It should then be
-	/// converted back to the appropriate type
+	/// converted back to the appropriate type. The conversion method is the as keyword.
 	As {
 		kw: Token![as],
-		method: AsConversion,
+		colon: Token![:],
+		ty: Type,
+	},
+	/// The field should be encoded/decoded as if it was of the given type. It should then be
+	/// converted back to the appropriate type. The conversion method are the From and Into traits.
+	Convert {
+		kw: kw::convert,
 		colon: Token![:],
 		ty: Type,
 	},
@@ -448,8 +439,8 @@ impl Flag {
 			Flag::If { kw, .. } => kw.span,
 			Flag::Default { kw, .. } => kw.span,
 			Flag::With { kw, .. } => kw.span,
-			Flag::Expr { kw, ..} => kw.span,
 			Flag::As { kw, .. } => kw.span,
+			Flag::Convert { kw, .. } => kw.span,
 			Flag::Flatten { kw, .. } => kw.span,
 			Flag::Validate { kw, .. } => kw.span,
 			Flag::Encrypted { kw, .. } => kw.span,
@@ -623,20 +614,6 @@ impl Parse for CompressionData {
 	}
 }
 
-impl Parse for AsConversion {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		if input.peek(kw::simple) {
-			Ok(Self::Simple(input.parse()?))
-		} else if input.peek(kw::convert) {
-			Ok(Self::Convert(input.parse()?))
-		} else {
-			return Err(Error::new(input.span(), r#"Allowed "as" flag parameters:
-			simple (performs conversion through the as keyword),
-			convert (performs conversion through From and Into)"#))
-		}
-	}
-}
-
 impl Parse for Modifier {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		if input.peek(kw::fixed) {
@@ -749,16 +726,15 @@ impl Parse for Flag {
 				colon: input.parse()?,
 				path: input.parse()?,
 			})
-		} else if input.peek(kw::expr) {
-			Ok(Self::Expr {
-				kw: input.parse()?,
-				colon: input.parse()?,
-				expr: input.parse()?,
-			})
 		} else if input.peek(Token![as]) {
 			Ok(Self::As {
 				kw: input.parse()?,
-				method: input.parse()?,
+				colon: input.parse()?,
+				ty: input.parse()?,
+			})
+		} else if input.peek(kw::convert) {
+			Ok(Self::Convert {
+				kw: input.parse()?,
 				colon: input.parse()?,
 				ty: input.parse()?,
 			})

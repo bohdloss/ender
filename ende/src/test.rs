@@ -11,7 +11,7 @@ pub struct StructStruct {
 	value1: u64,
 	#[ende(if: *value1 > 10)]
 	#[ende(default: *value1 as f32)]
-	#[ende(as simple: u8)]
+	#[ende(as: u8)]
 	value2: f32,
 	unit: (),
 	#[ende(secret)]

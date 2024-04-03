@@ -5,6 +5,7 @@ use crate::generator::{ConstCode, RefCode};
 
 impl Ctxt {
 	pub(super) fn derive_decode(&self) -> syn::Result<TokenStream2> {
+		let ref crate_name = self.flags.crate_name;
 		match self.item_type {
 			ItemType::Struct => {
 				let (pre, post) = self.flags.mods.derive(self)?;
@@ -15,7 +16,7 @@ impl Ctxt {
 					#pre
 					let __val: Self = { #modified };
 					#post
-					Ok(__val)
+					#crate_name::EncodingResult::Ok(__val)
 				))
 			},
 			ItemType::Enum => {
@@ -25,7 +26,7 @@ impl Ctxt {
 				// Edge case for 0-variant enums
 				if self.variants.len() == 0 {
 					return Ok(quote!(
-						Err(#crate_name::EncodingError::InvalidVariant)
+						#crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant)
 					))
 				}
 
@@ -51,7 +52,7 @@ impl Ctxt {
 				let body = quote!(
 					match #read_variant {
 						#variant_code
-						_ => Err(#crate_name::EncodingError::InvalidVariant),
+						_ => #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant),
 					}?
 				);
 				let modified = self.flags.derive_stream_modifiers(self, body)?;
@@ -62,7 +63,7 @@ impl Ctxt {
 					#pre
 					let __val: Self = { #modified };
 					#post
-					Ok(__val)
+					#crate_name::EncodingResult::Ok(__val)
 				))
 			}
 		}
@@ -167,12 +168,16 @@ impl Struct {
 
 impl Field {
 	pub fn derive_decode(&self, ctxt: &Ctxt, ref_code: &mut RefCode) -> syn::Result<TokenStream2> {
-		let ref name = self.name;
-		let ref ty = self.ty;
+		let ref field_name = self.name;
+		let ref field_ty = self.ty;
 		let ref default = self.flags.default;
 
 		let (pre, post) = self.flags.mods.derive(ctxt)?;
-		let decode = self.flags.function.derive(ctxt, self)?;
+		let decode = if let Some(converter) = &self.flags.ty_mods {
+			converter.convert_from(self, self.flags.function.derive_decode(ctxt, converter.ty())?)?
+		} else {
+			self.flags.function.derive_decode(ctxt, field_ty)?
+		};
 		let modified = self.flags.derive_stream_modifiers(ctxt, decode)?;
 		let decode = if self.flags.skip {
 			quote!(
@@ -187,7 +192,7 @@ impl Field {
 					#ref_code
 					if #condition {
 						#pre
-						let __val: #ty = #modified;
+						let __val: #field_ty = #modified;
 						#post
 						__val
 					} else {
@@ -200,7 +205,7 @@ impl Field {
 				{
 					#ref_code
 					#pre
-					let __val: #ty = #modified;
+					let __val: #field_ty = #modified;
 					#post
 					__val
 				}
@@ -211,7 +216,7 @@ impl Field {
 		let validate = self.flags.derive_validation(ctxt, &ref_code)?;
 
 		let decode = quote!(
-			let #name: #ty = #decode;
+			let #field_name: #field_ty = #decode;
 			#validate
 		);
 

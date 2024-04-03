@@ -5,10 +5,13 @@ edition = "2021"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "doc_cfg"]
+rustdoc-args = ["--cfg", "doc_cfg", "--generate-link-to-definition"]
+
+[package.metadata.playground]
+features = ["all"]
 
 [dependencies]
-ende-derive = "0.1.0"
+ende-derive = "1.0.0"
 thiserror = "1.0.57"
 array-init = "2.1.0"
 parse-display = "0.9.0"
@@ -32,8 +35,17 @@ bitflags = "2.4.2"
 semver = { version = "1.0.22", features = ["serde"] }
 
 [features]
+# Enables all features. Includes serde support, encryption and compression, and the derive macros.
 all = ["derive", "serde", "encryption", "compression"]
+
+# Enables the serde compatibility layer.
 serde = ["dep:serde", "dep:smallvec"]
+
+# Enables cryptography support.
 encryption = ["dep:openssl", "dep:cryptostream", "dep:zeroize"]
+
+# Enables compression / decompression support.
 compression = ["dep:flate2", "dep:zstd"]
+
+# Enables the derive(Encode, Decode) macros.
 derive = []

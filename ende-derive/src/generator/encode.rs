@@ -1,11 +1,12 @@
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{quote, TokenStreamExt};
+use quote::{quote, TokenStreamExt, ToTokens};
 
 use crate::ctxt::{Ctxt, Field, Flavor, ItemType, Struct, Variant};
 use crate::generator::{ConstCode, RefCode};
 
 impl Ctxt {
 	pub(super) fn derive_encode(&self) -> syn::Result<TokenStream2> {
+		let ref crate_name = self.flags.crate_name;
 		match self.item_type {
 			ItemType::Struct => {
 				let (pre, post) = self.flags.mods.derive(self)?;
@@ -16,14 +17,14 @@ impl Ctxt {
 					#pre
 					{ #modified }
 					#post
-					Ok(())
+					#crate_name::EncodingResult::Ok(())
 				))
 			},
 			ItemType::Enum => {
 				// Edge case for 0-variant enums
 				if self.variants.len() == 0 {
 					return Ok(quote!(
-						Ok(())
+						#crate_name::EncodingResult::Ok(())
 					))
 				}
 
@@ -49,7 +50,7 @@ impl Ctxt {
 					#pre
 					{ #modified }
 					#post
-					Ok(())
+					#crate_name::EncodingResult::Ok(())
 				))
 			}
 		}
@@ -130,10 +131,24 @@ impl Struct {
 impl Field {
 	pub fn derive_encode(&self, ctxt: &Ctxt, ref_code: &mut RefCode) -> syn::Result<TokenStream2> {
 		ref_code.append(self);
+		let ref field_name = self.name;
+		let ref field_ty = self.ty;
 
 		let (pre, post) = self.flags.mods.derive(ctxt)?;
 		let validate = self.flags.derive_validation(ctxt, &ref_code)?;
-		let encode = self.flags.function.derive(ctxt, self)?;
+		let encode = if let Some(converter) = &self.flags.ty_mods {
+			self.flags.function.derive_encode(
+				ctxt,
+				converter.convert_into(self)?,
+				converter.ty(),
+			)?
+		} else {
+			self.flags.function.derive_encode(
+				ctxt,
+				field_name.to_token_stream(),
+				field_ty,
+			)?
+		};
 		let encode = if self.flags.skip {
 			quote!(
 				#validate
