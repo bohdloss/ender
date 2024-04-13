@@ -320,6 +320,34 @@ impl ModifierGroup {
 			));
 		}
 
+		if let Some(str_encoding) = self.str_encoding {
+			let str_encoding = str_encoding.ctxt_tokens(ctxt);
+			let save_state = format_ident!("__{}_str_encoding", target.to_string());
+			save.push(quote!(
+				let #save_state = #encoder.ctxt.settings.#target.str_encoding;
+			));
+			set.push(quote!(
+				#encoder.ctxt.settings.#target.str_encoding = #str_encoding;
+			));
+			restore.push(quote!(
+				#encoder.ctxt.settings.#target.str_encoding = #save_state;
+			));
+		}
+
+		if let Some(str_len_encoding) = self.str_len_encoding {
+			let str_len_encoding = str_len_encoding.ctxt_tokens(ctxt);
+			let save_state = format_ident!("__{}_str_len_encoding", target.to_string());
+			save.push(quote!(
+				let #save_state = #encoder.ctxt.settings.#target.len_encoding;
+			));
+			set.push(quote!(
+				#encoder.ctxt.settings.#target.len_encoding = #str_len_encoding;
+			));
+			restore.push(quote!(
+				#encoder.ctxt.settings.#target.len_encoding = #save_state;
+			));
+		}
+
 		Ok((save, set, restore))
 	}
 }
@@ -335,18 +363,22 @@ impl AllModifiers {
 		let (num_save, num_set, num_restore) = self.num.derive(ctxt)?;
 		let (size_save, size_set, size_restore) = self.size.derive(ctxt)?;
 		let (variant_save, variant_set, variant_restore) = self.variant.derive(ctxt)?;
-
+		let (string_save, string_set, string_restore) = self.string.derive(ctxt)?;
+		
 		save.extend(num_save);
 		save.extend(size_save);
 		save.extend(variant_save);
+		save.extend(string_save);
 
 		set.extend(num_set);
 		set.extend(size_set);
 		set.extend(variant_set);
+		set.extend(string_set);
 
 		restore.extend(num_restore);
 		restore.extend(size_restore);
 		restore.extend(variant_restore);
+		restore.extend(string_restore);
 
 		if let Some(flatten) = &self.flatten {
 			save.push(quote!(

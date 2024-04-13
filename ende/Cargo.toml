@@ -12,12 +12,13 @@ features = ["all"]
 
 [dependencies]
 ende-derive = "1.0.0"
-thiserror = "1.0.57"
+thiserror = { version = "1.0.58", features = [] }
 array-init = "2.1.0"
 parse-display = "0.9.0"
+widestring = { version = "1.0.2", features = [] }
 
 # serde feature
-serde = { version = "1.0.197", optional = true, features = ["derive"] }
+serde = { version = "1.0.197", optional = true }
 smallvec = { version = "2.0.0-alpha.5", optional = true }
 
 # encryption feature
@@ -30,22 +31,27 @@ flate2 = { version = "1.0.28", optional = true }
 zstd = { version = "0.13.0", optional = true }
 
 [dev-dependencies]
+serde = { version = "1.0.197", features = ["derive"] }
 uuid = { version = "1.8.0", features = ["serde"] }
 bitflags = "2.4.2"
 semver = { version = "1.0.22", features = ["serde"] }
 
 [features]
 # Enables all features. Includes serde support, encryption and compression, and the derive macros.
+# The unstable feature still has to be manually enabled.
 all = ["derive", "serde", "encryption", "compression"]
 
 # Enables the serde compatibility layer.
-serde = ["dep:serde", "dep:smallvec"]
+serde = ["dep:serde", "smallvec"]
 
 # Enables cryptography support.
-encryption = ["dep:openssl", "dep:cryptostream", "dep:zeroize"]
+encryption = ["openssl", "cryptostream", "zeroize"]
 
 # Enables compression / decompression support.
-compression = ["dep:flate2", "dep:zstd"]
+compression = ["flate2", "zstd"]
 
 # Enables the derive(Encode, Decode) macros.
 derive = []
+
+# Enables features only available in nightly.
+unstable = []

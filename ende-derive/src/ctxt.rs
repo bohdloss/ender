@@ -260,11 +260,10 @@ impl Ctxt {
 			},
 			Data::Enum(data) => {
 				// Find the variant repr attribute and try to parse it
-				let repr = input.attrs
+				let repr: Option<syn::Result<ReprAttribute>> = input.attrs
 					.iter()
 					.find(|x| x.meta.path().is_ident("repr"))
-					.map(|x| x.meta.to_token_stream())
-					.map(|x| syn::parse2::<ReprAttribute>(x));
+					.map(|x| x.parse_args());
 
 				if let Some(repr) = repr {
 					enum_repr = EnumRepr::try_from(&repr?.ty)?;

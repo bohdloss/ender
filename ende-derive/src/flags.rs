@@ -6,7 +6,7 @@ use syn::spanned::Spanned;
 
 use crate::{dollar_crate, ENDE};
 use crate::ctxt::Scope;
-use crate::enums::{BitWidth, Endianness, NumEncoding};
+use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding, StrLenEncoding};
 use crate::parse::{CompressionConstructor, EncryptionConstructor, EncryptionData, Flag, Formatting, Modifier, ModTarget, SecretConstructor, SecretData};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -83,7 +83,9 @@ pub struct ModifierGroup {
 	pub num_encoding: Option<NumEncoding>,
 	pub endianness: Option<Endianness>,
 	pub max: Option<Expr>,
-	pub bit_width: Option<BitWidth>
+	pub bit_width: Option<BitWidth>,
+	pub str_encoding: Option<StrEncoding>,
+	pub str_len_encoding: Option<StrLenEncoding>,
 }
 
 impl ModifierGroup {
@@ -94,6 +96,8 @@ impl ModifierGroup {
 			endianness: None,
 			max: None,
 			bit_width: None,
+			str_encoding: None,
+			str_len_encoding: None,
 		}
 	}
 
@@ -109,12 +113,19 @@ impl ModifierGroup {
 		const REPEATED_ENDIANNESS: &str = "Endianness modifier declared twice for the same target";
 		const REPEATED_MAX: &str = "Max size modifier declared twice for the same target";
 		const REPEATED_BIT_WIDTH: &str = "Bit width modifier declared twice for the same target";
+		const REPEATED_STR_ENCODING: &str = "String encoding modifier declared twice for the same target";
+		const REPEATED_STR_LEN_ENCODING: &str = "String length encoding modifier declared twice for the same target";
 
+		const NOT_STRING: &str = r#"This modifier can't be applied to the "string" target"#;
+		const ONLY_STRING: &str = r#"This modifier can only be applied to the "string" target"#;
 		const ONLY_SIZE: &str = r#"This modifier can only be applied to the "size" target"#;
 		const ONLY_VARIANT_AND_SIZE: &str = r#"This modifier can only be applied to the "size" and "variant" targets"#;
 
 		match modifier {
 			Modifier::Fixed { kw, .. } => {
+				if self.target.string() {
+					return Err(Error::new(kw.span(), NOT_STRING))
+				}
 				if self.num_encoding.is_some() {
 					return Err(Error::new(kw.span(), REPEATED_NUM_ENCODING))
 				}
@@ -122,6 +133,9 @@ impl ModifierGroup {
 				self.num_encoding = Some(NumEncoding::Fixed);
 			}
 			Modifier::Leb128 { kw, .. } => {
+				if self.target.string() {
+					return Err(Error::new(kw.span(), NOT_STRING))
+				}
 				if self.num_encoding.is_some() {
 					return Err(Error::new(kw.span(), REPEATED_NUM_ENCODING))
 				}
@@ -143,7 +157,7 @@ impl ModifierGroup {
 				self.endianness = Some(Endianness::LittleEndian);
 			}
 			Modifier::Max { kw, max, .. } => {
-				if self.target.tier() < 2 {
+				if !self.target.size() {
 					return Err(Error::new(kw.span(), ONLY_SIZE))
 				}
 				if self.max.is_some() {
@@ -153,7 +167,7 @@ impl ModifierGroup {
 				self.max = Some(max);
 			}
 			Modifier::BitWidth { lit, width, .. } => {
-				if self.target.tier() < 1 {
+				if !self.target.variant() && !self.target.size() {
 					return Err(Error::new(lit.span(), ONLY_VARIANT_AND_SIZE))
 				}
 				if self.bit_width.is_some() {
@@ -161,7 +175,67 @@ impl ModifierGroup {
 				}
 
 				self.bit_width = Some(width);
-			}
+			},
+			Modifier::Ascii { kw, .. } => {
+				if !self.target.string() {
+					return Err(Error::new(kw.span(), ONLY_STRING))
+				}
+				if self.str_encoding.is_some() {
+					return Err(Error::new(kw.span(), REPEATED_STR_ENCODING))
+				}
+
+				self.str_encoding = Some(StrEncoding::Ascii);
+			},
+			Modifier::Utf8 { kw, .. } => {
+				if !self.target.string() {
+					return Err(Error::new(kw.span(), ONLY_STRING))
+				}
+				if self.str_encoding.is_some() {
+					return Err(Error::new(kw.span(), REPEATED_STR_ENCODING))
+				}
+
+				self.str_encoding = Some(StrEncoding::Utf8);
+			},
+			Modifier::Utf16 { kw, .. } => {
+				if !self.target.string() {
+					return Err(Error::new(kw.span(), ONLY_STRING))
+				}
+				if self.str_encoding.is_some() {
+					return Err(Error::new(kw.span(), REPEATED_STR_ENCODING))
+				}
+
+				self.str_encoding = Some(StrEncoding::Utf16);
+			},
+			Modifier::Utf32 { kw, .. } => {
+				if !self.target.string() {
+					return Err(Error::new(kw.span(), ONLY_STRING))
+				}
+				if self.str_encoding.is_some() {
+					return Err(Error::new(kw.span(), REPEATED_STR_ENCODING))
+				}
+
+				self.str_encoding = Some(StrEncoding::Utf32);
+			},
+			Modifier::NulTerm { kw, .. } => {
+				if !self.target.string() {
+					return Err(Error::new(kw.span(), ONLY_STRING))
+				}
+				if self.str_len_encoding.is_some() {
+					return Err(Error::new(kw.span(), REPEATED_STR_LEN_ENCODING))
+				}
+
+				self.str_len_encoding = Some(StrLenEncoding::NullTerminated);
+			},
+			Modifier::LenPrefix { kw, .. } => {
+				if !self.target.string() {
+					return Err(Error::new(kw.span(), ONLY_STRING))
+				}
+				if self.str_len_encoding.is_some() {
+					return Err(Error::new(kw.span(), REPEATED_STR_LEN_ENCODING))
+				}
+
+				self.str_len_encoding = Some(StrLenEncoding::LenPrefixed);
+			},
 		}
 		Ok(())
 	}
@@ -173,6 +247,7 @@ pub struct AllModifiers {
 	pub num: ModifierGroup,
 	pub size: ModifierGroup,
 	pub variant: ModifierGroup,
+	pub string: ModifierGroup,
 	pub flatten: Option<Expr>,
 }
 
@@ -182,6 +257,7 @@ impl AllModifiers {
 			num: ModifierGroup::new(ModTarget::Num { kw: Default::default() }),
 			size: ModifierGroup::new(ModTarget::Size { kw: Default::default() }),
 			variant: ModifierGroup::new(ModTarget::Variant { kw: Default::default() }),
+			string: ModifierGroup::new(ModTarget::String { kw: Default::default() }),
 			flatten: None,
 		}
 	}
@@ -207,6 +283,10 @@ impl AllModifiers {
 				self.variant.target = target;
 				self.variant.apply(modifier)
 			},
+			ModTarget::String { .. } => {
+				self.string.target = target;
+				self.string.apply(modifier)
+			}
 		}
 	}
 }
@@ -344,12 +424,12 @@ impl Flags {
 
 				self.ty_mods = Some(TypeModifier::Convert(ty));
 			}
-			Flag::Flatten { expr, .. } => {
+			Flag::Flatten { param, .. } => {
 				if self.mods.flatten.is_some() {
 					return Err(Error::new(span, r#""flatten" flag declared more than once"#))
 				}
 
-				let expr = expr.map(|x| x.1).unwrap_or(parse_quote!(1));
+				let expr = parse_quote!(#param);
 				self.mods.flatten = Some(expr);
 			}
 			Flag::Validate { expr, fmt, .. } => {

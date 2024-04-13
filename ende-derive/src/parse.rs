@@ -24,9 +24,6 @@ const BITWIDTH_USAGE: &str = r#"Invalid bit-width modifier. Allowed bit-widths a
 pub mod kw {
 	use syn::custom_keyword;
 
-	/* Used to parse the #[repr($ty)] attribute on enums */
-	custom_keyword!(repr);
-
 	/* Conversions */
 	custom_keyword!(convert);
 
@@ -42,6 +39,10 @@ pub mod kw {
 	custom_keyword!(secret);
 	custom_keyword!(compressed);
 
+	/* Flatten flag helpers */
+	custom_keyword!(some);
+	custom_keyword!(none);
+
 	/* Keywords used for parsing encryption parameters */
 	// Symmetric encryption
 	custom_keyword!(key);
@@ -54,6 +55,7 @@ pub mod kw {
 	custom_keyword!(num);
 	custom_keyword!(size);
 	custom_keyword!(variant);
+	custom_keyword!(string);
 
 	/* Keywords used for the modifiers themselves */
 	// Numerical encodings
@@ -64,13 +66,19 @@ pub mod kw {
 	custom_keyword!(little_endian);
 	// Max size
 	custom_keyword!(max);
+	// String encoding
+	custom_keyword!(ascii);
+	custom_keyword!(utf_8);
+	custom_keyword!(utf_16);
+	custom_keyword!(utf_32);
+	// String length encoding
+	custom_keyword!(nul_term);
+	custom_keyword!(len_prefix);
 }
 
 /// The `#[repr($ty)]` attribute
 #[derive(Clone)]
 pub struct ReprAttribute {
-	pub kw: kw::repr,
-	pub paren: Paren,
 	pub ty: Type,
 }
 
@@ -260,6 +268,13 @@ pub struct CompressionData {
 	pub ctor: CompressionConstructor
 }
 
+#[derive(Clone)]
+pub enum FlattenParam {
+	Some(kw::some),
+	None(kw::none),
+	Expr(Expr),
+}
+
 /// Represents every kind of modifiers that can be applied to a [`ModTarget`].
 /// Example: `$target: $modifier, $modifier, ...`
 #[derive(Clone)]
@@ -283,7 +298,25 @@ pub enum Modifier {
 	},
 	BitWidth {
 		lit: LitInt,
-		width: BitWidth
+		width: BitWidth,
+	},
+	Ascii {
+		kw: kw::ascii,
+	},
+	Utf8 {
+		kw: kw::utf_8,
+	},
+	Utf16 {
+		kw: kw::utf_16,
+	},
+	Utf32 {
+		kw: kw::utf_32,
+	},
+	NulTerm {
+		kw: kw::nul_term,
+	},
+	LenPrefix {
+		kw: kw::len_prefix,
 	},
 }
 
@@ -302,21 +335,46 @@ pub enum ModTarget {
 	Variant {
 		kw: kw::variant,
 	},
+	#[display("string")]
+	String {
+		kw: kw::string,
+	},
 }
 
 impl ModTarget {
-	pub fn tier(&self) -> u32 {
+	pub fn num(&self) -> bool {
 		match self {
-			Self::Num { .. } => 0,
-			Self::Variant { .. } => 1,
-			Self::Size { .. } => 2,
+			Self::Num { .. } => true,
+			_ => false,
+		}
+	}
+
+	pub fn size(&self) -> bool {
+		match self {
+			Self::Size { .. } => true,
+			_ => false,
+		}
+	}
+
+	pub fn variant(&self) -> bool {
+		match self {
+			Self::Variant { .. } => true,
+			_ => false,
+		}
+	}
+
+	pub fn string(&self) -> bool {
+		match self {
+			Self::String { .. } => true,
+			_ => false,
 		}
 	}
 
 	fn peek(input: ParseStream) -> bool {
 		input.peek(kw::num) ||
 			input.peek(kw::size) ||
-			input.peek(kw::variant)
+			input.peek(kw::variant) ||
+			input.peek(kw::string)
 	}
 
 	fn span(&self) -> Span {
@@ -324,6 +382,7 @@ impl ModTarget {
 			ModTarget::Num { kw, .. } => kw.span,
 			ModTarget::Size { kw, .. } => kw.span,
 			ModTarget::Variant { kw, .. } => kw.span,
+			ModTarget::String { kw, ..} => kw.span,
 		}
 	}
 }
@@ -395,7 +454,8 @@ pub enum Flag {
 	/// more info.
 	Flatten {
 		kw: kw::flatten,
-		expr: Option<(Token![:], Expr)>,
+		colon: Token![:],
+		param: FlattenParam,
 	},
 	/// Performs a check before encoding and after decoding a field. If the check fails, an error
 	/// is returned. Allows specifying a custom error message with fmt arguments.
@@ -473,11 +533,8 @@ impl EndeAttribute {
 
 impl Parse for ReprAttribute {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
-		let inside;
 		Ok(Self {
-			kw: input.parse()?,
-			paren: parenthesized!(inside in input),
-			ty: inside.parse()?,
+			ty: input.parse()?,
 		})
 	}
 }
@@ -614,6 +671,18 @@ impl Parse for CompressionData {
 	}
 }
 
+impl Parse for FlattenParam {
+	fn parse(input: ParseStream) -> syn::Result<Self> {
+		if input.peek(kw::some) {
+			Ok(Self::Some(input.parse()?))
+		} else if input.peek(kw::none) {
+			Ok(Self::None(input.parse()?))
+		} else {
+			Ok(Self::Expr(input.parse()?))
+		}
+	}
+}
+
 impl Parse for Modifier {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		if input.peek(kw::fixed) {
@@ -653,6 +722,30 @@ impl Parse for Modifier {
 				lit,
 				width,
 			})
+		} else if input.peek(kw::ascii) {
+			Ok(Self::Ascii {
+				kw: input.parse()?,
+			})
+		} else if input.peek(kw::utf_8) {
+			Ok(Self::Utf8 {
+				kw: input.parse()?,
+			})
+		} else if input.peek(kw::utf_16) {
+			Ok(Self::Utf16 {
+				kw: input.parse()?,
+			})
+		} else if input.peek(kw::utf_32) {
+			Ok(Self::Utf32 {
+				kw: input.parse()?,
+			})
+		} else if input.peek(kw::nul_term) {
+			Ok(Self::NulTerm {
+				kw: input.parse()?,
+			})
+		} else if input.peek(kw::len_prefix) {
+			Ok(Self::LenPrefix {
+				kw: input.parse()?,
+			})
 		} else {
 			Err(Error::new(input.span(), MODIFIER_USAGE))
 		}
@@ -671,6 +764,10 @@ impl Parse for ModTarget {
 			})
 		} else if input.peek(kw::variant) {
 			Ok(Self::Variant {
+				kw: input.parse()?,
+			})
+		} else if input.peek(kw::string) {
+			Ok(Self::String {
 				kw: input.parse()?,
 			})
 		} else {
@@ -741,10 +838,8 @@ impl Parse for Flag {
 		} else if input.peek(kw::flatten) {
 			Ok(Self::Flatten {
 				kw: input.parse()?,
-				expr: if input.peek(Token![:]) {Some((
-					input.parse()?,
-					input.parse()?,
-				))} else { None },
+				colon: input.parse()?,
+				param: input.parse()?,
 			})
 		} else if input.peek(kw::validate) {
 			Ok(Self::Validate {

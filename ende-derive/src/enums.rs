@@ -27,6 +27,20 @@ pub enum BitWidth {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Display)]
+pub enum StrEncoding {
+	Ascii,
+	Utf8,
+	Utf16,
+	Utf32,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Display)]
+pub enum StrLenEncoding {
+	LenPrefixed,
+	NullTerminated,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Display)]
 pub enum AsymmEncryption {
 	#[display("Rsa")]
 	Rsa(RsaBits, RsaPadding, RsaMode),
