@@ -6,7 +6,7 @@ It's currently working but incomplete. What is there to do?
 - [X] Base functionality and macros
 - [X] Add String encodings
 - [X] Add more Encode/Decode impls for standard types
-- [ ] Add other num encodings
+- [X] Add other num encodings
 - [ ] Add missing ciphers
 - [X] Documentation
 - [ ] More examples

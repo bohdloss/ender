@@ -42,8 +42,8 @@ use thiserror::Error;
 /// Setting-Modifier flags temporarily change certain settings of the encoder and can be applied
 /// to Fields or Items (the whole struct or enum).<br>
 /// Multiple can be specified at the same time, as long as they don't overlap.<br>
-/// * `$target: big_endian, little_endian` -
-/// * `$target: fixed, leb128` - `$target` can be `num`, `size`, `variant`
+/// * `$target: big_endian, little_endian` - `$target` can be `num`, `size`, `variant`, `string`
+/// * `$target: fixed, leb128, protobuf_wasteful, protobuf_zz` - `$target` can be `num`, `size`, `variant`
 /// * `$target: 8, 16, 32, 64, 128` - `$target` can be `size`, `variant`
 /// * `$target: max = $expr` - `$target` can only be `size`<br>
 /// * `$target: ascii, utf_8, utf_16, utf_32` - `$target` can only be `string`<br>
@@ -64,7 +64,7 @@ use thiserror::Error;
 ///         #[ende(size: big_endian, fixed, 16, max = 100)]
 ///         field: String,
 ///         /// Encode this String to utf16 with a length prefix
-///         #[ende(string: utf_16, len_prefix)]
+///         #[ende(string: utf_16, len_prefix, big_endian)]
 ///         utf_16: String,
 ///         /// Encode this String as a null-terminated ascii string
 ///         #[ende(string: ascii, nul_term)]
@@ -75,6 +75,8 @@ use thiserror::Error;
 ///         /// leb128 [NumEncoding][`ende::NumEncoding`]
 ///         #[ende(num: little_endian, leb128)]
 ///         field: u64,
+///         #[ende(num: protobuf_zz)]
+///         zigzag: i128,
 /// 	},
 /// }
 /// ```
@@ -354,13 +356,29 @@ pub enum Endianness {
 /// are compressed through a var-int format or if the entire length of their value is encoded.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 pub enum NumEncoding {
-	/// Its bits are encoded as-is according to the [`Endianness`].
+	/// The value's bits are encoded as-is according to the [`Endianness`].
 	Fixed,
-	/// Its bits are encoded according to the [ULEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128)
+	/// The value's bits are encoded according to the [ULEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128)
 	/// (Little Endian Base 128) standard if unsigned, or [LEB128](https://en.wikipedia.org/wiki/LEB128#Signed_LEB128)
-	/// standard if signed. As the name suggests, the bytes are encoded in little endian order,
+	/// standard if signed.<br>As the name suggests, the bytes are encoded in little endian order,
 	/// ignoring the [`Endianness`].
-	Leb128
+	Leb128,
+	/// The value's bits are encoded according to
+	/// [Protobuf's varint encoding](https://protobuf.dev/programming-guides/encoding/),
+	/// where unsigned values are encoded in the same way as [Leb128][`NumEncoding::Leb128`],
+	/// and signed values are encoded as a reinterpret-cast of the bits to unsigned,
+	/// possibly wasting all the var-int length to encode the leading 1s.<br>
+	/// This encoding method is not ideal to encode negative numbers and is provided merely for
+	/// compatibility concerns.<br>
+	/// The bytes are encoded in little endian order, ignoring the [`Endianness`].
+	ProtobufWasteful,
+	/// The value's bits are encoded according to
+	/// [Protobuf's varint encoding](https://protobuf.dev/programming-guides/encoding/),
+	/// where unsigned values are encoded in the same way as [Leb128][`NumEncoding::Leb128`],
+	/// and signed values are encoded as an unsigned value with its least significant bit
+	/// carrying the sign.<br>
+	/// The bytes are encoded in little endian order, ignoring the [`Endianness`].
+	ProtobufZigzag,
 }
 
 /// How many bits a size or enum variant will occupy in the binary format. If the value
@@ -808,48 +826,130 @@ impl<'a, T> Finish for Encoder<'a, T> {
 	}
 }
 
-macro_rules! make_unsigned_write_fn {
-    ($write_internal:ident => $write_size:ident => $write_variant:ident => $write:ident => $ty:ty) => {
+macro_rules! make_write_fns {
+    (
+	    type $uty:ty {
+		    pub u_write: $u_write:ident,
+		    pub u_write_direct: $u_write_direct:ident,
+		    priv u_write_size: $u_write_size:ident,
+		    priv u_write_variant: $u_write_variant:ident,
+		    priv uleb128_encode: $uleb128_encode:ident
+		    $(,)?
+	    },
+	    type $ity:ty {
+		    pub i_write: $i_write:ident,
+		    pub i_write_direct: $i_write_direct:ident,
+		    priv i_write_size: $i_write_size:ident,
+		    priv i_write_variant: $i_write_variant:ident,
+		    priv leb128_encode: $leb128_encode:ident
+		    $(,)?
+	    }$(,)?
+    ) => {
+	    fn $uleb128_encode(&mut self, value: $uty) -> EncodingResult<()> {
+		    let mut shifted = value;
+	        let mut byte = [u8::MAX; 1];
+	        let mut more = true;
+	        while more {
+		        byte[0] = shifted as u8 & 0b01111111;
+		        shifted >>= 7;
+		        
+		        // Is the next shifted value worth writing?
+		        if shifted != 0 {
+			        byte[0] |= 0b10000000;
+		        } else {
+			        more = false;
+		        }
+		        self.stream.write_all(&byte)?;
+			}
+		    Ok(())
+	    }
+	    
 	    #[doc = "Encodes a `"]
-	    #[doc = stringify!($ty)]
+	    #[doc = stringify!($uty)]
 	    #[doc = "` to the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
-	    pub fn $write(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
+	    pub fn $u_write(&mut self, value: $uty) -> EncodingResult<()> {
+		    self.$u_write_direct(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 	    
-	    fn $write_size(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
+	    fn $u_write_size(&mut self, value: $uty) -> EncodingResult<()> {
+		    self.$u_write_direct(value, self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
 	    }
 	    
-	    fn $write_variant(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
+	    fn $u_write_variant(&mut self, value: $uty) -> EncodingResult<()> {
+		    self.$u_write_direct(value, self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
 	    }
 
-        pub fn $write_internal(&mut self, value: $ty, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
+        pub fn $u_write_direct(&mut self, value: $uty, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
 	        match num_encoding {
 		        NumEncoding::Fixed => {
-			        let bytes: [u8; std::mem::size_of::<$ty>()] = match endianness {
+			        let bytes: [u8; std::mem::size_of::<$uty>()] = match endianness {
+			            Endianness::BigEndian => value.to_be_bytes(),
+			            Endianness::LittleEndian => value.to_le_bytes()
+		            };
+		            self.stream.write_all(&bytes)?;
+		        },
+		        NumEncoding::Leb128 | NumEncoding::ProtobufWasteful | NumEncoding::ProtobufZigzag => {
+			        self.$uleb128_encode(value)?;
+		        }
+	        }
+            Ok(())
+        }
+	    
+	    fn $leb128_encode(&mut self, value: $ity) -> EncodingResult<()> {
+		        let mut shifted = value;
+		        let mut byte = [0u8; 1];
+		        let mut more = true;
+		        while more {
+			        byte[0] = shifted as u8 & 0b0111_1111;
+			        shifted >>= 7;
+			        
+			        // Is the next shifted value worth writing?
+			        let neg = (byte[0] & 0b0100_0000) != 0;
+			        if (neg && shifted != -1) || (!neg && shifted != 0) {
+				        byte[0] |= 0b1000_0000;
+			        } else {
+				        more = false;
+			        }
+			        self.stream.write_all(&byte)?;
+				}
+		        Ok(())
+	        }
+	    
+	    #[doc = "Encodes a `"]
+	    #[doc = stringify!($ity)]
+	    #[doc = "` to the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
+	    pub fn $i_write(&mut self, value: $ity) -> EncodingResult<()> {
+		    self.$i_write_direct(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
+	    }
+	    
+	    fn $i_write_size(&mut self, value: $ity) -> EncodingResult<()> {
+		    self.$i_write_direct(value, self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
+	    }
+	    
+	    fn $i_write_variant(&mut self, value: $ity) -> EncodingResult<()> {
+		    self.$i_write_direct(value, self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
+	    }
+
+        pub fn $i_write_direct(&mut self, value: $ity, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
+		    match num_encoding {
+		        NumEncoding::Fixed => {
+			        let bytes: [u8; std::mem::size_of::<$ity>()] = match endianness {
 			            Endianness::BigEndian => value.to_be_bytes(),
 			            Endianness::LittleEndian => value.to_le_bytes()
 		            };
 		            self.stream.write_all(&bytes)?;
 		        },
 		        NumEncoding::Leb128 => {
-			        let mut shifted = value;
-			        let mut byte = [u8::MAX; 1];
-			        let mut more = true;
-			        while more {
-				        byte[0] = shifted as u8 & 0b01111111;
-				        shifted >>= 7;
-				        
-				        // Is the next shifted value worth writing?
-				        if shifted != 0 {
-					        byte[0] |= 0b10000000;
-				        } else {
-					        more = false;
-				        }
-				        self.stream.write_all(&byte)?;
-					}
+			        self.$leb128_encode(value)?;
+		        },
+		        NumEncoding::ProtobufWasteful => {
+			        let unsigned = <$uty>::from_ne_bytes(value.to_ne_bytes());
+			        self.$uleb128_encode(unsigned)?;
+		        }
+			    NumEncoding::ProtobufZigzag => {
+			        let shifted = (value << 1) ^ (value >> (<$ity>::BITS - 1));
+			        let unsigned = <$uty>::from_ne_bytes(shifted.to_ne_bytes());
+			        self.$uleb128_encode(unsigned)?;
 		        }
 	        }
             Ok(())
@@ -857,159 +957,146 @@ macro_rules! make_unsigned_write_fn {
     };
 }
 
-macro_rules! make_signed_write_fn {
-    ($write_internal:ident => $write_size:ident => $write_variant:ident => $write:ident => $ty:ty) => {
-	    #[doc = "Encodes a `"]
-	    #[doc = stringify!($ty)]
-	    #[doc = "` to the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
-	    pub fn $write(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
+macro_rules! make_read_fns {
+    (
+	    type $uty:ty {
+		    pub u_read: $u_read:ident,
+		    pub u_read_direct: $u_read_direct:ident,
+		    priv u_read_size: $u_read_size:ident,
+		    priv u_read_variant: $u_read_variant:ident,
+		    priv uleb128_decode: $uleb128_decode:ident
+		    $(,)?
+	    },
+	    type $ity:ty {
+		    pub i_read: $i_read:ident,
+		    pub i_read_direct: $i_read_direct:ident,
+		    priv i_read_size: $i_read_size:ident,
+		    priv i_read_variant: $i_read_variant:ident,
+		    priv leb128_decode: $leb128_decode:ident
+		    $(,)?
 	    }
+	    $(,)?
+    ) => {
+	    fn $uleb128_decode(&mut self) -> EncodingResult<$uty> {
+			    let mut result: $uty = 0;
+		        let mut byte = [0u8; 1];
+		        let mut shift: u8 = 0;
+		        loop {
+			        if shift >= <$uty>::BITS as u8 {
+				        return Err(EncodingError::VarIntError);
+			        }
+			        
+		            self.stream.read_exact(&mut byte)?;
+			        result |= (byte[0] & 0b0111_1111) as $uty << shift;
+			        shift += 7;
+			        
+			        if (byte[0] & 0b1000_0000) == 0 {
+				        break;
+			        }
+				}
+		        Ok(result)
+		    }
 	    
-	    fn $write_size(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
-	    }
-	    
-	    fn $write_variant(&mut self, value: $ty) -> EncodingResult<()> {
-		    self.$write_internal(value, self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
-	    }
-
-        pub fn $write_internal(&mut self, value: $ty, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
-	        match num_encoding {
-		        NumEncoding::Fixed => {
-			        let bytes: [u8; std::mem::size_of::<$ty>()] = match endianness {
-			            Endianness::BigEndian => value.to_be_bytes(),
-			            Endianness::LittleEndian => value.to_le_bytes()
-		            };
-		            self.stream.write_all(&bytes)?;
-		        },
-		        NumEncoding::Leb128 => {
-			        let mut shifted = value;
-			        let mut byte = [0u8; 1];
-			        let mut more = true;
-			        while more {
-				        byte[0] = shifted as u8 & 0b0111_1111;
-				        shifted >>= 7;
-				        
-				        // Is the next shifted value worth writing?
-				        let neg = (byte[0] & 0b0100_0000) != 0;
-				        if (neg && shifted != -1) || (!neg && shifted != 0) {
-					        byte[0] |= 0b1000_0000;
-				        } else {
-					        more = false;
-				        }
-				        self.stream.write_all(&byte)?;
-					}
-		        }
-	        }
-            Ok(())
-        }
-    };
-}
-
-macro_rules! make_unsigned_read_fn {
-    ($read_internal:ident => $read_size:ident => $read_variant:ident => $read:ident => $ty:ty) => {
 	    #[doc = "Decodes a `"]
-	    #[doc = stringify!($ty)]
+	    #[doc = stringify!($uty)]
 	    #[doc = "` from the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
-	    pub fn $read(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
+	    pub fn $u_read(&mut self) -> EncodingResult<$uty> {
+		    self.$u_read_direct(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 	    
-	    fn $read_size(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
+	    fn $u_read_size(&mut self) -> EncodingResult<$uty> {
+		    self.$u_read_direct(self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
 	    }
 	    
-	    fn $read_variant(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
+	    fn $u_read_variant(&mut self) -> EncodingResult<$uty> {
+		    self.$u_read_direct(self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
 	    }
 	    
-        pub fn $read_internal(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$ty> {
-	        Ok(match num_encoding {
+        pub fn $u_read_direct(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$uty> {
+		    Ok(match num_encoding {
 		        NumEncoding::Fixed => {
-			        let mut bytes: [u8; std::mem::size_of::<$ty>()] = [0u8; std::mem::size_of::<$ty>()];
+			        let mut bytes: [u8; std::mem::size_of::<$uty>()] = [0u8; std::mem::size_of::<$uty>()];
 		            self.stream.read_exact(&mut bytes)?;
 
 		            match endianness {
-			            Endianness::BigEndian => <$ty>::from_be_bytes(bytes),
-			            Endianness::LittleEndian => <$ty>::from_le_bytes(bytes)
+			            Endianness::BigEndian => <$uty>::from_be_bytes(bytes),
+			            Endianness::LittleEndian => <$uty>::from_le_bytes(bytes)
 		            }
 		        }
-		        NumEncoding::Leb128 => {
-			        let mut result: $ty = 0;
-			        let mut byte = [0u8; 1];
-			        let mut shift: u8 = 0;
-			        loop {
-				        if shift >= <$ty>::BITS as u8 {
-					        return Err(EncodingError::VarIntError);
-				        }
-				        
-			            self.stream.read_exact(&mut byte)?;
-				        result |= (byte[0] & 0b0111_1111) as $ty << shift;
-				        shift += 7;
-				        
-				        if (byte[0] & 0b1000_0000) == 0 {
-					        break;
-				        }
-					}
-			        result
+		        NumEncoding::Leb128 | NumEncoding::ProtobufWasteful | NumEncoding::ProtobufZigzag => {
+			        self.$uleb128_decode()?
 		        }
 	        })
         }
-    };
-}
-
-macro_rules! make_signed_read_fn {
-    ($read_internal:ident => $read_size:ident => $read_variant:ident => $read:ident => $ty:ty) => {
+	    
+	     fn $leb128_decode(&mut self) -> EncodingResult<$ity> {
+			    let mut result: $ity = 0;
+		        let mut byte = [0u8; 1];
+		        let mut shift: u8 = 0;
+		        loop {
+			        if shift >= <$ity>::BITS as u8 {
+				        return Err(EncodingError::VarIntError);
+			        }
+			        
+		            self.stream.read_exact(&mut byte)?;
+			        result |= (byte[0] & 0b0111_1111) as $ity << shift;
+			        shift += 7;
+			        
+			        if (byte[0] & 0b1000_0000) == 0 {
+				        break;
+			        }
+				}
+		        
+		        if shift < <$ity>::BITS as u8 && (byte[0] & 0b0100_0000) != 0 {
+			        result |= (!0 << shift);
+		        }
+		        
+		        Ok(result)
+		    }
+	    
 	    #[doc = "Decodes a `"]
-	    #[doc = stringify!($ty)]
+	    #[doc = stringify!($ity)]
 	    #[doc = "` from the underlying stream, according to the endianness and numerical encoding in the encoder's context"]
-	    pub fn $read(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
+	    pub fn $i_read(&mut self) -> EncodingResult<$ity> {
+		    self.$i_read_direct(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 	    
-	    fn $read_size(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
+	    fn $i_read_size(&mut self) -> EncodingResult<$ity> {
+		    self.$i_read_direct(self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
 	    }
 	    
-	    fn $read_variant(&mut self) -> EncodingResult<$ty> {
-		    self.$read_internal(self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
+	    fn $i_read_variant(&mut self) -> EncodingResult<$ity> {
+		    self.$i_read_direct(self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
 	    }
 	    
-        pub fn $read_internal(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$ty> {
+        pub fn $i_read_direct(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$ity> {
 	        Ok(match num_encoding {
 		        NumEncoding::Fixed => {
-			        let mut bytes: [u8; std::mem::size_of::<$ty>()] = [0u8; std::mem::size_of::<$ty>()];
+			        let mut bytes: [u8; std::mem::size_of::<$ity>()] = [0u8; std::mem::size_of::<$ity>()];
 		            self.stream.read_exact(&mut bytes)?;
 
 		            match endianness {
-			            Endianness::BigEndian => <$ty>::from_be_bytes(bytes),
-			            Endianness::LittleEndian => <$ty>::from_le_bytes(bytes)
+			            Endianness::BigEndian => <$ity>::from_be_bytes(bytes),
+			            Endianness::LittleEndian => <$ity>::from_le_bytes(bytes)
 		            }
 		        }
 		        NumEncoding::Leb128 => {
-			        let mut result: $ty = 0;
-			        let mut byte = [0u8; 1];
-			        let mut shift: u8 = 0;
-			        loop {
-				        if shift >= <$ty>::BITS as u8 {
-					        return Err(EncodingError::VarIntError);
-				        }
-				        
-			            self.stream.read_exact(&mut byte)?;
-				        result |= (byte[0] & 0b0111_1111) as $ty << shift;
-				        shift += 7;
-				        
-				        if (byte[0] & 0b1000_0000) == 0 {
-					        break;
-				        }
-					}
+			        self.$leb128_decode()?
+		        }
+		        NumEncoding::ProtobufWasteful => {
+			        let unsigned = self.$uleb128_decode()?;
+			        <$ity>::from_ne_bytes(unsigned.to_ne_bytes())
+		        }
+		        NumEncoding::ProtobufZigzag => {
+			        let unsigned = self.$uleb128_decode()?;
+			        let neg = (unsigned & 1) != 0;
+			        let transformed = if neg {
+				        !(unsigned >> 1)
+			        } else {
+				        unsigned >> 1
+			        };
 			        
-			        if shift < <$ty>::BITS as u8 && (byte[0] & 0b0100_0000) != 0 {
-				        result |= (!0 << shift);
-			        }
-			        
-			        result
+			        <$ity>::from_ne_bytes(transformed.to_ne_bytes())
 		        }
 	        })
         }
@@ -1017,16 +1104,86 @@ macro_rules! make_signed_read_fn {
 }
 
 impl<T: Write> Encoder<'_, T> {
-	make_unsigned_write_fn!(write_u8_direct => _write_u8_size => _write_u8_variant => write_u8 => u8);
-	make_unsigned_write_fn!(write_u16_direct => _write_u16_size => _write_u16_variant => write_u16 => u16);
-	make_unsigned_write_fn!(write_u32_direct => _write_u32_size => _write_u32_variant => write_u32 => u32);
-	make_unsigned_write_fn!(write_u64_direct => _write_u64_size => _write_u64_variant => write_u64 => u64);
-	make_unsigned_write_fn!(write_u128_direct => _write_u128_size => _write_u128_variant => write_u128 => u128);
-	make_signed_write_fn!(write_i8_direct => _write_i8_size => _write_i8_variant => write_i8 => i8);
-	make_signed_write_fn!(write_i16_direct => _write_i16_size => _write_i16_variant => write_i16 => i16);
-	make_signed_write_fn!(write_i32_direct => _write_i32_size => _write_i32_variant => write_i32 => i32);
-	make_signed_write_fn!(write_i64_direct => _write_i64_size => _write_i64_variant => write_i64 => i64);
-	make_signed_write_fn!(write_i128_direct => _write_i128_size => _write_i128_variant => write_i128 => i128);
+	make_write_fns!{
+		type u8 {
+			pub u_write: write_u8,
+			pub u_write_direct: write_u8_direct,
+			priv u_write_size: _write_u8_size,
+			priv u_write_variant: _write_u8_variant,
+			priv uleb128_encode: uleb128_encode_u8,
+		},
+		type i8 {
+			pub i_write: write_i8,
+			pub i_write_direct: write_i8_direct,
+			priv i_write_size: _write_i8_size,
+			priv i_write_variant: _write_i8_variant,
+			priv leb128_encode: leb128_encode_i8,
+		},
+	}
+	make_write_fns!{
+		type u16 {
+			pub u_write: write_u16,
+			pub u_write_direct: write_u16_direct,
+			priv u_write_size: _write_u16_size,
+			priv u_write_variant: _write_u16_variant,
+			priv uleb128_encode: uleb128_encode_u16,
+		},
+		type i16 {
+			pub i_write: write_i16,
+			pub i_write_direct: write_i16_direct,
+			priv i_write_size: _write_i16_size,
+			priv i_write_variant: _write_i16_variant,
+			priv leb128_encode: leb128_encode_i16,
+		},
+	}
+	make_write_fns!{
+		type u32 {
+			pub u_write: write_u32,
+			pub u_write_direct: write_u32_direct,
+			priv u_write_size: _write_u32_size,
+			priv u_write_variant: _write_u32_variant,
+			priv uleb128_encode: uleb128_encode_u32,
+		},
+		type i32 {
+			pub i_write: write_i32,
+			pub i_write_direct: write_i32_direct,
+			priv i_write_size: _write_i32_size,
+			priv i_write_variant: _write_i32_variant,
+			priv leb128_encode: leb128_encode_i32,
+		},
+	}
+	make_write_fns!{
+		type u64 {
+			pub u_write: write_u64,
+			pub u_write_direct: write_u64_direct,
+			priv u_write_size: _write_u64_size,
+			priv u_write_variant: _write_u64_variant,
+			priv uleb128_encode: uleb128_encode_u64,
+		},
+		type i64 {
+			pub i_write: write_i64,
+			pub i_write_direct: write_i64_direct,
+			priv i_write_size: _write_i64_size,
+			priv i_write_variant: _write_i64_variant,
+			priv leb128_encode: leb128_encode_i64,
+		},
+	}
+	make_write_fns!{
+		type u128 {
+			pub u_write: write_u128,
+			pub u_write_direct: write_u128_direct,
+			priv u_write_size: _write_u128_size,
+			priv u_write_variant: _write_u128_variant,
+			priv uleb128_encode: uleb128_encode_u128,
+		},
+		type i128 {
+			pub i_write: write_i128,
+			pub i_write_direct: write_i128_direct,
+			priv i_write_size: _write_i128_size,
+			priv i_write_variant: _write_i128_variant,
+			priv leb128_encode: leb128_encode_i128,
+		},
+	}
 
 	/// Encodes a length. If the flatten attribute is set to Some, this function checks
 	/// if the value matches but then returns immediately without writing,
@@ -1246,16 +1403,86 @@ impl<T: Write> Encoder<'_, T> {
 }
 
 impl<T: Read> Encoder<'_, T> {
-	make_unsigned_read_fn!(read_u8_direct => _read_u8_size => _read_u8_variant => read_u8 => u8);
-	make_unsigned_read_fn!(read_u16_direct => _read_u16_size => _read_u16_variant => read_u16 => u16);
-	make_unsigned_read_fn!(read_u32_direct => _read_u32_size => _read_u32_variant => read_u32 => u32);
-	make_unsigned_read_fn!(read_u64_direct => _read_u64_size => _read_u64_variant => read_u64 => u64);
-	make_unsigned_read_fn!(read_u128_direct => _read_u128_size => _read_u128_variant => read_u128 => u128);
-	make_signed_read_fn!(read_i8_direct => _read_i8_size => _read_i8_variant => read_i8 => i8);
-	make_signed_read_fn!(read_i16_direct => _read_i16_size => _read_i16_variant => read_i16 => i16);
-	make_signed_read_fn!(read_i32_direct => _read_i32_size => _read_i32_variant => read_i32 => i32);
-	make_signed_read_fn!(read_i64_direct => _read_i64_size => _read_i64_variant => read_i64 => i64);
-	make_signed_read_fn!(read_i128_direct => _read_i128_size => _read_i128_variant => read_i128 => i128);
+	make_read_fns!{
+		type u8 {
+			pub u_read: read_u8,
+			pub u_read_direct: read_u8_direct,
+			priv u_read_size: _read_u8_size,
+			priv u_read_variant: _read_u8_variant,
+			priv uleb128_decode: uleb128_decode_u8,
+		},
+		type i8 {
+			pub i_read: read_i8,
+			pub i_read_direct: read_i8_direct,
+			priv i_read_size: _read_i8_size,
+			priv i_read_variant: _read_i8_variant,
+			priv leb128_decode: leb128_decode_i8,
+		},
+	}
+	make_read_fns!{
+		type u16 {
+			pub u_read: read_u16,
+			pub u_read_direct: read_u16_direct,
+			priv u_read_size: _read_u16_size,
+			priv u_read_variant: _read_u16_variant,
+			priv uleb128_decode: uleb128_decode_u16,
+		},
+		type i16 {
+			pub i_read: read_i16,
+			pub i_read_direct: read_i16_direct,
+			priv i_read_size: _read_i16_size,
+			priv i_read_variant: _read_i16_variant,
+			priv leb128_decode: leb128_decode_i16,
+		},
+	}
+	make_read_fns!{
+		type u32 {
+			pub u_read: read_u32,
+			pub u_read_direct: read_u32_direct,
+			priv u_read_size: _read_u32_size,
+			priv u_read_variant: _read_u32_variant,
+			priv uleb128_decode: uleb128_decode_u32,
+		},
+		type i32 {
+			pub i_read: read_i32,
+			pub i_read_direct: read_i32_direct,
+			priv i_read_size: _read_i32_size,
+			priv i_read_variant: _read_i32_variant,
+			priv leb128_decode: leb128_decode_i32,
+		},
+	}
+	make_read_fns!{
+		type u64 {
+			pub u_read: read_u64,
+			pub u_read_direct: read_u64_direct,
+			priv u_read_size: _read_u64_size,
+			priv u_read_variant: _read_u64_variant,
+			priv uleb128_decode: uleb128_decode_u64,
+		},
+		type i64 {
+			pub i_read: read_i64,
+			pub i_read_direct: read_i64_direct,
+			priv i_read_size: _read_i64_size,
+			priv i_read_variant: _read_i64_variant,
+			priv leb128_decode: leb128_decode_i64,
+		},
+	}
+	make_read_fns!{
+		type u128 {
+			pub u_read: read_u128,
+			pub u_read_direct: read_u128_direct,
+			priv u_read_size: _read_u128_size,
+			priv u_read_variant: _read_u128_variant,
+			priv uleb128_decode: uleb128_decode_u128,
+		},
+		type i128 {
+			pub i_read: read_i128,
+			pub i_read_direct: read_i128_direct,
+			priv i_read_size: _read_i128_size,
+			priv i_read_variant: _read_i128_variant,
+			priv leb128_decode: leb128_decode_i128,
+		},
+	}
 
 	/// Decodes a length. If the flatten attribute is set to Some, this function
 	/// will return its value without reading, otherwise it will behave identically to [`Self::read_usize`].

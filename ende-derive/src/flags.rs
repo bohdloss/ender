@@ -142,6 +142,26 @@ impl ModifierGroup {
 
 				self.num_encoding = Some(NumEncoding::Leb128);
 			}
+			Modifier::ProtobufWasteful { kw, .. } => {
+				if self.target.string() {
+					return Err(Error::new(kw.span(), NOT_STRING))
+				}
+				if self.num_encoding.is_some() {
+					return Err(Error::new(kw.span(), REPEATED_NUM_ENCODING))
+				}
+
+				self.num_encoding = Some(NumEncoding::ProtobufWasteful);
+			}
+			Modifier::ProtobufZZ { kw, .. } => {
+				if self.target.string() {
+					return Err(Error::new(kw.span(), NOT_STRING))
+				}
+				if self.num_encoding.is_some() {
+					return Err(Error::new(kw.span(), REPEATED_NUM_ENCODING))
+				}
+
+				self.num_encoding = Some(NumEncoding::ProtobufZigzag);
+			}
 			Modifier::BigEndian { kw, .. } => {
 				if self.endianness.is_some() {
 					return Err(Error::new(kw.span(), REPEATED_ENDIANNESS))

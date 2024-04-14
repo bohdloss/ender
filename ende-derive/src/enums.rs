@@ -14,7 +14,9 @@ pub enum Endianness {
 #[derive(Copy, Clone, Eq, PartialEq, Display)]
 pub enum NumEncoding {
 	Fixed,
-	Leb128
+	Leb128,
+	ProtobufWasteful,
+	ProtobufZigzag,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Display)]

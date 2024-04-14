@@ -61,6 +61,8 @@ pub mod kw {
 	// Numerical encodings
 	custom_keyword!(fixed);
 	custom_keyword!(leb128);
+	custom_keyword!(protobuf_wasteful);
+	custom_keyword!(protobuf_zz);
 	// Endianness
 	custom_keyword!(big_endian);
 	custom_keyword!(little_endian);
@@ -284,6 +286,12 @@ pub enum Modifier {
 	},
 	Leb128 {
 		kw: kw::leb128,
+	},
+	ProtobufWasteful {
+		kw: kw::protobuf_wasteful,
+	},
+	ProtobufZZ {
+		kw: kw::protobuf_zz,
 	},
 	BigEndian {
 		kw: kw::big_endian,
@@ -691,6 +699,14 @@ impl Parse for Modifier {
 			})
 		} else if input.peek(kw::leb128) {
 			Ok(Self::Leb128 {
+				kw: input.parse()?,
+			})
+		} else if input.peek(kw::protobuf_wasteful) {
+			Ok(Self::ProtobufWasteful {
+				kw: input.parse()?,
+			})
+		} else if input.peek(kw::protobuf_zz) {
+			Ok(Self::ProtobufZZ {
 				kw: input.parse()?,
 			})
 		} else if input.peek(kw::big_endian) {
