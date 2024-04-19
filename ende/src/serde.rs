@@ -1,25 +1,51 @@
-use std::fmt::Display;
-use std::io::{Read, Write};
+use core::fmt::Display;
+use embedded_io::{Error};
+use crate::{Read, Write};
 use serde::{de, Deserializer, ser, Serialize, Serializer};
 use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple, SerializeTupleStruct, SerializeTupleVariant};
 use serde::de::{DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor};
-use crate::{Encoder, Decode, Encode, EncodingError};
+use crate::{Encoder, Encode, EncodingError};
 
-impl ser::Error for EncodingError {
-	fn custom<T>(msg: T) -> Self where T: Display {
-		Self::SerdeError(msg.to_string())
+fn serde_error<E: Error>(_msg: &'static str) -> EncodingError<E> {
+	#[cfg(feature = "alloc")]
+	{
+		EncodingError::SerdeError(<&str as alloc::string::ToString>::to_string(&_msg))
+	}
+	#[cfg(not(feature = "alloc"))]
+	{
+		EncodingError::SerdeError
 	}
 }
 
-impl de::Error for EncodingError {
-	fn custom<T>(msg: T) -> Self where T: Display {
-		Self::SerdeError(msg.to_string())
+impl<T: Error> ser::Error for EncodingError<T> {
+	fn custom<Msg>(_msg: Msg) -> Self where Msg: Display {
+		#[cfg(feature = "alloc")]
+		{
+			Self::SerdeError(<Msg as alloc::string::ToString>::to_string(&_msg))
+		}
+		#[cfg(not(feature = "alloc"))]
+		{
+			Self::SerdeError
+		}
+	}
+}
+
+impl<T: Error> de::Error for EncodingError<T> {
+	fn custom<Msg>(_msg: Msg) -> Self where Msg: Display {
+		#[cfg(feature = "alloc")]
+		{
+			Self::SerdeError(<Msg as alloc::string::ToString>::to_string(&_msg))
+		}
+		#[cfg(not(feature = "alloc"))]
+		{
+			Self::SerdeError
+		}
 	}
 }
 
 impl<T: Write> Serializer for &mut Encoder<'_, T> {
 	type Ok = ();
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 	type SerializeSeq = Self;
 	type SerializeTuple = Self;
 	type SerializeTupleStruct = Self;
@@ -88,6 +114,11 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
 		v.encode(self)
 	}
 
+	#[cfg(not(feature = "alloc"))]
+	fn collect_str<G: ?Sized>(self, _value: &G) -> Result<Self::Ok, Self::Error> where G: Display {
+		Err(serde_error("Types implementing Display cannot be serialized without the alloc feature"))
+	}
+
 	fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
 		self.write_raw_bytes(v)
 	}
@@ -128,7 +159,7 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
 	}
 
 	fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-		let len = len.ok_or(EncodingError::SerdeError("Length must be known upfront".to_string()))?;
+		let len = len.ok_or(serde_error("Length must be known upfront"))?;
 		self.write_length(len)?;
 		Ok(self)
 	}
@@ -147,7 +178,7 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
 	}
 
 	fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-		let len = len.ok_or(EncodingError::SerdeError("Length must be known upfront".to_string()))?;
+		let len = len.ok_or(serde_error("Length must be known upfront"))?;
 		self.write_length(len)?;
 		Ok(self)
 	}
@@ -168,7 +199,7 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
 
 impl<T: Write> SerializeSeq for &mut Encoder<'_, T> {
 	type Ok = ();
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn serialize_element<G: ?Sized>(&mut self, value: &G) -> Result<(), Self::Error> where G: Serialize {
 		value.serialize(&mut **self)
@@ -181,7 +212,7 @@ impl<T: Write> SerializeSeq for &mut Encoder<'_, T> {
 
 impl<T: Write> SerializeTuple for &mut Encoder<'_, T> {
 	type Ok = ();
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn serialize_element<G: ?Sized>(&mut self, value: &G) -> Result<(), Self::Error> where G: Serialize {
 		value.serialize(&mut **self)
@@ -194,7 +225,7 @@ impl<T: Write> SerializeTuple for &mut Encoder<'_, T> {
 
 impl<T: Write> SerializeTupleStruct for &mut Encoder<'_, T> {
 	type Ok = ();
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn serialize_field<G: ?Sized>(&mut self, value: &G) -> Result<(), Self::Error> where G: Serialize {
 		value.serialize(&mut **self)
@@ -207,7 +238,7 @@ impl<T: Write> SerializeTupleStruct for &mut Encoder<'_, T> {
 
 impl<T: Write> SerializeTupleVariant for &mut Encoder<'_, T> {
 	type Ok = ();
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn serialize_field<G: ?Sized>(&mut self, value: &G) -> Result<(), Self::Error> where G: Serialize {
 		value.serialize(&mut **self)
@@ -220,7 +251,7 @@ impl<T: Write> SerializeTupleVariant for &mut Encoder<'_, T> {
 
 impl<T: Write> SerializeMap for &mut Encoder<'_, T> {
 	type Ok = ();
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn serialize_key<G: ?Sized>(&mut self, key: &G) -> Result<(), Self::Error> where G: Serialize {
 		key.serialize(&mut **self)
@@ -237,7 +268,7 @@ impl<T: Write> SerializeMap for &mut Encoder<'_, T> {
 
 impl<T: Write> SerializeStruct for &mut Encoder<'_, T> {
 	type Ok = ();
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn serialize_field<G: ?Sized>(&mut self, _key: &'static str, value: &G) -> Result<(), Self::Error> where G: Serialize {
 		value.serialize(&mut **self)
@@ -250,7 +281,7 @@ impl<T: Write> SerializeStruct for &mut Encoder<'_, T> {
 
 impl<T: Write> SerializeStructVariant for &mut Encoder<'_, T> {
 	type Ok = ();
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn serialize_field<G: ?Sized>(&mut self, _key: &'static str, value: &G) -> Result<(), Self::Error> where G: Serialize {
 		value.serialize(&mut **self)
@@ -262,10 +293,10 @@ impl<T: Write> SerializeStructVariant for &mut Encoder<'_, T> {
 }
 
 impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		Err(EncodingError::SerdeError("deserialize_any: This data format is non-describing".to_string()))
+		Err(serde_error("deserialize_any: This data format is non-describing"))
 	}
 
 	fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
@@ -324,20 +355,52 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
 		visitor.visit_char(self.read_char()?)
 	}
 
-	fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		visitor.visit_str(&String::decode(self)?)
+	fn deserialize_str<V>(self, _visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+		#[cfg(feature = "alloc")]
+		{
+			use crate::Decode;
+			_visitor.visit_str(&alloc::string::String::decode(self)?)
+		}
+		#[cfg(not(feature = "alloc"))]
+		{
+			Err(serde_error("Zero-copy str decoding without alloc is not supported yet"))
+		}
 	}
 
-	fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		visitor.visit_string(String::decode(self)?)
+	fn deserialize_string<V>(self, _visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+		#[cfg(feature = "alloc")]
+		{
+			use crate::Decode;
+			_visitor.visit_string(alloc::string::String::decode(self)?)
+		}
+		#[cfg(not(feature = "alloc"))]
+		{
+			Err(serde_error("Zero-copy str decoding without alloc is not supported yet"))
+		}
 	}
 
-	fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		visitor.visit_bytes(Vec::decode(self)?.as_slice())
+	fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+		#[cfg(feature = "alloc")]
+		{
+			use crate::Decode;
+			_visitor.visit_bytes(&alloc::vec::Vec::decode(self)?)
+		}
+		#[cfg(not(feature = "alloc"))]
+		{
+			Err(serde_error("Zero-copy [u8] decoding without alloc is not supported yet"))
+		}
 	}
 
-	fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		visitor.visit_byte_buf(Vec::decode(self)?)
+	fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+		#[cfg(feature = "alloc")]
+		{
+			use crate::Decode;
+			_visitor.visit_byte_buf(alloc::vec::Vec::decode(self)?)
+		}
+		#[cfg(not(feature = "alloc"))]
+		{
+			Err(serde_error("Zero-copy [u8] decoding without alloc is not supported yet"))
+		}
 	}
 
 	fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
@@ -362,29 +425,39 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
 
 	fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
 		let len = self.read_length()?;
-		self.ctxt.push_len(len);
-		visitor.visit_seq(self)
+		visitor.visit_seq(SeqAccessEncoder {
+			encoder: self,
+			length: len,
+		})
 	}
 
 	fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		self.ctxt.push_len(len);
-		visitor.visit_seq(self)
+		visitor.visit_seq(SeqAccessEncoder {
+			encoder: self,
+			length: len,
+		})
 	}
 
 	fn deserialize_tuple_struct<V>(self, _name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		self.ctxt.push_len(len);
-		visitor.visit_seq(self)
+		visitor.visit_seq(SeqAccessEncoder {
+			encoder: self,
+			length: len,
+		})
 	}
 
 	fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
 		let len = self.read_length()?;
-		self.ctxt.push_len(len);
-		visitor.visit_map(self)
+		visitor.visit_map(MapAccessEncoder {
+			encoder: self,
+			length: len,
+		})
 	}
 
 	fn deserialize_struct<V>(self, _name: &'static str, fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		self.ctxt.push_len(fields.len());
-		visitor.visit_seq(self)
+		visitor.visit_seq(SeqAccessEncoder {
+			encoder: self,
+			length: fields.len(),
+		})
 	}
 
 	fn deserialize_enum<V>(self, _name: &'static str, _variants: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
@@ -396,7 +469,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
 	}
 
 	fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-		Err(EncodingError::SerdeError("deserialize_ignored_any: This data format is non-describing".to_string()))
+		Err(serde_error("deserialize_ignored_any: This data format is non-describing"))
 	}
 
 	fn is_human_readable(&self) -> bool {
@@ -404,44 +477,56 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
 	}
 }
 
-impl<'de, T: Read> SeqAccess<'de> for Encoder<'de, T> {
-	type Error = EncodingError;
+struct SeqAccessEncoder<'a, 'de, T: Read> {
+	encoder: &'a mut Encoder<'de, T>,
+	length: usize,
+}
+
+impl<'de, T: Read> SeqAccess<'de> for SeqAccessEncoder<'_, 'de, T> {
+	type Error = EncodingError<T::Error>;
 
 	fn next_element_seed<G>(&mut self, seed: G) -> Result<Option<G::Value>, Self::Error> where G: DeserializeSeed<'de> {
-		if self.ctxt.consume_len() != 0 {
-			seed.deserialize(self).map(Some)
+		if self.length != 0 {
+			self.length -= 1;
+			seed.deserialize(&mut *self.encoder).map(Some)
 		} else {
 			Ok(None)
 		}
 	}
 
 	fn size_hint(&self) -> Option<usize> {
-		self.ctxt.get_len()
+		Some(self.length)
 	}
 }
 
-impl<'de, T: Read> MapAccess<'de> for Encoder<'de, T> {
-	type Error = EncodingError;
+struct MapAccessEncoder<'a, 'de, T: Read> {
+	encoder: &'a mut Encoder<'de, T>,
+	length: usize,
+}
+
+impl<'de, T: Read> MapAccess<'de> for MapAccessEncoder<'_, 'de, T> {
+	type Error = EncodingError<T::Error>;
 
 	fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error> where K: DeserializeSeed<'de> {
-		if self.ctxt.consume_len() != 0 {
-			seed.deserialize(self).map(Some)
+		if self.length != 0 {
+			self.length -= 1;
+			seed.deserialize(&mut *self.encoder).map(Some)
 		} else {
 			Ok(None)
 		}
 	}
 
 	fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error> where V: DeserializeSeed<'de> {
-		seed.deserialize(self)
+		seed.deserialize(&mut *self.encoder)
 	}
 
 	fn size_hint(&self) -> Option<usize> {
-		self.ctxt.get_len()
+		Some(self.length)
 	}
 }
 
 impl<'de, T: Read> EnumAccess<'de> for &mut Encoder<'de, T> {
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 	type Variant = Self;
 
 	fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error> where V: DeserializeSeed<'de> {
@@ -451,7 +536,7 @@ impl<'de, T: Read> EnumAccess<'de> for &mut Encoder<'de, T> {
 }
 
 impl<'de, T: Read> VariantAccess<'de> for &mut Encoder<'de, T> {
-	type Error = EncodingError;
+	type Error = EncodingError<T::Error>;
 
 	fn unit_variant(self) -> Result<(), Self::Error> {
 		Ok(())

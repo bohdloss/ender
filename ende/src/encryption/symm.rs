@@ -1,10 +1,10 @@
-use std::borrow::Cow;
-use std::io::{Read, Write};
-use std::str::FromStr;
-use parse_display::Display;
+use core::str::FromStr;
+
 use openssl::symm::Cipher;
-use zeroize::Zeroize;
-use crate::{Decode, Encode, Encoder, EncodingError, EncodingResult, Finish};
+use parse_display::Display;
+
+use crate::{Read, Write};
+use crate::{Encoder, EncodingResult};
 use crate::encryption::{Decrypt, Encrypt};
 
 /// Function for convenience.<br>
@@ -17,13 +17,13 @@ pub fn encode_with_encryption<T, F>(
 	key: Option<&[u8]>,
 	iv: Option<&[u8]>,
 	f: F
-) -> EncodingResult<()>
+) -> EncodingResult<(), T::Error>
 	where T: Write,
-	      F: FnOnce(&mut Encoder<Encrypt<&mut T>>) -> EncodingResult<()>
+	      F: FnOnce(&mut Encoder<Encrypt<&mut T>>) -> EncodingResult<(), T::Error>
 {
 	let mut encoder = encoder.add_encryption(encryption, key, iv)?;
 	let v = f(&mut encoder);
-	encoder.finish()?.0.finish()?;
+	encoder.finish().0.finish()?;
 	v
 }
 
@@ -37,26 +37,26 @@ pub fn decode_with_encryption<T, F, V>(
 	key: Option<&[u8]>,
 	iv: Option<&[u8]>,
 	f: F
-) -> EncodingResult<V>
+) -> EncodingResult<V, T::Error>
 	where T: Read,
-	      F: FnOnce(&mut Encoder<Decrypt<&mut T>>) -> EncodingResult<V>,
+	      F: FnOnce(&mut Encoder<Decrypt<&mut T>>) -> EncodingResult<V, T::Error>,
 	      V: crate::Decode
 {
 	let mut decoder = decoder.add_decryption(encryption, key, iv)?;
 	let v = f(&mut decoder);
-	decoder.finish()?.0.finish()?;
+	decoder.finish().0.finish()?;
 	v
 }
 
 /// The state of symmetric encryption/decryption.
-/// Contains they key, only accessible through [`SymmState::get_key`],
-/// the iv, only accessible through [`SymmState::get_iv`],
+/// Contains a reference to they key, only accessible through [`SymmState::get_key`],
+/// and to the iv, only accessible through [`SymmState::get_iv`],
 /// and the encryption mode
-#[derive(Clone, Eq, PartialEq, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Display)]
 #[display("encryption: {encryption}")]
 pub struct SymmState<'a> {
-	key: Cow<'a, [u8]>,
-	iv: Cow<'a, [u8]>,
+	key: &'a [u8],
+	iv: &'a [u8],
 	pub encryption: SymmEncryption
 }
 
@@ -65,51 +65,33 @@ impl<'a> SymmState<'a> {
 	/// the encryption algorithm set to None
 	pub const fn new() -> Self {
 		Self {
-			key: Cow::Borrowed(&[]),
-			iv: Cow::Borrowed(&[]),
+			key: &[],
+			iv: &[],
 			encryption: SymmEncryption::None
 		}
 	}
 
 	/// Constructs a new symmetric encryption state, storing the given key and iv, with
 	/// the encryption algorithm set to None
-	pub fn with_key_and_iv<T: AsRef<[u8]>, U: AsRef<[u8]>>(key: &'a T, iv: &'a U) -> Self {
+	pub fn from_key_and_iv<T: AsRef<[u8]>, U: AsRef<[u8]>>(key: &'a T, iv: &'a U) -> Self {
 		Self {
-			key: Cow::Borrowed(key.as_ref()),
-			iv: Cow::Borrowed(iv.as_ref()),
+			key: key.as_ref(),
+			iv: iv.as_ref(),
 			encryption: SymmEncryption::None,
-		}
-	}
-	
-	/// Similar to clone, but hints that the key and iv being stored should not be cloned to
-	/// a new memory location, but simply borrowed
-	pub fn borrow_clone(&self) -> SymmState {
-		SymmState {
-			iv: Cow::Borrowed(&self.iv),
-			key: Cow::Borrowed(&self.key),
-			encryption: self.encryption
 		}
 	}
 
 	/// Stores the given key, discarding the previous one.
 	/// If the key length is 0, the old key is still discarded but no value is stored
-	pub fn store_key<T: AsRef<[u8]>>(&mut self, bytes: &T) {
-		self.reset_key();
-		if bytes.as_ref().len() == 0 { return; }
-		let key = self.key.to_mut();
-		key.reserve(bytes.as_ref().len());
-		key.extend(bytes.as_ref());
+	pub fn store_key<'b: 'a, T: AsRef<[u8]>>(&mut self, bytes: &'b T) {
+		self.key = bytes.as_ref();
 	}
-
+	
 	/// Discards the previously stored key, if any.
 	pub fn reset_key(&mut self) {
-		if let Cow::Owned(ref mut key) = self.key {
-			key.zeroize();
-		} else {
-			self.key = Cow::Borrowed(&[]);
-		}
+		self.key = &[];
 	}
-
+	
 	/// Returns the stored key, or None if no key is stored
 	pub fn get_key(&self) -> Option<&[u8]> {
 		(self.key.len() > 0).then_some(&self.key)
@@ -117,43 +99,30 @@ impl<'a> SymmState<'a> {
 
 	/// Stores the given iv, discarding the previous one.
 	/// If the iv length is 0, the old iv is still discarded but no value is stored
-	pub fn store_iv<T: AsRef<[u8]>>(&mut self, bytes: &T) {
-		self.reset_iv();
-		if bytes.as_ref().len() == 0 { return; }
-		let iv = self.iv.to_mut();
-		iv.reserve(bytes.as_ref().len());
-		iv.extend(bytes.as_ref());
+	pub fn store_iv<'b: 'a, T: AsRef<[u8]>>(&mut self, bytes: &'b T) {
+		self.iv = bytes.as_ref();
 	}
-
+	
 	/// Discards the previously stored iv, if any.
 	pub fn reset_iv(&mut self) {
-		if let Cow::Owned(ref mut iv) = self.iv {
-			iv.zeroize();
-		} else {
-			self.iv = Cow::Borrowed(&[]);
-		}
+		self.iv = &[];
 	}
-
+	
 	/// Returns the stored iv, or None if no iv is stored
 	pub fn get_iv(&self) -> Option<&[u8]> {
 		(self.iv.len() > 0).then_some(&self.iv)
 	}
 }
 
-impl Drop for SymmState<'_> {
-	fn drop(&mut self) {
-		self.reset_key();
-		self.reset_iv();
-	}
-}
-
 /// Encryption algorithm, or None to indicate absence of encryption.
 /// Can be used to wrap a type implementing Write/Read in order to provide Encryption/Decryption
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
 pub enum SymmEncryption {
 	#[display("no encryption")]
 	None,
 	#[display("{0}-bit AES/{1}")]
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	Aes(AesBits, AesMode)
 }
 
@@ -175,8 +144,8 @@ impl FromStr for SymmEncryption {
 		if bit_token != "bit" {
 			return Err(USAGE);
 		}
-
 		Ok(match cipher {
+			#[cfg(feature = "std")]
 			"AES" => {
 				let bits = match key_size {
 					"128" => AesBits::N128,
@@ -212,33 +181,6 @@ impl FromStr for SymmEncryption {
 			},
 			
 			_ => return Err(r#"Allowed ciphers are: AES, RSA, revRSA"#)
-		})
-	}
-}
-
-impl Encode for SymmEncryption {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			Self::None => encoder.write_u8(0)?,
-			Self::Aes(m0, m1) => {
-				encoder.write_u8(1)?;
-				m0.encode(encoder)?;
-				m1.encode(encoder)?;
-			},
-		}
-		Ok(())
-	}
-}
-
-impl Decode for SymmEncryption {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Self::None,
-			1 => Self::Aes(
-				Decode::decode(decoder)?,
-				Decode::decode(decoder)?,
-			),
-			_ => return Err(EncodingError::InvalidVariant),
 		})
 	}
 }
@@ -330,7 +272,7 @@ impl SymmEncryption {
 }
 
 /// The number of bits of an AES key
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
 pub enum AesBits {
 	#[display("128")]
 	N128,
@@ -338,27 +280,6 @@ pub enum AesBits {
 	N192,
 	#[display("256")]
 	N256
-}
-
-impl Encode for AesBits {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			Self::N128 => encoder.write_u8(0),
-			Self::N192 => encoder.write_u8(1),
-			Self::N256 => encoder.write_u8(2),
-		}
-	}
-}
-
-impl Decode for AesBits {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Self::N128,
-			1 => Self::N192,
-			2 => Self::N256,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
 }
 
 impl AesBits {
@@ -373,7 +294,7 @@ impl AesBits {
 }
 
 /// Number of feedback bits used in CFB mode
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
 pub enum CfbFeedback {
 	#[display("1")]
 	N1,
@@ -381,27 +302,6 @@ pub enum CfbFeedback {
 	N8,
 	#[display("128")]
 	N128
-}
-
-impl Encode for CfbFeedback {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			Self::N1 => encoder.write_u8(0),
-			Self::N8 => encoder.write_u8(1),
-			Self::N128 => encoder.write_u8(2),
-		}
-	}
-}
-
-impl Decode for CfbFeedback {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Self::N1,
-			1 => Self::N8,
-			2 => Self::N128,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
 }
 
 impl CfbFeedback {
@@ -416,7 +316,7 @@ impl CfbFeedback {
 }
 
 /// AES operation mode
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display, ende_derive::Encode, ende_derive::Decode)]
 pub enum AesMode {
 	#[display("ECB")]
 	Ecb,
@@ -428,37 +328,6 @@ pub enum AesMode {
 	Ofb,
 	#[display("CTR")]
 	Ctr
-}
-
-impl Encode for AesMode {
-	fn encode<T: Write>(&self, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-		match self {
-			Self::Ecb => encoder.write_u8(0)?,
-			Self::Cbc => encoder.write_u8(1)?,
-			Self::Cfb(m0) =>  {
-				encoder.write_u8(2)?;
-				m0.encode(encoder)?;
-			},
-			Self::Ofb => encoder.write_u8(3)?,
-			Self::Ctr => encoder.write_u8(4)?,
-		}
-		Ok(())
-	}
-}
-
-impl Decode for AesMode {
-	fn decode<T: Read>(decoder: &mut Encoder<T>) -> EncodingResult<Self> {
-		Ok(match decoder.read_u8()? {
-			0 => Self::Ecb,
-			1 => Self::Cbc,
-			2 => Self::Cfb(
-				Decode::decode(decoder)?	
-			),
-			3 => Self::Ofb,
-			4 => Self::Ctr,
-			_ => return Err(EncodingError::InvalidVariant),
-		})
-	}
 }
 
 impl AesMode {

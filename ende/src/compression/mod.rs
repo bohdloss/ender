@@ -1,13 +1,13 @@
-mod stream;
+use core::str::FromStr;
 
-use std::io;
-use std::io::{Read, Write};
-use std::str::FromStr;
+use embedded_io::{Error, ErrorKind, ReadExactError};
 use parse_display::{Display, FromStr};
-use thiserror::Error;
-use crate::{Encoder, EncodingResult, Finish};
 
 pub use stream::*;
+
+use crate::{Encoder, EncodingResult, Read, Write};
+
+mod stream;
 
 /// Function for convenience.<br>
 /// It calls [`Encoder::add_compression`] on the encoder with the given compression parameter,
@@ -16,13 +16,13 @@ pub fn encode_with_compression<T, F>(
 	encoder: &mut Encoder<T>,
 	compression: Option<Compression>,
 	f: F
-) -> EncodingResult<()>
+) -> EncodingResult<(), T::Error>
 	where T: Write,
-	      F: FnOnce(&mut Encoder<Compress<&mut T>>) -> EncodingResult<()>
+	      F: FnOnce(&mut Encoder<Compress<&mut T>>) -> EncodingResult<(), T::Error>
 {
 	let mut encoder = encoder.add_compression(compression)?;
 	let v = f(&mut encoder);
-	encoder.finish()?.0.finish()?;
+	encoder.finish().0.finish()?;
 	v
 }
 
@@ -33,21 +33,21 @@ pub fn decode_with_compression<T, F, V>(
 	decoder: &mut Encoder<T>,
 	compression: Option<Compression>,
 	f: F
-) -> EncodingResult<V>
+) -> EncodingResult<V, T::Error>
 	where T: Read,
-	      F: FnOnce(&mut Encoder<Decompress<&mut T>>) -> EncodingResult<V>,
+	      F: FnOnce(&mut Encoder<Decompress<&mut T>>) -> EncodingResult<V, T::Error>,
 	      V: crate::Decode
 {
 	let mut decoder = decoder.add_decompression(compression)?;
 	let v = f(&mut decoder);
-	decoder.finish()?.0.finish()?;
+	decoder.finish().0.finish()?;
 	v
 }
 
 /// Contains compression parameters known at a higher level than
 /// the encoding/decoding step. Currently only consists of a [`Compression`] parameter,
 /// but may be expanded in the future to accommodate for custom dictionaries.
-#[derive(Clone, Eq, PartialEq, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Display)]
 #[display("compression = ({compression})")]
 pub struct CompressionState {
 	/// The compression parameter. This will be used to infer the compression mode when
@@ -250,18 +250,27 @@ pub enum Compression {
 	#[display("no compression")]
 	None,
 	#[display("level {0} ZStd compression")]
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	ZStd(ZStdLevel),
 	#[display("level {0} ZLib compression")]
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	ZLib(ZLibLevel),
 	#[display("level {0} Deflate compression")]
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	Deflate(DeflateLevel),
 	#[display("level {0} GZip compression")]
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	GZip(GZipLevel),
 }
 
 impl FromStr for Compression {
 	type Err = &'static str;
 
+	#[allow(unused, unreachable_code)]
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		const USAGE: &str = r#"Invalid compression format. Usage: "{format}/{level}""#;
 
@@ -272,15 +281,20 @@ impl FromStr for Compression {
 		let (format, level) = s.split_once("/").ok_or(USAGE)?;
 
 		Ok(match format {
+			#[cfg(feature = "std")]
 			"ZStd" => Compression::ZStd(ZStdLevel::from_str(level).map_err(|_| "Out of range 1-22")?),
+			#[cfg(feature = "std")]
 			"ZLib" => Compression::ZLib(ZLibLevel::from_str(level).map_err(|_| "Out of range 0-9")?),
+			#[cfg(feature = "std")]
 			"Deflate" => Compression::Deflate(DeflateLevel::from_str(level).map_err(|_| "Out of range 0-9")?),
+			#[cfg(feature = "std")]
 			"GZip" => Compression::GZip(GZipLevel::from_str(level).map_err(|_| "Out of range 1-9")?),
-			_ => return Err(r#"Allowed compression formats are: ZStd, ZLib, Deflate, GZip"#)
+			_ => return Err(r#"Unknown compression format"#)
 		})
 	}
 }
 
+#[allow(unreachable_patterns)]
 impl Compression {
 	/// Returns true if the `self` is None
 	pub fn is_none(&self) -> bool {
@@ -291,6 +305,8 @@ impl Compression {
 	}
 
 	/// Returns true if the `self` is ZStd
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	pub fn is_zstd(&self) -> bool {
 		match self {
 			Compression::ZStd(..) => true,
@@ -299,6 +315,8 @@ impl Compression {
 	}
 
 	/// Returns true if the `self` is ZLib
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	pub fn is_zlib(&self) -> bool {
 		match self {
 			Compression::ZLib(..) => true,
@@ -307,6 +325,8 @@ impl Compression {
 	}
 
 	/// Returns true if the `self` is Deflate
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	pub fn is_deflate(&self) -> bool {
 		match self {
 			Compression::Deflate(..) => true,
@@ -315,6 +335,8 @@ impl Compression {
 	}
 
 	/// Returns true if the `self` is GZip
+	#[cfg(feature = "std")]
+	#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 	pub fn is_gzip(&self) -> bool {
 		match self {
 			Compression::GZip(..) => true,
@@ -325,13 +347,53 @@ impl Compression {
 
 /// A generic error for anything that might go wrong during Compression/Decompression.<br>
 /// FIXME This is still subject to change
-#[derive(Debug, Error)]
-pub enum CompressionError {
-	/// Generic IO Error
-	#[error("IO Error occurred: {0}")]
+#[derive(Debug, Display)]
+pub enum CompressionError<E: Error> {
+	/// Generic IO error
+	#[display("IO Error occurred: {:0?}")]
 	IOError(
-		#[source]
-		#[from]
-		io::Error
-	)
+		E
+	),
+	/// The end of the file or buffer was reached but more data was expected
+	#[display("Unexpected end of file/buffer")]
+	UnexpectedEOF,
+	/// An error occurred while initializing the compressor
+	#[display("Initialization error")]
+	Initialize,
+	/// The error was caused by the inherent implementation of the compression algorithm
+	#[display("Internal compression error")]
+	Internal,
+	/// An error occurred while finalizing the compressor
+	#[display("Finalization error")]
+	Finalize,
+}
+
+impl<E: Error> Error for CompressionError<E> {
+	fn kind(&self) -> ErrorKind {
+		match self {
+			CompressionError::IOError(io_error) => io_error.kind(),
+			_ => ErrorKind::Other,
+		}
+	}
+}
+
+#[cfg(feature = "unstable")]
+impl<E: Error> core::error::Error for CompressionError<E> {}
+
+#[cfg(all(not(feature = "unstable"), feature = "std"))]
+impl<E: Error> std::error::Error for CompressionError<E> {}
+
+impl<E: Error> From<E> for CompressionError<E> {
+	fn from(value: E) -> Self {
+		Self::IOError(value)
+	}
+}
+
+impl<E: Error> From<ReadExactError<E>> for CompressionError<E> {
+	fn from(value: ReadExactError<E>) -> Self {
+		match value {
+			ReadExactError::UnexpectedEof => Self::UnexpectedEOF,
+			ReadExactError::Other(io_error) => Self::IOError(io_error),
+		}
+	}
 }

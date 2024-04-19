@@ -47,7 +47,7 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
 	quote!(
 		#[automatically_derived]
 		impl #impl_generics #crate_name::Encode for #item_name #ty_generics #where_clause {
-			fn encode<#encoder_generic: std::io::Write>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
+			fn encode<#encoder_generic: #crate_name::Write>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<(), #encoder_generic::Error> {
 				#body
 			}
 		}
@@ -76,7 +76,7 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
 	quote!(
 		#[automatically_derived]
 		impl #impl_generics #crate_name::Decode for #item_name #ty_generics #where_clause {
-			fn decode<#encoder_generic: std::io::Read>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
+			fn decode<#encoder_generic: #crate_name::Read>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self, #encoder_generic::Error> {
 				#body
 			}
 		}

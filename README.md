@@ -15,4 +15,4 @@ It's currently working but incomplete. What is there to do?
 
 Planned features:
 - [ ] Zero copy Decoding.
-- [ ] `#[no_std]` support
+- [X] `#[no_std]` support

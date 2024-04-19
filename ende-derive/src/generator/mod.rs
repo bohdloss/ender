@@ -239,9 +239,9 @@ impl Flags {
 			let ref crate_name = ctxt.flags.crate_name;
 
 			let format = if let Some(fmt) = fmt.as_ref() {
-				quote!(format!(#fmt))
+				quote!(::core::format_args!(#fmt))
 			} else {
-				quote!(format!("Assertion failed"))
+				quote!(::core::format_args!("Assertion failed"))
 			};
 
 			quote!(
@@ -249,7 +249,7 @@ impl Flags {
 					#ref_code
 					#validate
 				} {
-					return Err(#crate_name::EncodingError::ValidationError(#format));
+					return Err(#crate_name::EncodingError::validation_error(#format));
 				}
 			)
 		} else { quote!() })
