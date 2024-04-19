@@ -7,7 +7,6 @@ It's currently working but incomplete. What is there to do?
 - [X] Add String encodings
 - [X] Add more Encode/Decode impls for standard types
 - [X] Add other num encodings
-- [ ] Add missing ciphers
 - [X] Documentation
 - [ ] More examples
 - [X] Refactor the proc-macro derive code

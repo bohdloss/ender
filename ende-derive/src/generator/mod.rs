@@ -11,14 +11,6 @@ pub mod encode;
 pub mod decode;
 mod tokenize;
 
-/// As the name suggests, transforms an Option<&Expr> into an Expr that is either
-/// Some(#expr) or None
-fn option_expr_to_actual_option_expr(expr: Option<&Expr>) -> Expr {
-	expr.as_ref()
-		.map(|x| parse_quote!(Some(#x)))
-		.unwrap_or(parse_quote!(None))
-}
-
 impl Ctxt {
 	pub fn derive(&self) -> syn::Result<TokenStream2> {
 		match self.target {
@@ -115,31 +107,12 @@ impl Function {
 			Function::Serde(serde_crate) => {
 				quote!(<#ty as #serde_crate::Serialize>::serialize(#input, &mut * #encoder)?)
 			}
-			Function::With(path, scope) => {
+			Function::With(path, args, scope) => {
 				match scope {
-					Scope::Encode => quote!(#path(#input, &mut * #encoder)?),
+					Scope::Encode => quote!(#path(#input, &mut * #encoder, #(#args),* )?),
 					Scope::Decode => unreachable!(),
-					Scope::Both => quote!(#path::encode(#input, &mut * #encoder)?),
+					Scope::Both => quote!(#path::encode(#input, &mut * #encoder, #(#args),* )?),
 				}
-			}
-			Function::Secret { encryption, public_key, private_key } => {
-				let encryption = encryption
-					.as_ref()
-					.map(|x| x.ctxt_tokens(ctxt))
-					.map(|x| syn::parse2::<Expr>(x).unwrap());
-				let encryption = option_expr_to_actual_option_expr(encryption.as_ref());
-				let public_key = option_expr_to_actual_option_expr(public_key.as_ref());
-				let private_key = option_expr_to_actual_option_expr(private_key.as_ref());
-
-				quote!(
-					#crate_name::encryption::encode_asymm_block(
-						#encoder,
-						#encryption,
-						#public_key,
-						#private_key,
-						#input
-					)?
-				)
 			}
 		})
 	}
@@ -154,30 +127,12 @@ impl Function {
 			Function::Serde(serde_crate) => {
 				quote!(<#ty as #serde_crate::Deserialize>::deserialize(&mut * #encoder)?)
 			}
-			Function::With(path, scope) => {
+			Function::With(path, args, scope) => {
 				match scope {
 					Scope::Encode => unreachable!(),
-					Scope::Decode => quote!(#path(&mut * #encoder)?),
-					Scope::Both => quote!(#path::decode(&mut * #encoder)?),
+					Scope::Decode => quote!(#path(&mut * #encoder, #(#args),* )?),
+					Scope::Both => quote!(#path::decode(&mut * #encoder, #(#args),* )?),
 				}
-			}
-			Function::Secret { encryption, public_key, private_key } => {
-				let encryption = encryption
-					.as_ref()
-					.map(|x| x.ctxt_tokens(ctxt))
-					.map(|x| syn::parse2::<Expr>(x).unwrap());
-				let encryption = option_expr_to_actual_option_expr(encryption.as_ref());
-				let public_key = option_expr_to_actual_option_expr(public_key.as_ref());
-				let private_key = option_expr_to_actual_option_expr(private_key.as_ref());
-
-				quote!(
-					#crate_name::encryption::decode_asymm_block(
-						#encoder,
-						#encryption,
-						#public_key,
-						#private_key,
-					)?
-				)
 			}
 		})
 	}
@@ -193,7 +148,7 @@ impl TypeModifier {
 					&(::core::clone::Clone::clone(#name) as #ty)
 				)
 			}
-			TypeModifier::Convert(ty) => {
+			TypeModifier::Into(ty) => {
 				parse_quote!(
 					&(<#ty as ::core::convert::From<#field_ty>>::from(::core::clone::Clone::clone(#name)))
 				)
@@ -209,7 +164,7 @@ impl TypeModifier {
 					#input as #field_ty
 				)
 			}
-			TypeModifier::Convert(ty) => {
+			TypeModifier::Into(ty) => {
 				parse_quote!(
 					<#field_ty as ::core::convert::From<#ty>>::from(#input)
 				)
@@ -412,76 +367,37 @@ impl Flags {
 
 impl StreamModifier {
 	pub fn derive(&self, ctxt: &Ctxt, input: TokenStream2) -> syn::Result<TokenStream2> {
-		let ref crate_name = ctxt.flags.crate_name;
 		let ref encoder = ctxt.encoder;
-
+		
 		Ok(match self {
-			StreamModifier::Encrypted { encryption, key, iv } => {
-				let encryption = encryption
-					.as_ref()
-					.map(|x| x.ctxt_tokens(ctxt))
-					.map(|x| syn::parse2::<Expr>(x).unwrap());
-				let encryption = option_expr_to_actual_option_expr(encryption.as_ref());
-				let key = option_expr_to_actual_option_expr(key.as_ref());
-				let iv = option_expr_to_actual_option_expr(iv.as_ref());
-
+			StreamModifier::Transform { path, args, scope } => {
 				match ctxt.target {
 					Target::Encode => {
-						quote!(
-							#crate_name::encryption::encode_with_encryption(
-								#encoder,
-								#encryption,
-								#key,
-								#iv,
-								|#encoder| {
-									#input
-									Ok(())
-								},
-							)?;
-						)
+						// Expected signature:
+						// fn<Original, Transformed, Fun>(&mut Encoder<Original>, Fun, ...) -> EncodingResult<(), Original::Error>
+						// where Original: Write,
+						//       Transformed: Write,
+						//       F: FnOnce(&mut Encoder<Transformed>) -> EncodingResult<(), Transformed::Error>
+						
+						match scope {
+							Scope::Encode => quote!(#path(&mut * #encoder, |#encoder| { Ok({ #input }) }, #(#args),* )?),
+							Scope::Decode => unreachable!(),
+							Scope::Both => quote!(#path::encode(&mut * #encoder, |#encoder| { Ok({ #input }) }, #(#args),* )?),
+						}
 					}
 					Target::Decode => {
-						quote!(
-							#crate_name::encryption::decode_with_encryption(
-								#encoder,
-								#encryption,
-								#key,
-								#iv,
-								|#encoder| { Ok({ #input }) },
-							)?
-						)
-					}
-				}
-			}
-			StreamModifier::Compressed { compression } => {
-				let compression = compression
-					.as_ref()
-					.map(|x| x.ctxt_tokens(ctxt))
-					.map(|x| syn::parse2::<Expr>(x).unwrap());
-				let compression = option_expr_to_actual_option_expr(compression.as_ref());
-
-				match ctxt.target {
-					Target::Encode => {
-						quote!(
-							#crate_name::compression::encode_with_compression(
-								#encoder,
-								#compression,
-								|#encoder| {
-									#input
-									Ok(())
-								},
-							)?;
-						)
-					}
-					Target::Decode => {
-						quote!(
-							#crate_name::compression::decode_with_compression(
-								#encoder,
-								#compression,
-								|#encoder| { Ok({ #input }) },
-							)?
-						)
-					}
+						// Expected signature:
+						// fn<Original, Transformed, Value, Fun>(&mut Encoder<Original>, Fun, ...) -> EncodingResult<Value, Original::Error>
+						// where Original: Write,
+						//       Transformed: Write,
+						//       F: FnOnce(&mut Encoder<Transformed>) -> EncodingResult<Value, Transformed::Error>
+						
+						match scope {
+							Scope::Encode => unreachable!(),
+							Scope::Decode => quote!(#path(&mut * #encoder, |#encoder| { Ok({ #input }) }, #(#args),* )?),
+							Scope::Both => quote!(#path::decode(&mut * #encoder, |#encoder| { Ok({ #input }) }, #(#args),* )?),
+						}
+					},
 				}
 			}
 		})

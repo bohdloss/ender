@@ -10,12 +10,9 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Paren;
 use crate::ctxt::Scope;
-use crate::enums::{AsymmEncryption, BitWidth, Compression, SymmEncryption};
+use crate::enums::{BitWidth};
 
 const FLAGS_USAGE: &str = r#"Unknown Flag. Please refer to the documentation of the macro for a list of valid flags and their usage."#;
-
-const ENCRYPTION_USAGE: &str = r#"Unknown encryption parameter. Usage example: encrypted: $expr, key: $expr, iv: $expr"#;
-const SECRET_USAGE: &str = r#"Unknown secret parameter. Usage example: secret: $expr, public: $expr, private: $expr"#;
 
 const MODIFIER_USAGE: &str = r#"Unknown modifier. Modifier can be bit-width (8, 16, 32, 64, 128), endianness (big_endian, little_endian), num-encoding (fixed, leb128), max-size (max = $expr)"#;
 
@@ -25,7 +22,7 @@ pub mod kw {
 	use syn::custom_keyword;
 
 	/* Conversions */
-	custom_keyword!(convert);
+	custom_keyword!(into);
 
 	/* Keywords used for flags */
 	custom_keyword!(en);
@@ -35,22 +32,14 @@ pub mod kw {
 	custom_keyword!(with);
 	custom_keyword!(flatten);
 	custom_keyword!(validate);
-	custom_keyword!(encrypted);
-	custom_keyword!(secret);
-	custom_keyword!(compressed);
 
+	/* Stream modifiers */
+	custom_keyword!(redir);
+	
 	/* Flatten flag helpers */
 	custom_keyword!(some);
 	custom_keyword!(none);
-
-	/* Keywords used for parsing encryption parameters */
-	// Symmetric encryption
-	custom_keyword!(key);
-	custom_keyword!(iv);
-	// Asymmetric encryption
-	custom_keyword!(public);
-	custom_keyword!(private);
-
+	
 	/* Keywords used for modifiers TARGETS */
 	custom_keyword!(num);
 	custom_keyword!(size);
@@ -89,185 +78,6 @@ pub struct ReprAttribute {
 pub struct Formatting {
 	pub format: LitStr,
 	pub args: Option<(Token![,], Punctuated<Expr, Token![,]>)>,
-}
-
-/// An encryption argument represents a key, or an initialization vector.
-/// Formatted as `key: $expr` or `iv: $expr`, etc...
-#[derive(Clone)]
-pub enum EncryptionArgument {
-	Key {
-		kw: kw::key,
-		colon: Token![:],
-		key: Expr,
-	},
-	Iv {
-		kw: kw::iv,
-		colon: Token![:],
-		iv: Expr,
-	},
-}
-
-impl EncryptionArgument {
-	pub fn is_key(&self) -> bool {
-		match self {
-			Self::Key { .. } => true,
-			_ => false,
-		}
-	}
-
-	pub fn span(&self) -> Span {
-		match self {
-			Self::Key { kw, .. } => kw.span,
-			Self::Iv { kw, .. } => kw.span,
-		}
-	}
-
-	pub fn into_expr(self) -> Expr {
-		match self {
-			Self::Key { key, .. } => key,
-			Self::Iv { iv, .. } => iv,
-		}
-	}
-}
-
-/// The constructor for an encryption parameter. Can either be given by an expression,
-/// or defined in a string such as `"128-bit AES/CBC"`
-#[derive(Clone)]
-pub enum EncryptionConstructor {
-	Literal(SymmEncryption),
-	Expr(Expr),
-}
-
-#[derive(Clone)]
-pub struct EncryptionData {
-	pub ctor: EncryptionConstructor,
-	pub args: Option<(Token![,], Punctuated<EncryptionArgument, Token![,]>)>,
-}
-
-impl EncryptionData {
-	pub fn validate(self) -> syn::Result<(EncryptionConstructor, Option<Expr>, Option<Expr>)> {
-		let ctor = self.ctor;
-
-		let mut key = None;
-		let mut iv = None;
-		if let Some(args) = self.args {
-			// This ensures only 1 or 0 ivs, and only 1 or 0 keys are specified.
-			// As a side effect, guarantees the length of the argument list is exactly 2
-			for arg in args.1 {
-				if arg.is_key() {
-					if key.is_some() {
-						return Err(Error::new(arg.span(), "Key parameter defined twice"));
-					}
-
-					key = Some(arg.into_expr());
-				} else {
-					if iv.is_some() {
-						return Err(Error::new(arg.span(), "IV parameter defined twice"));
-					}
-
-					iv = Some(arg.into_expr());
-				}
-			}
-		}
-
-		Ok((ctor, key, iv))
-	}
-}
-
-/// An asymmetric encryption argument represents a public or private key.
-/// Formatted as `public: $expr` or `private: $expr`, etc...
-#[derive(Clone)]
-pub enum SecretArgument {
-	Public {
-		kw: kw::public,
-		colon: Token![:],
-		public: Expr,
-	},
-	Private {
-		kw: kw::private,
-		colon: Token![:],
-		private: Expr,
-	},
-}
-
-impl SecretArgument {
-	pub fn is_public(&self) -> bool {
-		match self {
-			Self::Public { .. } => true,
-			_ => false,
-		}
-	}
-
-	pub fn span(&self) -> Span {
-		match self {
-			Self::Public { kw, .. } => kw.span,
-			Self::Private { kw, .. } => kw.span,
-		}
-	}
-
-	pub fn into_expr(self) -> Expr {
-		match self {
-			Self::Public { public, .. } => public,
-			Self::Private { private, .. } => private,
-		}
-	}
-}
-
-/// The constructor for an asymmetric encryption parameter. Can either be given by an expression,
-/// or defined in a string such as `"2048-bit RSA/EBC/PKCS1"`
-#[derive(Clone)]
-pub enum SecretConstructor {
-	Literal(AsymmEncryption),
-	Expr(Expr),
-}
-
-#[derive(Clone)]
-pub struct SecretData {
-	pub ctor: SecretConstructor,
-	pub args: Option<(Token![,], Punctuated<SecretArgument, Token![,]>)>,
-}
-
-impl SecretData {
-	pub fn validate(self) -> syn::Result<(SecretConstructor, Option<Expr>, Option<Expr>)> {
-		let ctor = self.ctor;
-
-		let mut public = None;
-		let mut private = None;
-		if let Some(args) = self.args {
-			// This ensures only 1 or 0 public keys, and only 1 or 0 private keys are specified.
-			// As a side effect, guarantees the length of the argument list is exactly 2
-			for arg in args.1 {
-				if arg.is_public() {
-					if public.is_some() {
-						return Err(Error::new(arg.span(), "Public key parameter defined twice"));
-					}
-
-					public = Some(arg.into_expr());
-				} else {
-					if private.is_some() {
-						return Err(Error::new(arg.span(), "Private key parameter defined twice"));
-					}
-
-					private = Some(arg.into_expr());
-				}
-			}
-		}
-
-		Ok((ctor, public, private))
-	}
-}
-
-/// The constructor for a compression parameter. Can either be given by an expression,
-/// or defined in a string such as `"ZLib/6"`
-#[derive(Clone)]
-pub enum CompressionConstructor {
-	Literal(Compression),
-	Expr(Expr),
-}
-
-#[derive(Clone)]
-pub struct CompressionData {
-	pub ctor: CompressionConstructor
 }
 
 #[derive(Clone)]
@@ -395,6 +205,12 @@ impl ModTarget {
 	}
 }
 
+#[derive(Clone)]
+pub struct FnArgs {
+	pub paren: Paren,
+	pub args: Punctuated<Expr, Token![,]>
+}
+
 /// Every possible flag that can be attached to a field or item.
 #[derive(Clone)]
 pub enum Flag {
@@ -443,6 +259,7 @@ pub enum Flag {
 		kw: kw::with,
 		colon: Token![:],
 		path: Path,
+		args: Option<FnArgs>,
 	},
 	/// The field should be encoded/decoded as if it was of the given type. It should then be
 	/// converted back to the appropriate type. The conversion method is the as keyword.
@@ -452,9 +269,9 @@ pub enum Flag {
 		ty: Type,
 	},
 	/// The field should be encoded/decoded as if it was of the given type. It should then be
-	/// converted back to the appropriate type. The conversion method are the From and Into traits.
-	Convert {
-		kw: kw::convert,
+	/// converted back to the appropriate type. The conversion methods are the From and Into traits.
+	Into {
+		kw: kw::into,
 		colon: Token![:],
 		ty: Type,
 	},
@@ -473,27 +290,19 @@ pub enum Flag {
 		expr: Expr,
 		fmt: Option<(Token![,], Formatting)>,
 	},
-	/// The field should be encoded/decoded using encryption.
-	Encrypted {
-		kw: kw::encrypted,
-		data: Option<(Token![:], EncryptionData)>,
-	},
-	/// The field is a block of data encrypted using asymmetric encryption.
-	Secret {
-		kw: kw::secret,
-		data: Option<(Token![:], SecretData)>,
-	},
-	/// The field should be encoded/decoded using compression.
-	Compressed {
-		kw: kw::compressed,
-		data: Option<(Token![:], CompressionData)>,
-	},
 	/// The field has a number of modifiers attached to it.
 	Modifiers {
 		target: ModTarget,
 		colon: Token![:],
 		modifiers: Punctuated<Modifier, Token![,]>,
 	},
+	/// A transform should be applied to the underlying stream while encoding/decoding this field.
+	Redir {
+		kw: kw::redir,
+		colon: Token![:],
+		path: Path,
+		args: Option<FnArgs>,
+	}
 }
 
 impl Flag {
@@ -508,13 +317,11 @@ impl Flag {
 			Flag::Default { kw, .. } => kw.span,
 			Flag::With { kw, .. } => kw.span,
 			Flag::As { kw, .. } => kw.span,
-			Flag::Convert { kw, .. } => kw.span,
+			Flag::Into { kw, .. } => kw.span,
 			Flag::Flatten { kw, .. } => kw.span,
 			Flag::Validate { kw, .. } => kw.span,
-			Flag::Encrypted { kw, .. } => kw.span,
-			Flag::Secret { kw, .. } => kw.span,
-			Flag::Compressed { kw, .. } => kw.span,
 			Flag::Modifiers { target, .. } => target.span(),
+			Flag::Redir { kw, .. } => kw.span,
 		}
 	}
 }
@@ -555,126 +362,6 @@ impl Parse for Formatting {
 				input.parse()?,
 				Punctuated::parse_separated_nonempty(input)?,
 			))} else { None },
-		})
-	}
-}
-
-impl Parse for EncryptionArgument {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		if input.peek(kw::key) {
-			Ok(Self::Key {
-				kw: input.parse()?,
-				colon: input.parse()?,
-				key: input.parse()?,
-			})
-		} else if input.peek(kw::iv) {
-			Ok(Self::Iv {
-				kw: input.parse()?,
-				colon: input.parse()?,
-				iv: input.parse()?,
-			})
-		} else {
-			Err(Error::new(input.span(), ENCRYPTION_USAGE))
-		}
-	}
-}
-
-impl Parse for EncryptionConstructor {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		if input.peek(LitStr) {
-			let lit: LitStr = input.parse()?;
-			let encryption = SymmEncryption::from_str(&lit.value())
-				.map_err(|x| Error::new(lit.span(), x))?;
-
-			Ok(Self::Literal(encryption))
-		} else {
-			Ok(Self::Expr(
-				input.parse()?
-			))
-		}
-	}
-}
-
-impl Parse for EncryptionData {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		Ok(Self {
-			ctor: input.parse()?,
-			args: if input.peek(Token![,]) {Some((
-				input.parse()?,
-				Punctuated::parse_separated_nonempty(input)?,
-			))} else { None },
-		})
-	}
-}
-
-impl Parse for SecretArgument {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		if input.peek(kw::public) {
-			Ok(Self::Public {
-				kw: input.parse()?,
-				colon: input.parse()?,
-				public: input.parse()?,
-			})
-		} else if input.peek(kw::private) {
-			Ok(Self::Private {
-				kw: input.parse()?,
-				colon: input.parse()?,
-				private: input.parse()?,
-			})
-		} else {
-			Err(Error::new(input.span(), SECRET_USAGE))
-		}
-	}
-}
-
-impl Parse for SecretConstructor {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		if input.peek(LitStr) {
-			let lit: LitStr = input.parse()?;
-			let encryption = AsymmEncryption::from_str(&lit.value())
-				.map_err(|x| Error::new(lit.span(), x))?;
-
-			Ok(Self::Literal(encryption))
-		} else {
-			Ok(Self::Expr(
-				input.parse()?
-			))
-		}
-	}
-}
-
-impl Parse for SecretData {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		Ok(Self {
-			ctor: input.parse()?,
-			args: if input.peek(Token![,]) {Some((
-				input.parse()?,
-				Punctuated::parse_separated_nonempty(input)?,
-			))} else { None },
-		})
-	}
-}
-
-impl Parse for CompressionConstructor {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		if input.peek(LitStr) {
-			let lit: LitStr = input.parse()?;
-			let encryption = Compression::from_str(&lit.value())
-				.map_err(|x| Error::new(lit.span(), x))?;
-
-			Ok(Self::Literal(encryption))
-		} else {
-			Ok(Self::Expr(
-				input.parse()?
-			))
-		}
-	}
-}
-
-impl Parse for CompressionData {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		Ok(Self {
-			ctor: input.parse()?,
 		})
 	}
 }
@@ -793,6 +480,16 @@ impl Parse for ModTarget {
 	}
 }
 
+impl Parse for FnArgs {
+	fn parse(input: ParseStream) -> syn::Result<Self> {
+		let inside;
+		Ok(Self {
+			paren: parenthesized!(inside in input),
+			args: Punctuated::parse_terminated(&inside)?,
+		})
+	}
+}
+
 impl Parse for Flag {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		if input.peek(kw::en) {
@@ -838,6 +535,9 @@ impl Parse for Flag {
 				kw: input.parse()?,
 				colon: input.parse()?,
 				path: input.parse()?,
+				args: if input.peek(Paren) {Some(
+					input.parse()?
+				)} else { None },
 			})
 		} else if input.peek(Token![as]) {
 			Ok(Self::As {
@@ -845,8 +545,8 @@ impl Parse for Flag {
 				colon: input.parse()?,
 				ty: input.parse()?,
 			})
-		} else if input.peek(kw::convert) {
-			Ok(Self::Convert {
+		} else if input.peek(kw::into) {
+			Ok(Self::Into {
 				kw: input.parse()?,
 				colon: input.parse()?,
 				ty: input.parse()?,
@@ -867,35 +567,20 @@ impl Parse for Flag {
 					input.parse()?,
 				))} else { None },
 			})
-		} else if input.peek(kw::encrypted) {
-			Ok(Self::Encrypted {
-				kw: input.parse()?,
-				data: if input.peek(Token![:]) {Some((
-					input.parse()?,
-					input.parse()?,
-				))} else { None },
-			})
-		} else if input.peek(kw::secret) {
-			Ok(Self::Secret {
-				kw: input.parse()?,
-				data: if input.peek(Token![:]) {Some((
-					input.parse()?,
-					input.parse()?,
-				))} else { None },
-			})
-		} else if input.peek(kw::compressed) {
-			Ok(Self::Compressed {
-				kw: input.parse()?,
-				data: if input.peek(Token![:]) {Some((
-					input.parse()?,
-					input.parse()?,
-				))} else { None },
-			})
 		} else if ModTarget::peek(input) {
 			Ok(Self::Modifiers {
 				target: input.parse()?,
 				colon: input.parse()?,
 				modifiers: Punctuated::parse_separated_nonempty(input)?,
+			})
+		} else if input.peek(kw::redir) {
+			Ok(Self::Redir {
+				kw: input.parse()?,
+				colon: input.parse()?,
+				path: input.parse()?,
+				args: if input.peek(Paren) {Some(
+					input.parse()?
+				)} else { None },
 			})
 		} else {
 			Err(Error::new(input.span(), FLAGS_USAGE))

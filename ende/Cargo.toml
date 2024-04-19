@@ -21,14 +21,6 @@ embedded-io-adapters = { version = "0.6.1", features = ["std"], optional = true 
 # serde feature
 serde = { version = "1.0.197", optional = true, default-features = false }
 
-# encryption feature
-openssl = { version = "0.10.64", optional = true }
-cryptostream = { version = "0.3.2", optional = true }
-
-# compression feature
-flate2 = { version = "1.0.28", optional = true }
-zstd = { version = "0.13.0", optional = true }
-
 [dev-dependencies]
 serde = { version = "1.0.197", features = ["derive"] }
 uuid = { version = "1.8.0", features = ["serde"] }
@@ -38,7 +30,7 @@ semver = { version = "1.0.22", features = ["serde"] }
 [features]
 # Enables all features. Includes serde support, encryption and compression, and the derive macros.
 # The unstable feature still has to be manually enabled.
-all = ["alloc", "std", "derive", "serde", "encryption", "compression"]
+all = ["alloc", "std", "derive", "serde"]
 
 # Imports the alloc crate, enabling some additional features and Encode/Decode implementations,
 # at the cost of portability
@@ -50,12 +42,6 @@ std = ["alloc", "embedded-io/std", "embedded-io-adapters", "serde?/std", "widest
 
 # Enables the serde compatibility layer.
 serde = ["dep:serde"]
-
-# Enables cryptography support.
-encryption = ["std", "openssl", "cryptostream"]
-
-# Enables compression / decompression support.
-compression = ["std", "flate2", "zstd"]
 
 # Enables the derive(Encode, Decode) macros.
 derive = []

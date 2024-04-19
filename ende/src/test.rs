@@ -1,10 +1,13 @@
 #![allow(unused)]
 
+use crate::facade::fake::*;
+
 use ende_derive::{Encode, Decode};
 
 #[derive(Encode, Decode)]
 #[ende(num: little_endian)]
 #[allow(unused)]
+#[cfg(feature = "std")]
 pub struct StructStruct {
 	#[ende(skip)]
 	#[ende(default: 100)]
@@ -14,7 +17,7 @@ pub struct StructStruct {
 	#[ende(as: u8)]
 	value2: f32,
 	unit: (),
-	#[ende(secret)]
+	#[ende(with: rsa(&[], &[]))]
 	secret: Vec<u8>
 }
 
@@ -83,27 +86,12 @@ pub enum EmptyEnum {
 //    |     ^^^^^
 
 #[derive(Encode, Decode)]
-#[ende(encrypted)]
+#[ende(with: aes)]
+#[cfg(feature = "std")]
 pub struct VersionContainer {
 	name_present: bool,
 	#[ende(if: *name_present)]
 	name: String,
-}
-
-#[cfg(feature = "encryption")]
-#[derive(Encode, Decode)]
-pub enum EncryptionTest {
-	A {
-		rsa_private: [u8; 512],
-		#[ende(serde)]
-		iv: [u8; 16],
-		#[ende(secret: "2048-bit RSA/ECB/PKCS1", private: rsa_private)]
-		key: Vec<u8>,
-		encryption: crate::encryption::SymmEncryption,
-		#[ende(compressed)]
-		#[ende(encrypted: "128-bit AES/CFB8")]
-		secret: u64,
-	}
 }
 
 #[test]

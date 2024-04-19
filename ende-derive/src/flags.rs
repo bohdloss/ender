@@ -7,7 +7,7 @@ use syn::spanned::Spanned;
 use crate::{dollar_crate, ENDE};
 use crate::ctxt::Scope;
 use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding, StrLenEncoding};
-use crate::parse::{CompressionConstructor, EncryptionConstructor, EncryptionData, Flag, Formatting, Modifier, ModTarget, SecretConstructor, SecretData};
+use crate::parse::{Flag, Formatting, Modifier, ModTarget};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FlagTarget {
@@ -43,12 +43,7 @@ impl<T: ToTokens> ToTokens for Param<T> {
 pub enum Function {
 	Default,
 	Serde(Ident),
-	With(Path, Scope),
-	Secret {
-		encryption: Option<SecretConstructor>,
-		public_key: Option<Expr>,
-		private_key: Option<Expr>,
-	}
+	With(Path, Vec<Expr>, Scope),
 }
 
 impl Function {
@@ -63,14 +58,14 @@ impl Function {
 #[derive(Clone)]
 pub enum TypeModifier {
 	As(Type),
-	Convert(Type),
+	Into(Type),
 }
 
 impl TypeModifier {
 	pub fn ty(&self) -> &Type {
 		match self {
 			TypeModifier::As(ty) => ty,
-			TypeModifier::Convert(ty) => ty,
+			TypeModifier::Into(ty) => ty,
 		}
 	}
 }
@@ -311,17 +306,14 @@ impl AllModifiers {
 	}
 }
 
-/// A stream modifier - compression or encryption
+/// A stream modifier - refer to the docs for the Encode and Decode derive macros
 #[derive(Clone)]
 pub enum StreamModifier {
-	Encrypted {
-		encryption: Option<EncryptionConstructor>,
-		key: Option<Expr>,
-		iv: Option<Expr>,
+	Transform {
+		path: Path,
+		args: Vec<Expr>,
+		scope: Scope,
 	},
-	Compressed {
-		compression: Option<CompressionConstructor>,
-	}
 }
 
 /// All the possible flags a field or item can have. The target allows the apply method to
@@ -423,12 +415,15 @@ impl Flags {
 
 				self.default = Param::Other(expr);
 			}
-			Flag::With { path, .. } => {
+			Flag::With { path, args, .. } => {
 				if !self.function.is_default() {
 					return Err(Error::new(span, MULTIPLE_FUNCTION_MODS))
 				}
+				
+				let args = args.map(|x| x.args.into_iter().collect::<Vec<Expr>>())
+					.unwrap_or(Vec::new());
 
-				self.function = Function::With(path, scope);
+				self.function = Function::With(path, args, scope);
 			}
 			Flag::As { ty, .. } => {
 				if self.ty_mods.is_some() {
@@ -437,12 +432,12 @@ impl Flags {
 
 				self.ty_mods = Some(TypeModifier::As(ty));
 			}
-			Flag::Convert { ty, .. } => {
+			Flag::Into { ty, .. } => {
 				if self.ty_mods.is_some() {
 					return Err(Error::new(span, MULTIPLE_TY_MODS))
 				}
 
-				self.ty_mods = Some(TypeModifier::Convert(ty));
+				self.ty_mods = Some(TypeModifier::Into(ty));
 			}
 			Flag::Flatten { param, .. } => {
 				if self.mods.flatten.is_some() {
@@ -459,59 +454,6 @@ impl Flags {
 
 				 self.validate = Some((expr, fmt.map(|x| x.1)));
 			}
-			Flag::Secret { data, .. } => {
-				if !self.function.is_default() {
-					return Err(Error::new(span, MULTIPLE_FUNCTION_MODS))
-				}
-
-				let data: Option<SecretData> = data.map(|x| x.1);
-
-				// Validate and extract the parameters
-				let mut encryption = None;
-				let mut public_key = None;
-				let mut private_key = None;
-
-				if let Some(data) = data {
-					let validated = data.validate()?;
-					encryption = Some(validated.0);
-					public_key = validated.1;
-					private_key = validated.2;
-				}
-
-				self.function = Function::Secret {
-					encryption,
-					public_key,
-					private_key,
-				}
-			}
-			Flag::Encrypted { data, .. } => {
-				let data: Option<EncryptionData> = data.map(|x| x.1);
-
-				// Validate and extract the parameters
-				let mut encryption = None;
-				let mut key = None;
-				let mut iv = None;
-
-				if let Some(data) = data {
-					let validated = data.validate()?;
-					encryption = Some(validated.0);
-					key = validated.1;
-					iv = validated.2;
-				}
-
-				self.stream_modifiers.push(StreamModifier::Encrypted {
-					encryption,
-					key,
-					iv,
-				})
-			}
-			Flag::Compressed { data, .. } => {
-				let compression = data.map(|x| x.1.ctor);
-
-				self.stream_modifiers.push(StreamModifier::Compressed {
-					compression,
-				})
-			}
 			Flag::Modifiers { target, modifiers, .. } => {
 				for modifier in modifiers {
 					self.mods.apply(target.clone(), modifier)?;
@@ -527,6 +469,12 @@ impl Flags {
 				}
 
 				self.condition = Some(expr);
+			}
+			Flag::Redir { path, args, .. } => {
+				let args = args.map(|x| x.args.into_iter().collect::<Vec<Expr>>())
+					.unwrap_or(Vec::new());
+				
+				self.stream_modifiers.push(StreamModifier::Transform { path, args, scope })
 			}
 			Flag::En { .. } | Flag::De { .. } => {
 				return Err(Error::new(span, r#"The flags "en" and "de" must be the first"#))

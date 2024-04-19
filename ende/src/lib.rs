@@ -9,22 +9,17 @@ extern crate alloc;
 #[cfg(test)]
 mod test;
 
-#[cfg(feature = "encryption")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
-pub mod encryption;
-#[cfg(feature = "compression")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
-pub mod compression;
 #[cfg(feature = "serde")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "serde")))]
 pub mod serde;
 
 pub mod impls;
+pub mod facade;
 
+use core::any::Any;
 use core::fmt;
 use core::fmt::Debug;
 use core::hash::Hash;
-use core::marker::PhantomData;
 use core::mem::replace;
 use embedded_io::{Error, ErrorKind, ReadExactError};
 
@@ -94,14 +89,22 @@ pub use embedded_io::{Write, Read};
 /// They are applied in the declaration order during encoding, but in the reverse order during
 /// decoding, for consistency. However, the item-level modifiers take priority over the field-level
 /// modifiers (see [example](#ambiguous-example)).<br>
-/// * `compressed: "{format}/{level}"` - If the compression method is not specified, it will
-/// be inferred from the [CompressionState][`compression::CompressionState`].
-/// * `encrypted: "{key_size}-bit {cipher}/{mode}/{padding}", iv: iv, key: key` -
-/// If either the encryption method, the key or the iv are not specified,
-/// they will be inferred from the [CryptoState][`encryption::CryptoState`].
+/// * `redir: $path(...)` - Currently the only supported stream modifier, but more may
+/// be added in the future. Uses the given path to find an encoding/decoding function which
+/// alters the writer/reader and passes a modified encoder to a closure.<br>
+/// This can be used to implement encryption, compression and other transformations of the
+/// underlying stream, or even redirections to another stream.<br>
+/// The implementation of a redir function can be non-trivial and the signature can be
+/// cryptic, therefore it is recommended you only create your own stream transforms if you know what
+/// you're doing, in which case you should take a look at the [facade module][`facade`].<br>
+///     * If the scope is Encode, the path must be callable as `encode`.<br>
+///     * If the scope is Decode, the path must be callable as `decode`.<br>
+///     * If no scope is specified, the path must point to a module with encoding and decoding functions
+/// with the same signatures as above.
 /// ### Example:
 /// ```no_run
 /// use ende::{Encode, Decode};
+/// use ende::facade::fake::*;
 /// #[derive(Encode, Decode)]
 /// #[ende(crate: ende)]
 /// struct MyStruct {
@@ -109,18 +112,19 @@ pub use embedded_io::{Write, Read};
 ///     iv: Vec<u8>,
 ///     /// While **encoding**, this field is compressed -> encrypted.
 ///     /// While **decoding**, this field is decrypted -> decompressed.
-///     #[ende(compressed: "GZip/9")]
-///     #[ende(encrypted: "128-bit AES/CBC", key: secret_key, iv: iv)]
+///     #[ende(redir: gzip(9))]
+///     #[ende(redir: aes(iv, secret_key))]
 ///     super_secret_data: Vec<u8>,
 /// }
 /// ```
 /// ### Ambiguous example:
 /// ```no_run
 /// use ende::{Encode, Decode};
+/// use ende::facade::fake::*;
 /// #[derive(Encode, Decode)]
 /// #[ende(crate: ende)]
 /// /// Because of the priority rules of items over fields, this is ambiguous, see below
-/// #[ende(compressed: "GZip/9")]
+/// #[ende(redir: gzip(9))]
 /// struct MyStruct {
 ///     /// While **encoding**, this field is encrypted -> compressed.
 ///     /// While **decoding**, this field is decompressed -> decrypted.
@@ -131,7 +135,7 @@ pub use embedded_io::{Write, Read};
 ///     ///
 ///     /// According to your needs, this might not be what you want, so be careful when mixing
 ///     /// item-level and field-level stream modifiers.
-///     #[ende(encrypted: "128-bit AES/CBC")]
+///     #[ende(redir: aes(&[], &[]))]
 ///     super_secret_data: Vec<u8>,
 /// }
 /// ```
@@ -149,15 +153,10 @@ pub use embedded_io::{Write, Read};
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
 /// with the same signatures as above.
-/// * `secret: "{key_size}-bit {cipher}/{mode}/{padding}", public: public_key, private: private_key` -
-/// Uses asymmetric encryption (or public-key encryption) like RSA to encode and decode a
-/// block with padding.<br>The field type must be `Vec<u8>` because that's what the
-/// encryption and decryption function accepts.<br>Just like the `encrypted` flag, if  either the
-/// encryption method, the public key, or the private key are not specified, they will be inferred
-/// from the [CryptoState][`encryption::CryptoState`]
 /// ### Example:
 /// ```no_run
 /// use ende::{Encode, Decode};
+/// use ende::facade::fake::rsa;
 /// use uuid::Uuid;
 ///
 /// #[derive(Encode, Decode)]
@@ -180,9 +179,7 @@ pub use embedded_io::{Write, Read};
 ///     public_key: Vec<u8>,
 ///     /// This block of data will be encrypted before being encoded using the public key,
 ///     /// and decrypted after being decoded using the private key.
-///     /// Note that these encryption/decryption steps are done in a separate buffer, the
-///     /// field contents are never changed.
-///     #[ende(secret: "2048-bit RSA/ECB/PKCS1", public: public_key, private: private_key)]
+///     #[ende(with: rsa(public_key, private_key))]
 ///     even_more_secret_data: Vec<u8>,
 /// }
 ///
@@ -218,7 +215,7 @@ pub use embedded_io::{Write, Read};
 /// * `as: $ty` - Converts the value of the field to `$ty` before encoding it
 /// and back to the original field type after decoding it.<br>
 /// The conversion is done through the `as` keyword.
-/// * `convert: $ty` - Converts the value of the field to `$ty` before encoding it
+/// * `into: $ty` - Converts the value of the field to `$ty` before encoding it
 /// and back to the original field type after decoding it.<br>
 /// The conversion is done through the `From` and `Into` traits.
 /// ### Example:
@@ -238,7 +235,7 @@ pub use embedded_io::{Write, Read};
 ///     ///
 ///     /// Note: `BigRock` is required to implement `Encode` and `Decode`,
 ///     /// but `Boulder` is not.
-///     #[ende(convert: BigRock)]
+///     #[ende(into: BigRock)]
 ///     boulder: Boulder,
 /// }
 ///
@@ -572,14 +569,13 @@ impl Default for BinSettings {
 	}
 }
 
-/// The state of the encoder, including its options, `flatten` state variable,
-/// a crypto state if the `encryption` feature is enabled
+/// The state of the encoder, including its options and a `flatten` state variable
 #[derive(Copy, Clone, Debug)]
 pub struct Context<'a> {
-	/// The lifetime `'a` is used by the crypto state, only present when the `encryption` feature
-	/// is enabled.<br> In order to ensure compatibility, we must use
-	/// the lifetime even when the feature is disabled.
-	pub phantom_lifetime: PhantomData<&'a ()>,
+	/// User provided data. This can be purposed for storing any kind of data,
+	/// like cryptographic keys that are unknown to the data structures but known
+	/// at a higher level.
+	pub user: Option<&'a dyn Any>,
 	/// The actual settings, which determine the numerical representations and the string
 	/// representations. <br>Implementations of [`Encode`] and [`Decode`] are required to
 	/// preserve the state of the settings, even though they are allowed to temporarily modify it.<br>
@@ -591,71 +587,31 @@ pub struct Context<'a> {
 	/// checking), for `Vec`, `HashMap` and other data structures with a length it indicates in
 	/// Encode mode not to write said length, and in Decode mode the length itself.
 	pub flatten: Option<usize>,
-	/// The cryptographic state. See [`encryption::CryptoState`]
-	#[cfg(feature = "encryption")]
-	#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
-	pub crypto: encryption::CryptoState<'a>,
-	/// The compression state. See [`compression::CompressionState`]
-	#[cfg(feature = "compression")]
-	#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
-	pub compression: compression::CompressionState,
 }
 
 impl<'a> Context<'a> {
-	/// Constructs the default encoder state. Options will be set to default, flatten to None,
-	/// and crypto state to default
+	/// Constructs the default encoder state. Options will be set to default, flatten to None.
 	pub fn new() -> Self {
 		Self {
-			phantom_lifetime: PhantomData,
+			user: None,
 			settings: BinSettings::new(),
 			flatten: None,
-			#[cfg(feature = "encryption")]
-			crypto: encryption::CryptoState::new(),
-			#[cfg(feature = "compression")]
-			compression: compression::CompressionState::new(),
 		}
 	}
 
-	/// Uses the given options and, if the `encryption` feature is enabled, the crypto state will
-	/// be initialized to default
-	pub fn with_options(options: BinSettings) -> Self {
+	/// Just like [`Self::new`] but uses the given settings instead of the default
+	pub fn with_settings(settings: BinSettings) -> Self {
 		Self {
-			phantom_lifetime: PhantomData,
-			settings: options,
+			user: None,
+			settings,
 			flatten: None,
-			#[cfg(feature = "encryption")]
-			crypto: encryption::CryptoState::new(),
-			#[cfg(feature = "compression")]
-			compression: compression::CompressionState::new(),
-		}
-	}
-
-	/// Uses the given options and crypto state
-	#[cfg(feature = "encryption")]
-	pub fn with_crypto_state(options: BinSettings, crypto: encryption::CryptoState<'a>) -> Self {
-		Self {
-			phantom_lifetime: PhantomData,
-			settings: options,
-			flatten: None,
-			crypto,
-			#[cfg(feature = "compression")]
-			compression: compression::CompressionState::new(),
 		}
 	}
 
 	/// Resets the context to its defaults, then overwrites the options with the given options.
-	/// Note that the symmetric and asymmetric encryption algorithms are not discarded, only
-	/// they keys are. The compression algorithm is also not discarded.
 	pub fn reset(&mut self, options: BinSettings) {
 		self.settings = options;
 		self.flatten = None;
-		#[cfg(feature = "encryption")]
-		{
-			self.crypto.asymm.reset_public();
-			self.crypto.asymm.reset_private();
-			self.crypto.symm.reset_key();
-			self.crypto.symm.reset_iv();
-		}
 	}
 
 	/// Returns the state of the `flatten` variable, consuming it.
@@ -704,58 +660,6 @@ impl<T: Read> Encoder<'_, T> {
 	/// This method is not magic - it is literally defined as `V::decode(self)`
 	pub fn decode_value<V: Decode>(&mut self) -> EncodingResult<V, T::Error> {
 		V::decode(self)
-	}
-}
-
-impl<T: Write> Encoder<'_, T> {
-	/// Returns an Encoder with the same context,
-	/// but wraps the underlying stream in an [`encryption::Encrypt`].
-	/// When either the encryption method, the key or the iv are `None`, this function will try to
-	/// fetch them from the [CryptoState][`encryption::CryptoState`].
-	#[cfg(feature = "encryption")]
-	#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
-	pub fn add_encryption(&mut self, encryption: Option<encryption::SymmEncryption>, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<Encoder<encryption::Encrypt<&mut T>>, T::Error> {
-		let encryption = encryption.unwrap_or(self.ctxt.crypto.symm.encryption);
-		let key = key.or(self.ctxt.crypto.symm.get_key());
-		let iv = iv.or(self.ctxt.crypto.symm.get_iv());
-		Ok(Encoder::new(encryption.encrypt(&mut self.stream, key, iv)?, self.ctxt))
-	}
-
-	/// Returns an Encoder with the same context,
-	/// but wraps the underlying stream in an [`compression::Compress`].
-	/// If the compression method is `None`, this function will try to fetch them from the
-	/// [CompressionState][`compression::CompressionState`].
-	#[cfg(feature = "compression")]
-	#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
-	pub fn add_compression(&mut self, compression: Option<compression::Compression>) -> EncodingResult<Encoder<compression::Compress<&mut T>>, T::Error> {
-		let compression = compression.unwrap_or(self.ctxt.compression.compression);
-		return Ok(Encoder::new(compression.compress(&mut self.stream)?, self.ctxt));
-	}
-}
-
-impl<T: Read> Encoder<'_, T> {
-	/// Returns an Encoder with the same context,
-	/// but wraps the underlying stream in an [`encryption::Decrypt`]
-	/// When either the encryption method, the key or the iv are `None`, this function will try to
-	/// fetch them from the [CryptoState][`encryption::CryptoState`].
-	#[cfg(feature = "encryption")]
-	#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
-	pub fn add_decryption(&mut self, encryption: Option<encryption::SymmEncryption>, key: Option<&[u8]>, iv: Option<&[u8]>) -> EncodingResult<Encoder<encryption::Decrypt<&mut T>>, T::Error> {
-		let encryption = encryption.unwrap_or(self.ctxt.crypto.symm.encryption);
-		let key = key.or(self.ctxt.crypto.symm.get_key());
-		let iv = iv.or(self.ctxt.crypto.symm.get_iv());
-		Ok(Encoder::new(encryption.decrypt(&mut self.stream, key, iv)?, self.ctxt))
-	}
-
-	/// Returns an Encoder with the same context,
-	/// but wraps the underlying stream in an [`compression::Decompress`].
-	/// If the compression method is `None`, this function will try to fetch them from the
-	/// [CompressionState][`compression::CompressionState`].
-	#[cfg(feature = "compression")]
-	#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
-	pub fn add_decompression(&mut self, compression: Option<compression::Compression>) -> EncodingResult<Encoder<compression::Decompress<&mut T>>, T::Error> {
-		let compression = compression.unwrap_or(self.ctxt.compression.compression);
-		return Ok(Encoder::new(compression.decompress(&mut self.stream)?, self.ctxt));
 	}
 }
 
@@ -1803,20 +1707,6 @@ pub enum EncodingError<E: Error> {
 	#[cfg_attr(doc_cfg, doc(cfg(feature = "serde")))]
 	#[display("Serde error")]
 	SerdeError,
-	/// A cryptographic error occurred
-	#[cfg(feature = "encryption")]
-	#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
-	#[display("Cryptographic error: {0}")]
-	EncryptionError(
-		encryption::CryptoError<E>
-	),
-	/// A compression error occurred
-	#[cfg(feature = "compression")]
-	#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
-	#[display("Compression error: {0}")]
-	CompressionError(
-		compression::CompressionError<E>
-	)
 }
 
 impl<E: Error> EncodingError<E> {
@@ -1849,10 +1739,6 @@ impl<T: Error> Error for EncodingError<T> {
 			EncodingError::SerdeError(_) => ErrorKind::Other,
 			#[cfg(all(feature = "serde", not(feature = "alloc")))]
 			EncodingError::SerdeError => ErrorKind::Other,
-			#[cfg(feature = "encryption")]
-			EncodingError::EncryptionError(crypto_err) => crypto_err.kind(),
-			#[cfg(feature = "compression")]
-			EncodingError::CompressionError(compression_err) => compression_err.kind(),
 			_ => ErrorKind::InvalidData,
 		}
 	}
@@ -1890,23 +1776,6 @@ impl<E: Error> From<FlattenError> for EncodingError<E> {
 		Self::FlattenError(value)
 	}
 }
-
-#[cfg(feature = "encryption")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "encryption")))]
-impl<E: Error> From<encryption::CryptoError<E>> for EncodingError<E> {
-	fn from(value: encryption::CryptoError<E>) -> Self {
-		Self::EncryptionError(value)
-	}
-}
-
-#[cfg(feature = "compression")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "compression")))]
-impl<E: Error> From<compression::CompressionError<E>> for EncodingError<E> {
-	fn from(value: compression::CompressionError<E>) -> Self {
-		Self::CompressionError(value)
-	}
-}
-
 /// Represents an error occurred while encoding or decoding a string, including intermediate
 /// conversion errors and the presence of null bytes in unexpected scenarios.
 #[derive(Debug, Display)]
