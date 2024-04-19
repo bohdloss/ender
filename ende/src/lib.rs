@@ -146,10 +146,10 @@ pub use embedded_io::{Write, Read};
 /// another name).
 /// * `with: $path` - Uses the given path to find the encoding/decoding function.<br>
 ///     * If the scope is Encode, the path must be callable as
-/// `fn<T: Write>(&V, &mut ende::Encoder<T>) -> EncodingResult<()>`
+/// `fn<T: Write>(&V, &mut ende::Encoder<T>) -> EncodingResult<(), T::Error>`
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
 ///     * If the scope is Decode, the path must be callable as
-/// `fn<T: Read>(&mut ende::Encoder<T>) -> EncodingResult<V>`
+/// `fn<T: Read>(&mut ende::Encoder<T>) -> EncodingResult<V, T::Error>`
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
 /// with the same signatures as above.
