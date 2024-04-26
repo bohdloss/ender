@@ -11,7 +11,5 @@ It's currently working but incomplete. What is there to do?
 - [ ] More examples
 - [X] Refactor the proc-macro derive code
 - [ ] Write tests
-
-Planned features:
-- [ ] Zero copy Decoding.
+- [X] Zero copy Decoding.
 - [X] `#[no_std]` support

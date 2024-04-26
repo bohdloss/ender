@@ -47,7 +47,7 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
 	quote!(
 		#[automatically_derived]
 		impl #impl_generics #crate_name::Encode for #item_name #ty_generics #where_clause {
-			fn encode<#encoder_generic: #crate_name::Write>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<(), #encoder_generic::Error> {
+			fn encode<#encoder_generic: #crate_name::io::Write>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
 				#body
 			}
 		}
@@ -76,9 +76,14 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
 	quote!(
 		#[automatically_derived]
 		impl #impl_generics #crate_name::Decode for #item_name #ty_generics #where_clause {
-			fn decode<#encoder_generic: #crate_name::Read>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self, #encoder_generic::Error> {
+			fn decode<#encoder_generic: #crate_name::io::Read>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
 				#body
 			}
 		}
 	).into()
+}
+
+#[proc_macro_derive(BorrowDecode, attributes(ende))]
+pub fn borrow_decode(_input: TokenStream1) -> TokenStream1 {
+	todo!()
 }

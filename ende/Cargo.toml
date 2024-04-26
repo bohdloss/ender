@@ -11,12 +11,11 @@ rustdoc-args = ["--cfg", "doc_cfg", "--generate-link-to-definition"]
 features = ["all"]
 
 [dependencies]
-ende-derive = "1.0.0"
+ende-derive = { version = "1", path = "../ende-derive" }
 array-init = "2.1.0"
 parse-display = "0.9.0"
-widestring = { version = "1.0.2", features = [] }
-embedded-io = { version = "0.6.1", features = [] }
-embedded-io-adapters = { version = "0.6.1", features = ["std"], optional = true }
+bytemuck = { version = "1.15.0" }
+embedded-io = { version = "0.6.1", default-features = false }
 
 # serde feature
 serde = { version = "1.0.197", optional = true, default-features = false }
@@ -28,17 +27,19 @@ bitflags = "2.4.2"
 semver = { version = "1.0.22", features = ["serde"] }
 
 [features]
+default = ["std"]
+
 # Enables all features. Includes serde support, encryption and compression, and the derive macros.
 # The unstable feature still has to be manually enabled.
 all = ["alloc", "std", "derive", "serde"]
 
 # Imports the alloc crate, enabling some additional features and Encode/Decode implementations,
 # at the cost of portability
-alloc = ["embedded-io/alloc", "serde?/alloc", "widestring/alloc"]
+alloc = ["embedded-io/alloc", "serde?/alloc"]
 
 # Imports the std crate, enabling some additional features and Encode/Decode implementations,
 # at the cost of portability
-std = ["alloc", "embedded-io/std", "embedded-io-adapters", "serde?/std", "widestring/std"]
+std = ["alloc", "embedded-io/std", "serde?/std"]
 
 # Enables the serde compatibility layer.
 serde = ["dep:serde"]
