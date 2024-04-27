@@ -38,11 +38,11 @@ enum MyEnum {
         /// fixed numerical encoding and 16-bit width, with a max length of 100
         #[ende(size: big_endian, fixed, 16, max = 100)]
         /// field: String,
-        /// Encode this String to utf16 with a length prefix
-        #[ende(string: utf_16, len_prefix, big_endian)]
+        /// Encode this String with utf16
+        #[ende(string: utf_16, big_endian)]
         utf_16: String,
-        /// Encode this String as a null-terminated ascii string
-        #[ende(string: ascii, nul_term)]
+        /// Encode this String as an ascii string
+        #[ende(string: ascii)]
         ascii: String,
     },
     VariantB {

@@ -13,3 +13,7 @@ It's currently working but incomplete. What is there to do?
 - [ ] Write tests
 - [X] Zero copy Decoding.
 - [X] `#[no_std]` support
+
+Other features that might be added:
+- [ ] Support for `async`
+- [ ] `SeekEncode` and `SeekDecode` traits for formats that require moving backwards and forwards in the data.

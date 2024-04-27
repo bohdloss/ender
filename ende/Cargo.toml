@@ -2,13 +2,19 @@
 name = "ende"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/bohdloss/ende"
+keywords = ["no_std", "ecoding", "ende"]
+categories = ["embedded", "encoding", "parsing", "no-std", "no-std::no-alloc"]
+description = "An encoding library to work with any binary data format"
+license = "MIT"
+readme = "../README.md"
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "doc_cfg", "--generate-link-to-definition"]
 
 [package.metadata.playground]
-features = ["all"]
+features = ["std", "derive"]
 
 [dependencies]
 ende-derive = { version = "1", path = "../ende-derive" }
@@ -30,7 +36,7 @@ semver = { version = "1.0.22", features = ["serde"] }
 default = ["std"]
 
 # Enables all features. Includes serde support, encryption and compression, and the derive macros.
-# The unstable feature still has to be manually enabled.
+# The unstable feature still has to be enabled separately.
 all = ["alloc", "std", "derive", "serde"]
 
 # Imports the alloc crate, enabling some additional features and Encode/Decode implementations,
