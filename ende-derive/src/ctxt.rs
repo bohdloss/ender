@@ -1,11 +1,13 @@
-use crate::flags::{FlagTarget, Flags};
-use crate::parse::{EndeAttribute, Flag, ReprAttribute};
 use parse_display::Display;
-use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2::{Ident, Span};
-use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use proc_macro2::TokenStream as TokenStream2;
+use quote::{format_ident, quote, TokenStreamExt, ToTokens};
+use syn::{Attribute, Data, DeriveInput, Error, Expr, Fields, Generics, Index, Lifetime, parse_quote, Type};
 use syn::spanned::Spanned;
-use syn::{parse_quote, Attribute, Data, DeriveInput, Error, Expr, Fields, Generics, Index, Type};
+
+use crate::flags::{Flags, FlagTarget};
+use crate::lifetime::discover_lifetime_bounds;
+use crate::parse::{EndeAttribute, Flag, ReprAttribute};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum EnumRepr {
@@ -105,6 +107,7 @@ pub struct Variant {
 pub enum Target {
     Encode,
     Decode,
+    BorrowDecode,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Display)]
@@ -118,7 +121,7 @@ impl Scope {
     fn matches(&self, target: Target) -> bool {
         match self {
             Scope::Encode => target == Target::Encode,
-            Scope::Decode => target == Target::Decode,
+            Scope::Decode => target == Target::Decode || target == Target::BorrowDecode,
             Scope::Both => true,
         }
     }
@@ -210,6 +213,12 @@ impl FlagGroup {
     }
 }
 
+/// Holds information about the lifetimes being borrowed when deriving `BorrowDecode`
+pub struct BorrowData {
+    pub decoder: Lifetime,
+    pub sub_lifetimes: Vec<Lifetime>,
+}
+
 /// Holds information about the item we are deriving the implementation for and its fields
 pub struct Ctxt {
     /// Additional flags applied to the item
@@ -232,6 +241,8 @@ pub struct Ctxt {
     pub enum_repr: EnumRepr,
     /// Struct related data. Empty unless ItemType is Struct
     pub struct_data: Struct,
+    /// Lifetime data. Empty unless `target` is `BorrowDecode`
+    pub borrow_data: BorrowData,
 }
 
 impl Ctxt {
@@ -244,10 +255,21 @@ impl Ctxt {
         };
         let mut variants = Vec::new();
 
+        let mut lifetimes = Vec::new();
+
         let item_type = match &input.data {
             Data::Struct(data) => {
                 // Extract the fields
-                let (flavor, fields) = extract_fields_and_flavor(&data.fields, target)?;
+                let (flavor, mut fields) = extract_fields_and_flavor(&data.fields, target)?;
+
+                if target == Target::BorrowDecode {
+                    lifetimes.append(&mut discover_lifetime_bounds(&mut fields)?)
+                } else {
+                    for field in fields.iter_mut() {
+                        field.flags.borrow = None;
+                    }
+                }
+
                 struct_data = Struct { flavor, fields };
 
                 ItemType::Struct
@@ -269,7 +291,15 @@ impl Ctxt {
                 let mut variant_index = VariantIndex::zero();
                 for variant in data.variants.iter() {
                     // Extract the variant fields and flavor
-                    let (flavor, fields) = extract_fields_and_flavor(&variant.fields, target)?;
+                    let (flavor, mut fields) = extract_fields_and_flavor(&variant.fields, target)?;
+
+                    if target == Target::BorrowDecode {
+                        lifetimes.append(&mut discover_lifetime_bounds(&mut fields)?)
+                    } else {
+                        for field in fields.iter_mut() {
+                            field.flags.borrow = None;
+                        }
+                    }
 
                     if let Some((_, discriminant)) = &variant.discriminant {
                         variant_index.value(discriminant);
@@ -297,13 +327,19 @@ impl Ctxt {
             }
         };
 
+        // Deduplicate lifetime bounds
+        if target == Target::BorrowDecode {
+            lifetimes.sort();
+            lifetimes.dedup();
+        }
+        
         // Finally construct a context
         let mut ctxt = Ctxt {
             flags: Flags::new(FlagTarget::Item),
             target,
             encoder: match target {
                 Target::Encode => Ident::new("__encoder", Span::call_site()),
-                Target::Decode => Ident::new("__decoder", Span::call_site()),
+                Target::Decode | Target::BorrowDecode => Ident::new("__decoder", Span::call_site()),
             },
             encoder_generic: Ident::new("__T", Span::call_site()),
             generics: input.generics.clone(),
@@ -312,6 +348,10 @@ impl Ctxt {
             variants,
             enum_repr,
             struct_data,
+            borrow_data: BorrowData {
+                decoder: Lifetime::new("'__data", Span::call_site()),
+                sub_lifetimes: lifetimes,
+            }
         };
 
         // Then obtain the item level flags and apply them
@@ -323,6 +363,8 @@ impl Ctxt {
                 }
             }
         }
+        
+        // TODO Detect and fix any potential name clash here
 
         Ok(ctxt)
     }

@@ -2,7 +2,7 @@ use proc_macro2::Ident;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::ToTokens;
 use syn::spanned::Spanned;
-use syn::{parse_quote, Error, Expr, Path, Type};
+use syn::{parse_quote, Error, Expr, Path, Type, Lifetime};
 
 use crate::ctxt::Scope;
 use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding};
@@ -329,6 +329,9 @@ pub struct Flags {
     /// Modifiers to the underlying Write/Read object itself. Indicate something should be
     /// encrypted or compressed before being encoded or decoded.
     pub stream_modifiers: Vec<StreamModifier>,
+    /// The field requires to be borrowed for these lifetimes, possibly introducing further
+    /// bounds in the derived impl.
+    pub borrow: Option<Vec<Lifetime>>,
 }
 
 impl Flags {
@@ -344,6 +347,7 @@ impl Flags {
             validate: None,
             condition: None,
             stream_modifiers: Vec::new(),
+            borrow: None,
         }
     }
 
@@ -486,6 +490,24 @@ impl Flags {
                     span,
                     r#"The flags "en" and "de" must be the first"#,
                 ))
+            }
+            Flag::Borrow { lifetimes, .. } => {
+                /* Lifetime bounds are solved in a later pass */
+                /* Here we simply track the flag if it is explicitly passed */
+                /* And error when it is duplicated */
+                
+                if self.borrow.is_some() {
+                    return Err(Error::new(
+                        span,
+                        r#""borrow" flag declared more than once"#
+                    ))
+                }
+                
+                if let Some(lifetimes) = lifetimes {
+                    self.borrow = Some(lifetimes.1.into_iter().collect());
+                } else {
+                    self.borrow = Some(Vec::new());
+                }
             }
         }
 

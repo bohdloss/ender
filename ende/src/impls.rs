@@ -685,7 +685,7 @@ macro_rules! slice_borrow {
     ($($ty:ty => $borrow:ident);* $(;)?) => {
 	    $(
 	    #[allow(non_snake_case)]
-	    impl<'data> $crate::BorrowDecode<'data> for &'data [$ty] {
+	    impl<'data: 'a, 'a> $crate::BorrowDecode<'data> for &'a [$ty] {
 		    #[inline]fn borrow_decode<Reader: $crate::io::BorrowRead<'data>>(decoder: &mut $crate::Encoder<Reader>) -> $crate::EncodingResult<Self>{
 			    let len = decoder.read_length()?;
 			    let endianness = decoder.ctxt.settings.num_repr.endianness;
@@ -710,7 +710,7 @@ slice_borrow! {
     f64 => borrow_f64_slice;
 }
 
-impl<'data> BorrowDecode<'data> for &'data [u8] {
+impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [u8] {
     #[inline]
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
@@ -721,7 +721,7 @@ impl<'data> BorrowDecode<'data> for &'data [u8] {
     }
 }
 
-impl<'data> BorrowDecode<'data> for &'data [i8] {
+impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [i8] {
     #[inline]
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
@@ -732,7 +732,7 @@ impl<'data> BorrowDecode<'data> for &'data [i8] {
     }
 }
 
-impl<'data> BorrowDecode<'data> for &'data [usize] {
+impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [usize] {
     #[inline]
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
@@ -746,7 +746,7 @@ impl<'data> BorrowDecode<'data> for &'data [usize] {
     }
 }
 
-impl<'data> BorrowDecode<'data> for &'data [isize] {
+impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [isize] {
     #[inline]
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
@@ -779,7 +779,7 @@ impl Decode for alloc::boxed::Box<str> {
     }
 }
 
-impl<'data> BorrowDecode<'data> for &'data str {
+impl<'data: 'a, 'a> BorrowDecode<'data> for &'a str {
     #[inline]
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,

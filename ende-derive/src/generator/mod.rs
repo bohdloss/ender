@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use syn::{parse_quote, Expr, Type};
 
@@ -15,7 +15,7 @@ impl Ctxt {
     pub fn derive(&self) -> syn::Result<TokenStream2> {
         match self.target {
             Target::Encode => self.derive_encode(),
-            Target::Decode => self.derive_decode(),
+            Target::Decode | Target::BorrowDecode => self.derive_decode(),
         }
     }
 }
@@ -47,7 +47,7 @@ impl<'a> RefCode<'a> {
                     ));
                 }
             }
-            Target::Decode => {
+            Target::Decode | Target::BorrowDecode => {
                 // Here the field already exists, but it is Owned, we need to create a Reference to it
                 let ref name = field.name;
                 self.code.append_all(quote!(
@@ -120,12 +120,16 @@ impl Function {
         })
     }
 
-    pub fn derive_decode(&self, ctxt: &Ctxt, ty: &Type) -> syn::Result<TokenStream2> {
+    pub fn derive_decode(&self, ctxt: &Ctxt, ty: &Type, field: &Field) -> syn::Result<TokenStream2> {
         let ref crate_name = ctxt.flags.crate_name;
         let ref encoder = ctxt.encoder;
         Ok(match self {
             Function::Default => {
-                quote!(<#ty as #crate_name::Decode>::decode(#encoder)?)
+                if field.flags.borrow.is_some() {
+                    quote!(<#ty as #crate_name::BorrowDecode>::borrow_decode(#encoder)?)
+                } else {
+                    quote!(<#ty as #crate_name::Decode>::decode(#encoder)?)
+                }
             }
             Function::Serde(serde_crate) => {
                 quote!(<#ty as #serde_crate::Deserialize>::deserialize(&mut * #encoder)?)
@@ -385,7 +389,7 @@ impl StreamModifier {
                             }
                         }
                     }
-                    Target::Decode => {
+                    Target::Decode | Target::BorrowDecode => {
                         // Expected signature:
                         // fn<Original, Transformed, Value, Fun>(&mut Encoder<Original>, Fun, ...) -> EncodingResult<Value, Original::Error>
                         // where Original: Write,

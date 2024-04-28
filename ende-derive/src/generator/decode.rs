@@ -179,10 +179,10 @@ impl Field {
         let decode = if let Some(converter) = &self.flags.ty_mods {
             converter.convert_from(
                 self,
-                self.flags.function.derive_decode(ctxt, converter.ty())?,
+                self.flags.function.derive_decode(ctxt, converter.ty(), &self)?,
             )?
         } else {
-            self.flags.function.derive_decode(ctxt, field_ty)?
+            self.flags.function.derive_decode(ctxt, field_ty, &self)?
         };
         let modified = self.flags.derive_stream_modifiers(ctxt, decode)?;
         let decode = if self.flags.skip {

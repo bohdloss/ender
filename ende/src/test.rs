@@ -2,7 +2,13 @@
 
 use crate::facade::fake::*;
 
-use ende_derive::{Decode, Encode};
+use ende_derive::{BorrowDecode, Decode, Encode};
+
+#[derive(BorrowDecode)]
+pub struct Borrow<'a, 'b> {
+    string: &'a str,
+    data: &'b [u8],
+}
 
 #[derive(Encode, Decode)]
 #[ende(num: little_endian)]

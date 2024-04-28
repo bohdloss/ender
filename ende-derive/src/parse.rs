@@ -10,7 +10,7 @@ use std::str::FromStr;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Paren;
-use syn::{parenthesized, Error, Expr, LitInt, LitStr, Path, Token, Type};
+use syn::{parenthesized, Error, Expr, LitInt, LitStr, Path, Token, Type, Lifetime};
 
 const FLAGS_USAGE: &str = r#"Unknown Flag. Please refer to the documentation of the macro for a list of valid flags and their usage."#;
 
@@ -33,6 +33,7 @@ pub mod kw {
     custom_keyword!(with);
     custom_keyword!(flatten);
     custom_keyword!(validate);
+    custom_keyword!(borrow);
 
     /* Stream modifiers */
     custom_keyword!(redir);
@@ -281,6 +282,11 @@ pub enum Flag {
         path: Path,
         args: Option<FnArgs>,
     },
+    /// The field must be borrowed from the encoder when deriving `BorrowDecode`
+    Borrow {
+        kw: kw::borrow,
+        lifetimes: Option<(Token![:], Punctuated<Lifetime, Token![,]>)>,
+    }
 }
 
 impl Flag {
@@ -300,6 +306,7 @@ impl Flag {
             Flag::Validate { kw, .. } => kw.span,
             Flag::Modifiers { target, .. } => target.span(),
             Flag::Redir { kw, .. } => kw.span,
+            Flag::Borrow { kw, .. } => kw.span,
         }
     }
 }
@@ -523,6 +530,15 @@ impl Parse for Flag {
                 } else {
                     None
                 },
+            })
+        } else if input.peek(kw::borrow) {
+            Ok(Self::Borrow {
+                kw: input.parse()?,
+                lifetimes: if input.peek(Token![:]) {
+                    Some((input.parse()?, Punctuated::parse_terminated(input)?))
+                } else {
+                    None
+                }
             })
         } else {
             Err(Error::new(input.span(), FLAGS_USAGE))
