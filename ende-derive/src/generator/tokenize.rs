@@ -45,8 +45,6 @@ impl CtxtToTokens for BitWidth {
 impl ToTokens for FlattenParam {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         match self {
-            FlattenParam::Some(..) => tokens.append_all(quote!(1)),
-            FlattenParam::None(..) => tokens.append_all(quote!(0)),
             FlattenParam::Expr(expr) => expr.to_tokens(tokens),
         }
     }

@@ -1,4 +1,4 @@
-use proc_macro2::{TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use syn::{parse_quote, Expr, Type};
 
@@ -120,7 +120,12 @@ impl Function {
         })
     }
 
-    pub fn derive_decode(&self, ctxt: &Ctxt, ty: &Type, field: &Field) -> syn::Result<TokenStream2> {
+    pub fn derive_decode(
+        &self,
+        ctxt: &Ctxt,
+        ty: &Type,
+        field: &Field,
+    ) -> syn::Result<TokenStream2> {
         let ref crate_name = ctxt.flags.crate_name;
         let ref encoder = ctxt.encoder;
         Ok(match self {
@@ -328,15 +333,42 @@ impl AllModifiers {
         restore.extend(variant_restore);
         restore.extend(string_restore);
 
-        if let Some(flatten) = &self.flatten {
+        /* BOOL FLATTEN */
+        if let Some(flatten) = &self.bool_flatten {
             save.push(quote!(
-                let __flatten = #encoder.ctxt.flatten;
+                let __bool_flatten = #encoder.ctxt.bool_flatten;
             ));
             set.push(quote!(
-                #encoder.ctxt.flatten = Some(#flatten);
+                #encoder.ctxt.bool_flatten = Some(#flatten);
             ));
             restore.push(quote!(
-                #encoder.ctxt.flatten = __flatten;
+                #encoder.ctxt.bool_flatten = __bool_flatten;
+            ));
+        }
+
+        /* VARIANT FLATTEN */
+        if let Some(flatten) = &self.variant_flatten {
+            save.push(quote!(
+                let __variant_flatten = #encoder.ctxt.variant_flatten;
+            ));
+            set.push(quote!(
+                #encoder.ctxt.variant_flatten = Some(#flatten);
+            ));
+            restore.push(quote!(
+                #encoder.ctxt.variant_flatten = __variant_flatten;
+            ));
+        }
+
+        /* SIZE FLATTEN */
+        if let Some(flatten) = &self.size_flatten {
+            save.push(quote!(
+                let __size_flatten = #encoder.ctxt.size_flatten;
+            ));
+            set.push(quote!(
+                #encoder.ctxt.size_flatten = Some(#flatten);
+            ));
+            restore.push(quote!(
+                #encoder.ctxt.size_flatten = __size_flatten;
             ));
         }
 

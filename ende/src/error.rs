@@ -1,4 +1,4 @@
-use crate::{BitWidth, Endianness, NumEncoding, StrEncoding};
+use crate::{BitWidth, Endianness, NumEncoding, Opaque, StrEncoding};
 use core::fmt;
 use embedded_io::{Error, ErrorKind, ReadExactError};
 use parse_display::Display;
@@ -13,8 +13,20 @@ macro_rules! impl_error {
     };
 }
 
+/// The signedness of an integer value - whether it can store negative numbers.
+///
+/// E.G. everything `u*` is `Unsigned`, everything `i*` is `Signed`.
+///
+/// This enum is provided for diagnostic purposes in [`EncodingError::SignMismatch`]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+pub enum Signedness {
+    Signed,
+    Unsigned,
+}
+
 /// Represents any kind of error that can happen during encoding and decoding
 #[derive(Debug, Display)]
+#[non_exhaustive]
 pub enum EncodingError {
     /// Generic IO error
     #[display("IO Error occurred: {:0?}")]
@@ -25,21 +37,31 @@ pub enum EncodingError {
     /// A var-int was malformed and could not be decoded
     #[display("Malformed var-int encoding")]
     VarIntError,
-    /// An invalid character value was read
-    #[display("Invalid char value")]
-    InvalidChar,
     /// A value other than `1` or `0` was read while decoding a `bool`
     #[display("Invalid bool value")]
     InvalidBool,
     /// An attempt was made to encode or decode a string, but *something* went wrong.
     #[display("String error: {0}")]
     StringError(StringError),
-    /// Tried to write or read a length greater than the max
-    #[display("A length of {requested} exceeded the max allowed value of {max}")]
-    MaxLengthExceeded { max: usize, requested: usize },
+    /// Tried to write or read a `usize` greater than the max
+    #[display("A size of {requested} exceeded the max allowed value of {max}")]
+    MaxSizeExceeded { max: usize, requested: usize },
     /// Tried to decode an unrecognized enum variant
     #[display("Unrecognized enum variant")]
     InvalidVariant,
+    /// Tried to squeeze a value into fewer bits than what is required to fully represent it.
+    #[display(r#"A value of "{value}" is too large to fit in {requested_width}"#)]
+    TooLarge {
+        value: Opaque,
+        requested_width: BitWidth,
+    },
+    /// Expected to get a value with a specific signedness, but got one with the opposite.
+    /// E.G. Expected an `u8` but got an `i8`.
+    #[display("Expected {expected} value, got {got} value instead")]
+    SignMismatch {
+        expected: Signedness,
+        got: Signedness,
+    },
     /// An attempt was made to flatten an option or result, but the inner value was unexpected.
     /// Example: `#[ende(flatten: some)]` applied on an `Option` containing the `None` variant
     #[display("Flatten error: {0}")]
@@ -153,13 +175,11 @@ impl From<BorrowError> for EncodingError {
 /// Represents an error occurred while encoding or decoding a string, including intermediate
 /// conversion errors and the presence of null bytes in unexpected scenarios.
 #[derive(Debug, Display)]
+#[non_exhaustive]
 pub enum StringError {
     /// A generic conversion error. E.G. converting an `OsStr` to `str` and back
     #[display("String conversion error")]
     ConversionError,
-    /// A string contained non-ascii characters
-    #[display("Invalid ASCII characters in string data")]
-    InvalidAscii,
     /// A string couldn't be converted to-from utf8 (necessary step for the rust string type)
     #[display("Invalid UTF-8 characters in string data")]
     InvalidUtf8,
@@ -169,20 +189,17 @@ pub enum StringError {
     /// A string contained invalid UTF-32 data
     #[display("Invalid UTF-32 characters in string data")]
     InvalidUtf32,
-    /// A c-like string contained zeroes
-    #[display("Null-terminated string contained a null *inside*")]
-    InvalidCString,
 }
 
 impl_error!(StringError);
 
 /// Represents an error related to the "flatten" functionality, with potentially useful diagnostics
 #[derive(Debug, Display)]
+#[non_exhaustive]
 pub enum FlattenError {
-    /// A value other than `1` or `0` was read from the `flatten` state variable
-    #[display("Invalid bool value")]
-    InvalidBool,
-    #[display("Boolean state mismatch: expected {expected}, got {got}")]
+    #[display("Enum discriminant mismatch: expected {expected}, got {got}")]
+    VariantMismatch { expected: Opaque, got: Opaque },
+    #[display("Boolean mismatch: expected {expected}, got {got}")]
     BoolMismatch { expected: bool, got: bool },
     #[display("Length mismatch: expected {expected}, got {got}")]
     LenMismatch { expected: usize, got: usize },
@@ -191,9 +208,8 @@ pub enum FlattenError {
 impl_error!(FlattenError);
 
 #[derive(Debug, Display)]
+#[non_exhaustive]
 pub enum BorrowError {
-    #[display("This type doesn't support zero-copy decoding")]
-    Unsupported,
     #[display(
         "String encoding mismatch: expected {found} while decoding a {while_decoding} string"
     )]

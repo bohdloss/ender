@@ -17,7 +17,8 @@ macro_rules! impl_encode {
     ($($ty:ty => $write:ident);* $(;)? ) => {
 	    $(
 	    impl $crate::Encode for $ty {
-		    #[inline]fn encode<T: $crate::io::Write>(&self, encoder: &mut $crate::Encoder<T>) -> $crate::EncodingResult<()> {
+		    #[inline]
+            fn encode<T: $crate::io::Write>(&self, encoder: &mut $crate::Encoder<T>) -> $crate::EncodingResult<()> {
 		        encoder.$write(*self)
 		    }
 	    }
@@ -68,7 +69,7 @@ impl<T: ?Sized + Encode> Encode for &mut T {
 impl<T: Encode> Encode for &[T] {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for i in 0..self.len() {
             self[i].encode(encoder)?;
         }
@@ -90,7 +91,8 @@ macro_rules! tuple_encode {
     ($($name:ident)+) => {
 	    #[allow(non_snake_case)]
 	    impl<$($name: $crate::Encode),+> $crate::Encode for ($($name),+) {
-		    #[inline]fn encode<__T: $crate::io::Write>(&self, encoder: &mut $crate::Encoder<__T>) -> $crate::EncodingResult<()> {
+		    #[inline]
+            fn encode<__T: $crate::io::Write>(&self, encoder: &mut $crate::Encoder<__T>) -> $crate::EncodingResult<()> {
 		        let ($($name),*) = self;
 			    $(
 			        $crate::Encode::encode($name, encoder)?;
@@ -137,9 +139,9 @@ impl<T: Encode> Encode for Option<T> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
         match self {
-            None => encoder.write_state(false),
+            None => encoder.write_bool(false),
             Some(value) => {
-                encoder.write_state(true)?;
+                encoder.write_bool(true)?;
                 value.encode(encoder)
             }
         }
@@ -151,14 +153,15 @@ impl<T: Encode, E: Encode> Encode for Result<T, E> {
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
         match self {
             Err(err) => {
-                encoder.write_state(false)?;
-                err.encode(encoder)
+                encoder.write_bool(false)?;
+                err.encode(encoder)?;
             }
             Ok(ok) => {
-                encoder.write_state(true)?;
-                ok.encode(encoder)
+                encoder.write_bool(true)?;
+                ok.encode(encoder)?;
             }
-        }
+        };
+        Ok(())
     }
 }
 
@@ -258,7 +261,7 @@ impl<T: Encode> Encode for std::sync::RwLock<T> {
 impl<K: Encode, V: Encode> Encode for alloc::collections::BTreeMap<K, V> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for (k, v) in self.iter() {
             k.encode(encoder)?;
             v.encode(encoder)?;
@@ -272,7 +275,7 @@ impl<K: Encode, V: Encode> Encode for alloc::collections::BTreeMap<K, V> {
 impl<K: Encode> Encode for alloc::collections::BTreeSet<K> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for k in self.iter() {
             k.encode(encoder)?;
         }
@@ -285,7 +288,7 @@ impl<K: Encode> Encode for alloc::collections::BTreeSet<K> {
 impl<K: Encode, V: Encode> Encode for std::collections::hash_map::HashMap<K, V> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for (k, v) in self.iter() {
             k.encode(encoder)?;
             v.encode(encoder)?;
@@ -299,7 +302,7 @@ impl<K: Encode, V: Encode> Encode for std::collections::hash_map::HashMap<K, V> 
 impl<K: Encode> Encode for std::collections::hash_set::HashSet<K> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for k in self.iter() {
             k.encode(encoder)?;
         }
@@ -312,7 +315,7 @@ impl<K: Encode> Encode for std::collections::hash_set::HashSet<K> {
 impl<T: Encode> Encode for alloc::collections::BinaryHeap<T> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for v in self.iter() {
             v.encode(encoder)?;
         }
@@ -325,7 +328,7 @@ impl<T: Encode> Encode for alloc::collections::BinaryHeap<T> {
 impl<T: Encode> Encode for alloc::collections::LinkedList<T> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for v in self.iter() {
             v.encode(encoder)?;
         }
@@ -338,7 +341,7 @@ impl<T: Encode> Encode for alloc::collections::LinkedList<T> {
 impl<T: Encode> Encode for alloc::vec::Vec<T> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for v in self.iter() {
             v.encode(encoder)?;
         }
@@ -351,7 +354,7 @@ impl<T: Encode> Encode for alloc::vec::Vec<T> {
 impl<T: Encode> Encode for alloc::collections::VecDeque<T> {
     #[inline]
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_length(self.len())?;
+        encoder.write_usize(self.len())?;
         for v in self.iter() {
             v.encode(encoder)?;
         }
@@ -508,14 +511,14 @@ impl<T: Encode> Encode for Bound<T> {
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
         match self {
             Bound::Included(x) => {
-                encoder.write_uvariant(0)?;
+                encoder.write_uvariant(0u8)?;
                 x.encode(encoder)
             }
             Bound::Excluded(x) => {
-                encoder.write_uvariant(1)?;
+                encoder.write_uvariant(1u8)?;
                 x.encode(encoder)
             }
-            Bound::Unbounded => encoder.write_uvariant(2),
+            Bound::Unbounded => encoder.write_uvariant(2u8),
         }
     }
 }
@@ -536,11 +539,11 @@ impl Encode for std::net::IpAddr {
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
         match self {
             Self::V4(x) => {
-                encoder.write_uvariant(0)?;
+                encoder.write_uvariant(0u8)?;
                 x.encode(encoder)
             }
             Self::V6(x) => {
-                encoder.write_uvariant(1)?;
+                encoder.write_uvariant(1u8)?;
                 x.encode(encoder)
             }
         }
@@ -572,11 +575,11 @@ impl Encode for std::net::SocketAddr {
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
         match self {
             Self::V4(x) => {
-                encoder.write_uvariant(0)?;
+                encoder.write_uvariant(0u8)?;
                 x.encode(encoder)
             }
             Self::V6(x) => {
-                encoder.write_uvariant(1)?;
+                encoder.write_uvariant(1u8)?;
                 x.encode(encoder)
             }
         }
@@ -687,7 +690,7 @@ macro_rules! slice_borrow {
 	    #[allow(non_snake_case)]
 	    impl<'data: 'a, 'a> $crate::BorrowDecode<'data> for &'a [$ty] {
 		    #[inline]fn borrow_decode<Reader: $crate::io::BorrowRead<'data>>(decoder: &mut $crate::Encoder<Reader>) -> $crate::EncodingResult<Self>{
-			    let len = decoder.read_length()?;
+			    let len = decoder.read_usize()?;
 			    let endianness = decoder.ctxt.settings.num_repr.endianness;
 			    let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
 			    decoder.$borrow(len, num_encoding, endianness)
@@ -715,7 +718,7 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [u8] {
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
     ) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
         decoder.borrow_u8_slice(len, num_encoding)
     }
@@ -726,7 +729,7 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [i8] {
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
     ) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
         decoder.borrow_i8_slice(len, num_encoding)
     }
@@ -737,7 +740,7 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [usize] {
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
     ) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.size_repr.num_encoding;
         let endianness = decoder.ctxt.settings.size_repr.endianness;
         let bit_width = decoder.ctxt.settings.size_repr.width;
@@ -751,7 +754,7 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [isize] {
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
     ) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.size_repr.num_encoding;
         let endianness = decoder.ctxt.settings.size_repr.endianness;
         let bit_width = decoder.ctxt.settings.size_repr.width;
@@ -765,7 +768,7 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [isize] {
 impl Decode for alloc::string::String {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        decoder.read_string()
+        decoder.read_str()
     }
 }
 
@@ -787,18 +790,15 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a str {
         // Can only be borrowed when the string encoding is utf-8
         // else the user might get some surprises if we just assume it to be utf-8
         let str_encoding = decoder.ctxt.settings.string_repr.str_encoding;
-        match str_encoding {
-            StrEncoding::Ascii | StrEncoding::Utf8 => {}
-            _ => {
-                return Err(BorrowError::StrEncodingMismatch {
-                    found: str_encoding,
-                    while_decoding: StrEncoding::Utf8,
-                }
-                .into())
+        if str_encoding != StrEncoding::Utf8 {
+            return Err(BorrowError::StrEncodingMismatch {
+                found: str_encoding,
+                while_decoding: StrEncoding::Utf8,
             }
+            .into());
         }
 
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let bytes = decoder.borrow_u8_slice(len, NumEncoding::Fixed)?;
         Ok(core::str::from_utf8(bytes).map_err(|_| StringError::InvalidUtf8)?)
     }
@@ -807,7 +807,7 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a str {
 impl<T: Decode> Decode for Option<T> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(match decoder.read_state()? {
+        Ok(match decoder.read_bool()? {
             true => Some(T::decode(decoder)?),
             false => None,
         })
@@ -817,7 +817,7 @@ impl<T: Decode> Decode for Option<T> {
 impl<T: Decode, E: Decode> Decode for Result<T, E> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(match decoder.read_state()? {
+        Ok(match decoder.read_bool()? {
             true => Ok(T::decode(decoder)?),
             false => Err(E::decode(decoder)?),
         })
@@ -845,7 +845,7 @@ impl<T: Decode> Decode for alloc::boxed::Box<T> {
 impl<T: Decode> Decode for alloc::boxed::Box<[T]> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut vec = alloc::vec::Vec::new();
         vec.reserve_exact(len);
 
@@ -873,12 +873,13 @@ where
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
-impl<'a, T: ?Sized + alloc::borrow::ToOwned> BorrowDecode<'a> for alloc::borrow::Cow<'a, T>
+impl<'data: 'a, 'a, T: ?Sized + alloc::borrow::ToOwned> BorrowDecode<'data>
+    for alloc::borrow::Cow<'a, T>
 where
-    &'a T: BorrowDecode<'a>,
+    &'a T: BorrowDecode<'data>,
 {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'a>>(
+    fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
     ) -> EncodingResult<Self> {
         Ok(Self::Borrowed(<&T>::borrow_decode(decoder)?))
@@ -940,7 +941,7 @@ impl<T: Decode> Decode for alloc::sync::Arc<T> {
 impl<K: Ord + Decode, V: Decode> Decode for alloc::collections::BTreeMap<K, V> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut map = Self::new();
 
         for _ in 0..len {
@@ -956,7 +957,7 @@ impl<K: Ord + Decode, V: Decode> Decode for alloc::collections::BTreeMap<K, V> {
 impl<K: Ord + Decode> Decode for alloc::collections::BTreeSet<K> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut set = Self::new();
 
         for _ in 0..len {
@@ -972,7 +973,7 @@ impl<K: Ord + Decode> Decode for alloc::collections::BTreeSet<K> {
 impl<T: Ord + Decode> Decode for alloc::collections::BinaryHeap<T> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut heap = Self::with_capacity(len);
 
         for _ in 0..len {
@@ -990,7 +991,7 @@ impl<K: core::hash::Hash + Eq + Decode, V: Decode> Decode
 {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut map = Self::with_capacity(len);
 
         for _ in 0..len {
@@ -1006,7 +1007,7 @@ impl<K: core::hash::Hash + Eq + Decode, V: Decode> Decode
 impl<K: core::hash::Hash + Eq + Decode> Decode for std::collections::hash_set::HashSet<K> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut map = Self::with_capacity(len);
 
         for _ in 0..len {
@@ -1022,7 +1023,7 @@ impl<K: core::hash::Hash + Eq + Decode> Decode for std::collections::hash_set::H
 impl<T: Decode> Decode for alloc::collections::LinkedList<T> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut list = Self::new();
 
         for _ in 0..len {
@@ -1038,7 +1039,7 @@ impl<T: Decode> Decode for alloc::collections::LinkedList<T> {
 impl<T: Decode> Decode for alloc::collections::VecDeque<T> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut deque = Self::with_capacity(len);
 
         for _ in 0..len {
@@ -1054,7 +1055,7 @@ impl<T: Decode> Decode for alloc::collections::VecDeque<T> {
 impl<T: Decode> Decode for alloc::vec::Vec<T> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_length()?;
+        let len = decoder.read_usize()?;
         let mut vec = Self::with_capacity(len);
 
         for _ in 0..len {
@@ -1095,7 +1096,7 @@ impl Decode for alloc::boxed::Box<CStr> {
     }
 }
 
-impl<'data> BorrowDecode<'data> for &'data CStr {
+impl<'data: 'a, 'a> BorrowDecode<'data> for &'a CStr {
     #[inline]
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
@@ -1142,7 +1143,7 @@ impl Decode for alloc::boxed::Box<std::ffi::OsStr> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
-impl<'data> BorrowDecode<'data> for &'data std::ffi::OsStr {
+impl<'data: 'a, 'a> BorrowDecode<'data> for &'a std::ffi::OsStr {
     #[inline]
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
@@ -1189,7 +1190,7 @@ impl Decode for alloc::boxed::Box<std::path::Path> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
-impl<'data> BorrowDecode<'data> for &'data std::path::Path {
+impl<'data: 'a, 'a> BorrowDecode<'data> for &'a std::path::Path {
     #[inline]
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
@@ -1245,7 +1246,7 @@ impl Decode for RangeFull {
 impl<T: Decode> Decode for Bound<T> {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(match decoder.read_uvariant()? {
+        Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::Included(T::decode(decoder)?),
             1 => Self::Excluded(T::decode(decoder)?),
             2 => Self::Unbounded,
@@ -1261,7 +1262,7 @@ macro_rules! impl_nz_decode {
 		    #[inline]fn decode<T: $crate::io::Read>(decoder: &mut $crate::Encoder<T>) -> $crate::EncodingResult<Self> {
 		        Ok(
 			        Self::new(decoder.$read()?)
-			        .ok_or($crate::EncodingError::validation_error(format_args!("Found a value of 0 while decoding a NonZero*")))?
+			        .ok_or($crate::EncodingError::validation_error(format_args!(concat!("Found a value of 0 while decoding a ", stringify!($ty)))))?
 		        )
 		    }
 	    }
@@ -1298,7 +1299,7 @@ impl Decode for ! {
 impl Decode for std::net::IpAddr {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(match decoder.read_uvariant()? {
+        Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::V4(decoder.decode_value()?),
             1 => Self::V6(decoder.decode_value()?),
             _ => return Err(EncodingError::InvalidVariant),
@@ -1329,7 +1330,7 @@ impl Decode for std::net::Ipv6Addr {
 impl Decode for std::net::SocketAddr {
     #[inline]
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(match decoder.read_uvariant()? {
+        Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::V4(decoder.decode_value()?),
             1 => Self::V6(decoder.decode_value()?),
             _ => return Err(EncodingError::InvalidVariant),

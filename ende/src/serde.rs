@@ -139,7 +139,7 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        self.write_state(false)?;
+        self.write_bool(false)?;
         Ok(())
     }
 
@@ -147,7 +147,7 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
     where
         G: Serialize,
     {
-        self.write_state(true)?;
+        self.write_bool(true)?;
         value.serialize(self)
     }
 
@@ -165,7 +165,7 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
         variant_index: u32,
         _variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        self.write_uvariant(variant_index as u128)
+        self.write_uvariant(variant_index)
     }
 
     fn serialize_newtype_struct<G: ?Sized>(
@@ -189,13 +189,13 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
     where
         G: Serialize,
     {
-        self.write_uvariant(variant_index as u128)?;
+        self.write_uvariant(variant_index)?;
         value.serialize(self)
     }
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
         let len = len.ok_or(serde_error("Length must be known upfront"))?;
-        self.write_length(len)?;
+        self.write_usize(len)?;
         Ok(self)
     }
 
@@ -218,13 +218,13 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        self.write_uvariant(variant_index as u128)?;
+        self.write_uvariant(variant_index)?;
         Ok(self)
     }
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
         let len = len.ok_or(serde_error("Length must be known upfront"))?;
-        self.write_length(len)?;
+        self.write_usize(len)?;
         Ok(self)
     }
 
@@ -243,7 +243,7 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        self.write_uvariant(variant_index as u128)?;
+        self.write_uvariant(variant_index)?;
         Ok(self)
     }
 
@@ -561,7 +561,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
     where
         V: Visitor<'de>,
     {
-        if self.read_state()? {
+        if self.read_bool()? {
             visitor.visit_some(self)
         } else {
             visitor.visit_none()
@@ -601,7 +601,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
     where
         V: Visitor<'de>,
     {
-        let len = self.read_length()?;
+        let len = self.read_usize()?;
         visitor.visit_seq(SeqAccessEncoder {
             encoder: self,
             length: len,
@@ -637,7 +637,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
     where
         V: Visitor<'de>,
     {
-        let len = self.read_length()?;
+        let len = self.read_usize()?;
         visitor.visit_map(MapAccessEncoder {
             encoder: self,
             length: len,
@@ -675,7 +675,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_u32(self.read_uvariant()? as u32)
+        visitor.visit_u32(self.read_uvariant()?)
     }
 
     fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>

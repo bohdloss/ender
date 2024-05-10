@@ -2,10 +2,139 @@
 #![cfg_attr(feature = "unstable", feature(never_type))]
 #![cfg_attr(feature = "unstable", feature(error_in_core))]
 #![cfg_attr(not(feature = "std"), no_std)]
+// #![doc = include_str!("../../README.md")]
+//! A rust **EN**coding and **DE**coding library for writing custom protocols and file formats.
+//!
+//! It aims to be **intuitive**, **expandable** and **correct**.
+//!
+//! # Example
+//!
+//! ```rust
+//! # use ende::*;
+//! # use ende::io::*;
+//! # #[derive(Debug, PartialEq, Encode, Decode)]
+//! # #[ende(crate: ende)]
+//! # struct Person {
+//! # 	name: String,
+//! #    age: u64,
+//! #    height: f32,
+//! #    eye_color: EyeColor,
+//! # }
+//! #
+//! # #[derive(Debug, PartialEq, Encode, Decode)]
+//! # #[ende(crate: ende)]
+//! # enum EyeColor {
+//! #    Brown,
+//! #    Blue,
+//! #    Green,
+//! #    Gray,
+//! #    Black
+//! # }
+//! #
+//! # fn hidden() -> EncodingResult<()> {
+//! let mut the_matrix = vec![0u8; 256];
+//!
+//! // Summon John into existence!
+//! let john = Person {
+//!     name: String::from("John"),
+//!     age: 35,
+//! 	height: 1.75,
+//! 	eye_color: EyeColor::Brown
+//! };
+//!
+//! // Encode John into the matrix
+//! encode_with(SliceMut::new(&mut the_matrix), Context::new(), &john)?;
+//!
+//! // Bring him back
+//! let john_2: Person = decode_with(Slice::new(&the_matrix), Context::new())?;
+//!
+//! // But is he really the same John?
+//! assert_eq!(john, john_2);
+//! # Ok(())
+//! # }
+//! # fn main() { hidden().unwrap() }
+//! ```
+//!
+//! # Encoding format
+//!
+//! The encoding process aims at being **correct** and **unsurprising**.
+//!
+//!
+//!
+//! Ende supports a series of options, which can be changed *during*
+//! the encoding/decoding process to get certain parts of a binary format
+//! to be represented exactly how you want them.
+//!
+//! This can be done in a manual implementation as well as with the derive
+//! macro, using the custom attributes provided.
+//!
+//! Certain types also support "flattening", which means omitting information
+//! known from the context.
+//! For instance, you can omit writing whether an `Option` is present if
+//! that information is already stored somewhere else in the file format.
+//!
+//! For *integer primitives*, *usize*, and *enum variants* you can customize the endianness,
+//! the numerical encoding (read: var-ints), the bit-width (how many bytes
+//! does a `usize` or enum variant take up in your encoding format?),
+//! the max-size (to prevent maliciously crafted binary formats to cause
+//! unlimited-size allocations).
+//!
+//! ### Var-int format
+//! - Fixed - not var-int, simply encode the number as-is
+//! - Leb128
+//! - Protobuf - both its zigzag and "wasteful" variants
+//!
+//! ### String formats
+//! As for strings, they are currently length-prefixed, but support for null
+//! terminated strings will be added.
+//! - Utf8
+//! - Utf16
+//! - Utf32
+//!
+//! If you need a new var-int encoding or string encoding added, feel free
+//! to open a PR!
+//!
+//! # Motivation
+//!
+//! One of the main reasons I made this library is because I found myself
+//! needing more sophisticate macros and runtime flexibility for existing
+//! binary formats.
+//!
+//! While for example [`bincode`](https://crates.io/crates/bincode) is perfectly
+//! ok for many applications, `ende` was made with compatibility with existing
+//! data formats in mind.
+//!
+//! For this very purpose, many internal details of the encoder are exposed
+//! through settings or the derive macros themselves, for the purpose of fine-tuning
+//! the data format exactly how you want it, while providing an easy-to-understand interface.
+//!
+//! # Deriving
+//!
+//! A big selling point of `ende` are its macros, which allow you to heavily
+//! customize the codegen through a series of attributes.
+//! To learn more about those, check out `DERIVE.md` in this crate's repository root.
+//!
+//! # Where to start
+//!
+//! TODO add examples
+//!
+//! # MSRV
+//!
+//! This crate will always target the latest version of rust, in order
+//! to get the access to new features as soon as they are released and
+//! update the code accordingly if beneficial.
+//! Of course, breaking API changes will be accompanied by a major version
+//! bump.
+//!
+//! # Future plans
+//!
+//! I plan on adding support for a `SeekEncode` and `SeekDecode` set of traits
+//! and relative macro attributes for file formats where the data is not laid sequentially.
+//!
+//! I also plan on adding support for `async` io through a feature gate.
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
-extern crate core;
 
 use core::any::Any;
 use core::fmt::Debug;
@@ -14,11 +143,346 @@ use core::mem::replace;
 
 use parse_display::Display;
 
-#[doc = include_str!("../derive.md")]
+/// Helper macros to derive [`Encode`], [`Decode`] and [`BorrowDecode`] for a `struct` or `enum`.<br>
+/// This macro supports a series of helper flags to aid customization.
+///
+/// All flags follow the following format:
+/// `#[ende(flag1; flag2; flag2; ...)]`
+///
+/// The 2 special flags `en` and `de`, called Scope flags, can be used only at the beginning
+/// of the list to indicate that all the flags in the attribute declaration only apply to the
+/// encoding process (`en`) or the decoding process (`de`).
+///
+/// If neither of those flags are specified, then it is assumed that all the flags in the
+/// attribute declaration apply to both encoding and decoding.
+///
+/// Whenever a flag is said to accept an `$expr`, this means any expression is accepted,
+/// and that it will have access to an immutable reference to all the fields that have been
+/// decoded so far (actually all the fields while encoding), but the `validate` flag additionally
+/// provides a reference to the field it is applied on.<br>
+/// If the fields are part of a tuple struct/variant, the references will be named `m{idx}` where `idx` are the
+/// indexes of the tuple fields (E.G. `m0`, `m1`, ...), otherwise their names will match those of the fields themselves.
+///
+/// The flags currently implemented are split into 5 groups:
+/// # 1. Setting Modifiers
+/// Setting-Modifier flags temporarily change certain settings of the encoder and can be applied
+/// to Fields or Items (the whole struct or enum).<br>
+/// Multiple can be specified at the same time, as long as they don't overlap.<br>
+/// All setting modifiers follow the `$target: $mod1, $mod2, ...` pattern.
+///
+/// - Endianness modifiers: `big_endian`, `little_endian`
+///   - Available targets:
+///     - `num`
+///     - `size`
+///     - `variant`
+///     - `string`
+/// - Numerical encoding modifiers: `fixed`, `leb128`, `protobuf_wasteful`, `protobuf_zz`
+///   - Available targets:
+///     - `num`,
+///     - `size`,
+///     - `variant`
+/// - Bit-width modifiers: `bit8`, `bit16`, `bit32`, `bit64`, `bit128`
+///   - Available targets:
+///     - `size`
+///     - `variant`
+/// - Max-size modifier: `max = $expr`
+///   - Available targets:
+///     - `size`
+/// - String encoding modifier: `utf8`, `utf16`, `utf32`
+///   - Available targets:
+///     - `string`
+///     <br>
+/// ### Example:
+/// ```rust
+/// # use ende::{Encode, Decode};
+/// #[derive(Encode, Decode)]
+/// # #[ende(crate: ende)]
+/// /// The variants of this enum will be encoded in the little endian ordering,
+/// /// using a fixed numerical encoding and a 32-bit width.
+/// #[ende(variant: little_endian, fixed, bit32)]
+/// enum MyEnum {
+///     VariantA {
+///         /// The length of this String will be encoded using big endian ordering,
+///         /// fixed numerical encoding and 16-bit width, with a max length of 100
+///         #[ende(size: big_endian, fixed, bit16, max = 100)]
+///         field: String,
+///         /// Encode this String with utf16 big endian
+///         #[ende(string: utf16, big_endian)]
+///         utf_16: String,
+///         /// Encode this String as an utf8 string
+///         #[ende(string: utf8)]
+///         utf_8: String,
+///     },
+///     VariantB {
+///         /// This number will be encoded using little endian ordering, and the
+///         /// leb128 [NumEncoding][`ende::NumEncoding`]
+///         #[ende(num: little_endian, leb128)]
+///         field: u64,
+///         #[ende(num: protobuf_zz)]
+///         zigzag: i128,
+/// 	},
+/// }
+/// ```
+/// # 2. Stream Modifiers
+/// Stream-Modifier flags temporarily change the underlying reader/writer, and can be applied
+/// to Fields or Items.<br>
+/// Note that the order in which stream modifiers are declared is very important:<br>
+/// They are applied in the declaration order during encoding, but in the reverse order during
+/// decoding, for consistency. However, the item-level modifiers take priority over the field-level
+/// modifiers (see [ambiguous example](#ambiguous-example)).<br>
+/// * `redir: $path(...)` - Currently the only supported stream modifier, but more may
+/// be added in the future. Uses the given path to find an encoding/decoding function which
+/// alters the writer/reader and passes a modified encoder to a closure.<br>
+/// This can be used to implement encryption, compression and other transformations of the
+/// underlying stream, or even redirections to another stream.<br>
+/// The implementation of a redir function can be non-trivial and the signature can be
+/// cryptic, therefore it is recommended you only create your own stream transforms if you know what
+/// you're doing, in which case you should take a look at the [facade module][`facade`].<br>
+///     * If the scope is Encode, the path must be callable as `encode`.<br>
+///     * If the scope is Decode, the path must be callable as `decode`.<br>
+///     * If no scope is specified, the path must point to a module with encoding and decoding functions
+/// with the same signatures as above.
+/// ### Example:
+/// ```rust
+/// # use ende::{Encode, Decode};
+/// # use ende::facade::fake::*;
+/// #[derive(Encode, Decode)]
+/// # #[ende(crate: ende)]
+/// struct MyStruct {
+///     secret_key: Vec<u8>,
+///     iv: Vec<u8>,
+///     /// While **encoding**, this field is compressed -> encrypted.
+///     /// While **decoding**, this field is decrypted -> decompressed.
+///     #[ende(redir: gzip(9))]
+///     #[ende(redir: aes(iv, secret_key))]
+///     super_secret_data: Vec<u8>,
+/// }
+/// ```
+/// ### Ambiguous example:
+/// ```rust
+/// # use ende::{Encode, Decode};
+/// # use ende::facade::fake::*;
+/// #[derive(Encode, Decode)]
+/// # #[ende(crate: ende)]
+/// /// Because of the priority rules of items over fields, this is ambiguous, see below
+/// #[ende(redir: gzip(9))]
+/// struct MyStruct {
+///     /// While **encoding**, this field is encrypted -> compressed.
+///     /// While **decoding**, this field is decompressed -> decrypted.
+///     /// Because the "compressed" flag is declared before the "encrypted" flag, one might
+///     /// think they are applied in that order. However, since the item-level flag takes priority,
+///     /// it is applied *after* the field flag.
+///     ///
+///     /// According to your needs, this might not be what you want, so be careful when mixing
+///     /// item-level and field-level stream modifiers.
+///     #[ende(redir: aes(&[], &[]))]
+///     super_secret_data: Vec<u8>,
+/// }
+/// ```
+/// # 3. Function Modifiers
+/// Function-Modifier flags change the function that is used to encode/decode a field or item.
+/// * `serde: $crate` - Field will be serialized/deserialized with a serde compatibility layer.<br>
+/// Optionally, the serde crate name can be specified (useful if the serde crate was re-exported under
+/// another name).
+/// * `with: $path` - Uses the given path to find the encoding/decoding function.<br>
+///     * If the scope is Encode, the path must be callable as
+/// `fn<T: Write>(&V, &mut ende::Encoder<T>) -> EncodingResult<()>`
+/// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
+///     * If the scope is Decode, the path must be callable as
+/// `fn<T: Read>(&mut ende::Encoder<T>) -> EncodingResult<V>`
+/// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
+///     * If no scope is specified, the path must point to a module with encoding and decoding functions
+/// with the same signatures as above.
+/// ### Example:
+/// ```rust
+/// # use ende::{Encode, Decode};
+/// # use ende::facade::fake::rsa;
+/// # use uuid::Uuid;
+/// # use person_encoder::Person;
+/// #[derive(Encode, Decode)]
+/// # #[ende(crate: ende)]
+/// struct Friends {
+/// 	/// Has Serialize/Deserialize implementations, but no Encode/Decode implementations.
+///     /// A perfect fit for integrating with serde!
+///     #[ende(serde)]
+///     uuid: Uuid,
+///     /// Here we demonstrate how the with flag changes based on whether a scope
+///     /// is declared. This:
+///     #[ende(with: person_encoder)]
+///     friend1: Person,
+///     /// ...is equivalent to this!
+///     #[ende(en; with: person_encoder::encode)]
+///     #[ende(de; with: person_encoder::decode)]
+///     friend2: Person,
+///     /// Not the smartest way to store a private key!
+///     private_key: Vec<u8>,
+///     public_key: Vec<u8>,
+///     /// This block of data will be encrypted before being encoded using the public key,
+///     /// and decrypted after being decoded using the private key.
+///     #[ende(with: rsa(public_key, private_key))]
+///     even_more_secret_data: Vec<u8>,
+/// }
+/// mod person_encoder {
+/// #    use ende::io::{Write, Read};
+/// #    use ende::{Encoder, EncodingResult, Encode};
+/// #
+/// #     pub struct Person {
+/// #        name: String,
+/// #        surname: String,
+/// #        age: u32,
+/// #     }
+/// #
+///      pub fn encode<T: Write>(person: &Person, encoder: &mut Encoder<T>) -> EncodingResult<()> {
+///          /* ... */
+/// #        person.name.encode(encoder)?;
+/// #        person.surname.encode(encoder)?;
+/// #        person.age.encode(encoder)?;
+/// #        Ok(())
+///      }
+/// #
+///      pub fn decode<T: Read>(encoder: &mut Encoder<T>) -> EncodingResult<Person> {
+///          /* ... */
+/// #        Ok(Person {
+/// #            name: encoder.decode_value()?,
+/// #            surname: encoder.decode_value()?,
+/// #            age: encoder.decode_value()?,
+/// #   	})
+///      }
+/// }
+/// ```
+/// # 4. Type Modifiers
+/// Type-Modifier flags change the type of the value that's encoded, and change it back after
+/// decoding it.<br>
+/// * `as: $ty` - Converts the value of the field to `$ty` before encoding it
+/// and back to the original field type after decoding it.<br>
+/// The conversion is done through the `as` keyword.
+/// * `into: $ty` - Converts the value of the field to `$ty` before encoding it
+/// and back to the original field type after decoding it.<br>
+/// The conversion is done through the `From` and `Into` traits.
+/// ### Example:
+/// ```rust
+/// # use ende::{Encode, Decode};
+/// #
+/// #[derive(Encode, Decode)]
+/// # #[ende(crate: ende)]
+/// struct Mountain {
+///     /// Height is encoded as a `u16`, then decoded back to a `f64`.
+///     /// These operations are performed using the `as` keyword.
+///     #[ende(as: u16)]
+///     height: f64,
+///     /// Boulder is encoded as a `BigRock`, then decoded back to a `Boulder`.
+///     /// This can be done because `BigRock` implements `From<Boulder>`, and
+///     /// `Boulder` implements `From<BigRock>`.
+///     #[ende(into: BigRock)]
+///     boulder: Boulder,
+/// }
+///
+/// /// Note: `BigRock` is required to implement `Encode` and `Decode`,
+/// /// but `Boulder` is not.
+/// #[derive(Encode, Decode)]
+/// # #[ende(crate: ende)]
+/// struct BigRock {
+///     weight: f64
+/// }
+///
+/// /* From<Boulder> and From<BigRock> impls here... */
+/// # impl From<Boulder> for BigRock {
+/// #    fn from(value: Boulder) -> Self {
+/// #   	Self {
+/// #            weight: value.weight
+/// #   	}
+/// #    }
+/// # }
+/// #
+/// # #[derive(Clone)]
+/// # struct Boulder {
+/// #    weight: f64,
+/// #    radius: f64
+/// # }
+/// #
+/// # impl From<BigRock> for Boulder {
+/// #    fn from(value: BigRock) -> Self {
+/// #   	Self {
+/// #   		weight: value.weight,
+/// #           radius: 1.0
+/// #   	}
+/// #    }
+/// # }
+/// ```
+/// # 5. Helpers
+/// Helper flags change certain parameters or add conditions for when a field
+/// or item should be encoded/decoded.<br>
+/// * `crate: $crate` - Overwrites the default crate name which is assumed to be `ende`.
+/// Can only be applied to items.
+/// * `if: $expr` - The field will only be encoded/decoded if the given expression
+/// evaluates to true, otherwise the default value is computed.
+/// * `default: $expr` - Overrides the default fallback for when a value can't be
+/// decoded, which is `Default::default()`
+/// * `skip` - Will not encode/decode this field.
+/// When decoding, computes the default value.
+/// * `validate: $expr, $format_string, $arg1, $arg2, $arg3, ...` - Before encoding/after decoding, returns an error if the
+/// expression evaluates to false. The error message will use the given formatting (if present).
+/// * `flatten: $expr` - Indicates that the length of the given field (for example
+/// a Vec or HashMap) doesn't need to be encoded/decoded, because it is known from the context.
+/// Can also be used with an `Option` in conjunction with the `if` flag and without the `$expr`
+/// to indicate that the presence of an optional value is known from the context.
+/// * `borrow: $lif1, $lif2, $lif3, ...` - Only available when deriving `BorrowDecode`. Indicates this field
+/// should be decoded using its borrowing decode implementation, and allows you to optionally specify a
+/// set of lifetimes to override those normally inferred by the macro. These lifetimes will be bound
+/// to the lifetime of the encoder's data.
+/// <br>
+/// ### Example:
+///
+/// ```rust
+/// # use std::borrow::Cow;
+/// # use ende::{Encode, Decode, BorrowDecode};
+/// # use uuid::Uuid;
+/// /// Hehe >:3
+/// extern crate ende as enderman;
+///
+/// #[derive(Encode, Decode, BorrowDecode)]
+/// /// We specify the name of the re-exported ende crate.
+/// #[ende(crate: enderman)]
+/// struct PersonEntry<'record> {
+///   /// Will come in handy later
+///   name_present: bool,
+///   /// Similar to the previous example, but with the addition of the flatten flag!
+///   /// We know a Uuid is always 16 bytes long, so we omit writing/reading that data.
+///   #[ende(serde; flatten size: 16)]
+///   uuid: Uuid,
+///   /// Just the string version of the uuid, not present in the binary data.
+///   /// Skip the Encoding step, and Decode it from the uuid.
+///   #[ende(skip; default: uuid.to_string())]
+///   uuid_string: String,
+///   /// We know whether this is present from the context, therefore we don't write whether
+///   /// the optional value is present, and when reading we assume it is.
+///   /// Since the "if" flag is also present, the field will only be decoded if the expression
+///   /// evaluates to true, making the previous operation safe
+///   /// (no risk of decoding garbage data)
+///   #[ende(flatten bool: true; if: * name_present)]
+///   name: Option<String>,
+///   /// This might be too long to clone from the decoder, so we borrow it instead.
+///   /// Decode impl -> Cow::Owned
+///   /// BorrowDecode impl -> Cow::Borrowed
+///   /// The macro will infer the borrow lifetime to be `'record`.
+///   #[ende(borrow)]
+///   criminal_record: Cow<'record, str>,
+///   /// Only present if the name is also present, but we want to provide a custom default!
+///   #[ende(default: String::from("Smith"); if: * name_present)]
+///   surname: String,
+///   /// No-one allowed before 18!
+///   #[ende(validate: * age >= 18, "User is too young: {}", age)]
+///   age: u32,
+///   /// This is temporary data, we don't care about including it in the binary format.
+///   #[ende(skip; default: 100)]
+///   health: u64,
+/// }
+/// ```
 #[cfg(feature = "derive")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "derive")))]
 pub use ende_derive::{BorrowDecode, Decode, Encode};
 pub use error::*;
+pub use opaque::*;
 
 use crate::io::{BorrowRead, Read, SizeLimit, SizeTrack, Write, Zero};
 
@@ -29,6 +493,7 @@ mod error;
 pub mod facade;
 mod impls;
 pub mod io;
+mod opaque;
 #[cfg(feature = "serde")]
 mod serde;
 
@@ -39,15 +504,15 @@ pub fn encode_with<T: Write, V: Encode>(
     context: Context,
     value: V,
 ) -> EncodingResult<()> {
-    let mut stream = Encoder::new(writer, context);
-    value.encode(&mut stream)
+    let mut encoder = Encoder::new(writer, context);
+    value.encode(&mut encoder)
 }
 
-/// Decodes the given value by constructing an encoder on the fly and using it to wrap the writer,
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
 /// with the given context.
 pub fn decode_with<T: Read, V: Decode>(reader: T, context: Context) -> EncodingResult<V> {
-    let mut stream = Encoder::new(reader, context);
-    V::decode(&mut stream)
+    let mut decoder = Encoder::new(reader, context);
+    V::decode(&mut decoder)
 }
 
 /// Controls the endianness of a numerical value. Endianness is just
@@ -78,9 +543,11 @@ impl Endianness {
 
 /// Controls the encoding of a numerical value. For instance, controls whether the numbers
 /// are compressed through a var-int format or if the entire length of their value is encoded.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Display)]
+#[non_exhaustive]
 pub enum NumEncoding {
     /// The value's bits are encoded as-is according to the [`Endianness`].
+    #[default]
     Fixed,
     /// The value's bits are encoded according to the [ULEB128](https://en.wikipedia.org/wiki/LEB128#Unsigned_LEB128)
     /// (Little Endian Base 128) standard if unsigned, or [LEB128](https://en.wikipedia.org/wiki/LEB128#Signed_LEB128)
@@ -120,7 +587,7 @@ impl NumEncoding {
 
 /// How many bits a size or enum variant will occupy in the binary format. If the value
 /// contains more bits, they will be trimmed (lost), so change this value with care
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Debug, Default, Display)]
 pub enum BitWidth {
     /// Max 8 bits per value
     #[display("8Bit")]
@@ -133,6 +600,7 @@ pub enum BitWidth {
     Bit32,
     /// Max 64 bits per value
     #[display("64Bit")]
+    #[default]
     Bit64,
     /// Max 128 bits per value
     #[display("128Bit")]
@@ -214,11 +682,11 @@ impl BitWidth {
 }
 
 /// The encoding method used for strings and chars.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Display)]
+#[non_exhaustive]
 pub enum StrEncoding {
-    /// See [ASCII](https://en.wikipedia.org/wiki/ASCII)
-    Ascii,
     /// See [UTF-8](https://en.wikipedia.org/wiki/UTF-8)
+    #[default]
     Utf8,
     /// See [UTF-16](https://en.wikipedia.org/wiki/UTF-16)
     Utf16,
@@ -231,7 +699,6 @@ impl StrEncoding {
     #[inline]
     pub const fn bytes(&self) -> usize {
         match self {
-            StrEncoding::Ascii => 1,
             StrEncoding::Utf8 => 1,
             StrEncoding::Utf16 => 2,
             StrEncoding::Utf32 => 4,
@@ -243,6 +710,7 @@ impl StrEncoding {
 /// Specifically, controls the [`Endianness`] and [`NumEncoding`].
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("endianness = {endianness}, encoding = {num_encoding}")]
+#[non_exhaustive]
 pub struct NumRepr {
     pub endianness: Endianness,
     pub num_encoding: NumEncoding,
@@ -271,6 +739,7 @@ impl Default for NumRepr {
 /// and the greatest encodable/decodable size before an error is thrown
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("endianness = {endianness} , encoding = {num_encoding}, bit_width = {width}, max_size = {max_size}")]
+#[non_exhaustive]
 pub struct SizeRepr {
     pub endianness: Endianness,
     pub num_encoding: NumEncoding,
@@ -303,6 +772,7 @@ impl Default for SizeRepr {
 /// Specifically, controls the [`Endianness`], the [`NumEncoding`], and the [`BitWidth`].
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("endianness = {endianness} , encoding = {num_encoding}, bit_width = {width}")]
+#[non_exhaustive]
 pub struct VariantRepr {
     pub endianness: Endianness,
     pub num_encoding: NumEncoding,
@@ -339,6 +809,7 @@ impl Default for VariantRepr {
 /// length (1 byte for UTF-8 and ASCII, 2 bytes for UTF-16, 4 bytes for UTF-32)
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("str_encoding = {str_encoding}, endianness = {endianness}")]
+#[non_exhaustive]
 pub struct StringRepr {
     pub str_encoding: StrEncoding,
     pub endianness: Endianness,
@@ -365,6 +836,7 @@ impl Default for StringRepr {
 /// An aggregation of [`NumRepr`], [`SizeRepr`], [`VariantRepr`], [`StringRepr`]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("num_repr = ({num_repr}), size_repr = ({size_repr}), variant_repr = ({variant_repr}), string_repr = ({string_repr})")]
+#[non_exhaustive]
 pub struct BinSettings {
     pub num_repr: NumRepr,
     pub size_repr: SizeRepr,
@@ -375,6 +847,7 @@ pub struct BinSettings {
 impl BinSettings {
     /// Returns the default options containing the default for each representation.
     /// See: [`NumRepr::new`], [`SizeRepr::new`], [`VariantRepr::new`], [`StringRepr::new`]
+    #[inline]
     pub const fn new() -> Self {
         Self {
             num_repr: NumRepr::new(),
@@ -386,6 +859,7 @@ impl BinSettings {
 }
 
 impl Default for BinSettings {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -393,67 +867,113 @@ impl Default for BinSettings {
 
 /// The state of the encoder, including its options and a `flatten` state variable
 #[derive(Copy, Clone, Debug)]
+#[non_exhaustive]
 pub struct Context<'a> {
     /// User provided data. This can be purposed for storing any kind of data,
     /// like cryptographic keys that are unknown to the data structures but known
     /// at a higher level.
     pub user: Option<&'a dyn Any>,
     /// The actual settings, which determine the numerical representations and the string
-    /// representations. <br>Implementations of [`Encode`] and [`Decode`] are required to
-    /// preserve the state of the settings, even though they are allowed to temporarily modify it.<br>
+    /// representations.
+    ///
+    /// Implementations of [`Encode`] and [`Decode`] are required to
+    /// preserve the state of the settings, even though they are allowed to temporarily modify it.
+    ///
     /// In case of an error occurring, no guarantee is made about the state of the settings:
     /// for this reason it's good practice to store a copy of the settings somewhere.
     pub settings: BinSettings,
-    /// The flatten state variable. When present, for `Option` it indicates in Encode mode
-    /// not to write whether the optional is present, and in Decode mode that it is present (without
-    /// checking), for `Vec`, `HashMap` and other data structures with a length it indicates in
-    /// Encode mode not to write said length, and in Decode mode the length itself.
-    pub flatten: Option<usize>,
+    /// The Variant flatten state variable.
+    ///
+    /// When present, for `Option`, `Result` and any `bool` it indicates,
+    /// while **Encoding** not to write the value,
+    /// and while **Decoding** it contains the boolean value itself
+    /// (it won't be read from the stream).
+    pub bool_flatten: Option<bool>,
+    /// The Variant flatten state variable.
+    ///
+    /// When present, for any enum it indicates,
+    /// while **Encoding** not to write the value of the discriminant,
+    /// and while **Decoding** it contains the discriminant value itself
+    /// (it won't be read from the stream).
+    pub variant_flatten: Option<Opaque>,
+    /// The `usize` flatten state variable.
+    ///
+    /// When present, for `Vec`, `HashMap` and other data
+    /// structures with a length it indicates while **Encoding** not to write said length,
+    /// and while **Decoding** it contains the length itself
+    /// (it won't be read from the stream).
+    pub size_flatten: Option<usize>,
 }
 
 impl<'a> Context<'a> {
     /// Constructs the default encoder state. Options will be set to default, flatten to None.
+    #[inline]
     pub fn new() -> Self {
         Self {
             user: None,
             settings: BinSettings::new(),
-            flatten: None,
+            bool_flatten: None,
+            variant_flatten: None,
+            size_flatten: None,
         }
     }
 
     /// Just like [`Self::new`] but uses the given settings instead of the default
+    #[inline]
     pub fn with_settings(settings: BinSettings) -> Self {
         Self {
             user: None,
             settings,
-            flatten: None,
+            bool_flatten: None,
+            variant_flatten: None,
+            size_flatten: None,
         }
     }
 
     /// Just like [`Self::new`] but uses the given settings instead of the default
+    #[inline]
     pub fn with_user_data(settings: BinSettings, data: &'a dyn Any) -> Self {
         Self {
             user: Some(data),
             settings,
-            flatten: None,
+            bool_flatten: None,
+            variant_flatten: None,
+            size_flatten: None,
         }
     }
 
     /// Resets the context to its defaults, then overwrites the options with the given options.
+    #[inline]
     pub fn reset(&mut self, options: BinSettings) {
         self.settings = options;
-        self.flatten = None;
+        self.variant_flatten = None;
+        self.size_flatten = None;
     }
 
-    /// Returns the state of the `flatten` variable, consuming it.
-    pub fn flatten(&mut self) -> Option<usize> {
-        replace(&mut self.flatten, None)
+    /// Returns the state of the [`bool`] flatten variable, consuming it.
+    #[inline]
+    pub fn bool_flatten(&mut self) -> Option<bool> {
+        replace(&mut self.bool_flatten, None)
+    }
+
+    /// Returns the state of the Variant flatten variable, consuming it.
+    #[inline]
+    pub fn variant_flatten(&mut self) -> Option<Opaque> {
+        replace(&mut self.variant_flatten, None)
+    }
+
+    /// Returns the state of the [`usize`] flatten variable, consuming it.
+    #[inline]
+    pub fn size_flatten(&mut self) -> Option<usize> {
+        replace(&mut self.size_flatten, None)
     }
 }
 
 /// The base type for encoding/decoding. References a stream, and a [`Context`].<br>
 /// It's recommended to wrap the stream in a [`std::io::BufReader`] or [`std::io::BufWriter`],
 /// because many small write and read calls will be made
+#[derive(Clone)]
+#[non_exhaustive]
 pub struct Encoder<'a, T> {
     /// The underlying stream
     pub stream: T,
@@ -463,35 +983,44 @@ pub struct Encoder<'a, T> {
 
 impl<'a, T> Encoder<'a, T> {
     /// Wraps the given stream and state.
+    #[inline]
     pub fn new(stream: T, ctxt: Context<'a>) -> Self {
         Self { stream, ctxt }
     }
 
     /// Replaces the underlying stream with the new one, returning the previous value
+    #[inline]
     pub fn swap_stream(&mut self, new: T) -> T {
         replace(&mut self.stream, new)
     }
 }
 
 impl<T: Write> Encoder<'_, T> {
-    /// Method for convenience.<br>
-    /// Encodes a value using `self` as the encoder.<br>
+    /// Method for convenience.
+    ///
+    /// Encodes a value using `self` as the encoder.
+    ///
     /// This method is not magic - it is literally defined as `value.encode(self)`
+    #[inline]
     pub fn encode_value<V: Encode>(&mut self, value: V) -> EncodingResult<()> {
         value.encode(self)
     }
 }
 
 impl<T: Read> Encoder<'_, T> {
-    /// Method for convenience.<br>
-    /// Decodes a value using `self` as the decoder.<br>
+    /// Method for convenience.
+    ///
+    /// Decodes a value using `self` as the decoder.
+    ///
     /// This method is not magic - it is literally defined as `V::decode(self)`
+    #[inline]
     pub fn decode_value<V: Decode>(&mut self) -> EncodingResult<V> {
         V::decode(self)
     }
 }
 
 impl<'a, T> Encoder<'a, T> {
+    #[inline]
     pub fn finish(self) -> (T, Context<'a>) {
         (self.stream, self.ctxt)
     }
@@ -502,16 +1031,12 @@ macro_rules! make_write_fns {
 	    type $uty:ty {
 		    pub u_write: $u_write:ident,
 		    pub u_write_direct: $u_write_direct:ident,
-		    priv u_write_size: $u_write_size:ident,
-		    priv u_write_variant: $u_write_variant:ident,
 		    priv uleb128_encode: $uleb128_encode:ident
 		    $(,)?
 	    },
 	    type $ity:ty {
 		    pub i_write: $i_write:ident,
 		    pub i_write_direct: $i_write_direct:ident,
-		    priv i_write_size: $i_write_size:ident,
-		    priv i_write_variant: $i_write_variant:ident,
 		    priv leb128_encode: $leb128_encode:ident
 		    $(,)?
 	    }$(,)?
@@ -542,14 +1067,7 @@ macro_rules! make_write_fns {
 		    self.$u_write_direct(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 
-	    fn $u_write_size(&mut self, value: $uty) -> EncodingResult<()> {
-		    self.$u_write_direct(value, self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
-	    }
-
-	    fn $u_write_variant(&mut self, value: $uty) -> EncodingResult<()> {
-		    self.$u_write_direct(value, self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
-	    }
-
+	    #[inline]
         pub fn $u_write_direct(&mut self, value: $uty, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
 	        match num_encoding {
 		        NumEncoding::Fixed => {
@@ -593,14 +1111,7 @@ macro_rules! make_write_fns {
 		    self.$i_write_direct(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 
-	    fn $i_write_size(&mut self, value: $ity) -> EncodingResult<()> {
-		    self.$i_write_direct(value, self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
-	    }
-
-	    fn $i_write_variant(&mut self, value: $ity) -> EncodingResult<()> {
-		    self.$i_write_direct(value, self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
-	    }
-
+	    #[inline]
         pub fn $i_write_direct(&mut self, value: $ity, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
 		    match num_encoding {
 		        NumEncoding::Fixed => {
@@ -633,15 +1144,11 @@ impl<T: Write> Encoder<'_, T> {
         type u8 {
             pub u_write: write_u8,
             pub u_write_direct: write_u8_direct,
-            priv u_write_size: write_u8_size,
-            priv u_write_variant: write_u8_variant,
             priv uleb128_encode: uleb128_encode_u8,
         },
         type i8 {
             pub i_write: write_i8,
             pub i_write_direct: write_i8_direct,
-            priv i_write_size: write_i8_size,
-            priv i_write_variant: write_i8_variant,
             priv leb128_encode: leb128_encode_i8,
         },
     }
@@ -649,15 +1156,11 @@ impl<T: Write> Encoder<'_, T> {
         type u16 {
             pub u_write: write_u16,
             pub u_write_direct: write_u16_direct,
-            priv u_write_size: write_u16_size,
-            priv u_write_variant: write_u16_variant,
             priv uleb128_encode: uleb128_encode_u16,
         },
         type i16 {
             pub i_write: write_i16,
             pub i_write_direct: write_i16_direct,
-            priv i_write_size: write_i16_size,
-            priv i_write_variant: write_i16_variant,
             priv leb128_encode: leb128_encode_i16,
         },
     }
@@ -665,15 +1168,11 @@ impl<T: Write> Encoder<'_, T> {
         type u32 {
             pub u_write: write_u32,
             pub u_write_direct: write_u32_direct,
-            priv u_write_size: write_u32_size,
-            priv u_write_variant: write_u32_variant,
             priv uleb128_encode: uleb128_encode_u32,
         },
         type i32 {
             pub i_write: write_i32,
             pub i_write_direct: write_i32_direct,
-            priv i_write_size: write_i32_size,
-            priv i_write_variant: write_i32_variant,
             priv leb128_encode: leb128_encode_i32,
         },
     }
@@ -681,15 +1180,11 @@ impl<T: Write> Encoder<'_, T> {
         type u64 {
             pub u_write: write_u64,
             pub u_write_direct: write_u64_direct,
-            priv u_write_size: write_u64_size,
-            priv u_write_variant: write_u64_variant,
             priv uleb128_encode: uleb128_encode_u64,
         },
         type i64 {
             pub i_write: write_i64,
             pub i_write_direct: write_i64_direct,
-            priv i_write_size: write_i64_size,
-            priv i_write_variant: write_i64_variant,
             priv leb128_encode: leb128_encode_i64,
         },
     }
@@ -697,114 +1192,173 @@ impl<T: Write> Encoder<'_, T> {
         type u128 {
             pub u_write: write_u128,
             pub u_write_direct: write_u128_direct,
-            priv u_write_size: write_u128_size,
-            priv u_write_variant: write_u128_variant,
             priv uleb128_encode: uleb128_encode_u128,
         },
         type i128 {
             pub i_write: write_i128,
             pub i_write_direct: write_i128_direct,
-            priv i_write_size: write_i128_size,
-            priv i_write_variant: write_i128_variant,
             priv leb128_encode: leb128_encode_i128,
         },
     }
 
-    /// Encodes a length. If the flatten attribute is set to Some, this function checks
-    /// if the value matches but then returns immediately without writing,
-    /// otherwise it will behave identically to [`Self::write_usize`], with an additional
-    /// check that the length does not exceed the max size defined in the encoder's state.
-    pub fn write_length(&mut self, value: usize) -> EncodingResult<()> {
-        if let Some(flatten) = self.ctxt.flatten() {
-            if flatten != value {
+    /// Encodes an `usize`.
+    ///
+    /// If the size flatten variable is set to `Some`,
+    /// this function checks that the value matches but then returns
+    /// immediately without writing, otherwise it will encode the given `usize`
+    /// to the underlying stream according to the endianness, numerical
+    /// encoding and bit-width in the encoder's state, with an additional
+    /// check that the value does not exceed the max size.
+    pub fn write_usize(&mut self, value: usize) -> EncodingResult<()> {
+        if let Some(size) = self.ctxt.size_flatten() {
+            if size != value {
                 return Err(EncodingError::FlattenError(FlattenError::LenMismatch {
-                    expected: flatten,
+                    expected: size,
                     got: value,
                 }));
             }
             Ok(())
         } else {
             if value > self.ctxt.settings.size_repr.max_size {
-                return Err(EncodingError::MaxLengthExceeded {
+                return Err(EncodingError::MaxSizeExceeded {
                     max: self.ctxt.settings.size_repr.max_size,
                     requested: value,
                 });
             }
-            self.write_usize(value)
-        }
-    }
+            let encoding = self.ctxt.settings.size_repr.num_encoding;
+            let endianness = self.ctxt.settings.size_repr.endianness;
 
-    /// Encodes a `usize` to the underlying stream, according to the endianness,
-    /// numerical encoding and bit-width in the encoder's state
-    pub fn write_usize(&mut self, value: usize) -> EncodingResult<()> {
-        match self.ctxt.settings.size_repr.width {
-            BitWidth::Bit8 => self.write_u8_size(value as _),
-            BitWidth::Bit16 => self.write_u16_size(value as _),
-            BitWidth::Bit32 => self.write_u32_size(value as _),
-            BitWidth::Bit64 => self.write_u64_size(value as _),
-            BitWidth::Bit128 => self.write_u128_size(value as _),
+            // `Opaque` already converts conversion errors to `EncodingError`
+            let opaque = Opaque::from(value);
+
+            match self.ctxt.settings.size_repr.width {
+                BitWidth::Bit8 => self.write_u8_direct(opaque.try_into()?, encoding, endianness),
+                BitWidth::Bit16 => self.write_u16_direct(opaque.try_into()?, encoding, endianness),
+                BitWidth::Bit32 => self.write_u32_direct(opaque.try_into()?, encoding, endianness),
+                BitWidth::Bit64 => self.write_u64_direct(opaque.try_into()?, encoding, endianness),
+                BitWidth::Bit128 => {
+                    self.write_u128_direct(opaque.try_into()?, encoding, endianness)
+                }
+            }
         }
     }
 
     /// Encodes a `isize` to the underlying stream, according to the endianness,
-    /// numerical encoding and bit-width in the encoder's state
+    /// numerical encoding and bit-width in the encoder's state.
     pub fn write_isize(&mut self, value: isize) -> EncodingResult<()> {
+        let encoding = self.ctxt.settings.size_repr.num_encoding;
+        let endianness = self.ctxt.settings.size_repr.endianness;
+
+        // `Opaque` already converts conversion errors to `EncodingError`
+        let opaque = Opaque::from(value);
+
         match self.ctxt.settings.size_repr.width {
-            BitWidth::Bit8 => self.write_i8_size(value as _),
-            BitWidth::Bit16 => self.write_i16_size(value as _),
-            BitWidth::Bit32 => self.write_i32_size(value as _),
-            BitWidth::Bit64 => self.write_i64_size(value as _),
-            BitWidth::Bit128 => self.write_i128_size(value as _),
+            BitWidth::Bit8 => self.write_i8_direct(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit16 => self.write_i16_direct(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit32 => self.write_i32_direct(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit64 => self.write_i64_direct(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit128 => self.write_i128_direct(opaque.try_into()?, encoding, endianness),
         }
     }
 
-    /// Encodes an unsigned enum variant to the underlying stream, according to the endianness,
-    /// numerical encoding and bit-width in the encoder's state
-    pub fn write_uvariant(&mut self, value: u128) -> EncodingResult<()> {
-        match self.ctxt.settings.variant_repr.width {
-            BitWidth::Bit8 => self.write_u8_variant(value as _),
-            BitWidth::Bit16 => self.write_u16_variant(value as _),
-            BitWidth::Bit32 => self.write_u32_variant(value as _),
-            BitWidth::Bit64 => self.write_u64_variant(value as _),
-            BitWidth::Bit128 => self.write_u128_variant(value as _),
-        }
-    }
-
-    /// Encodes a signed enum variant to the underlying stream, according to the endianness,
-    /// numerical encoding and bit-width in the encoder's state
-    pub fn write_ivariant(&mut self, value: i128) -> EncodingResult<()> {
-        match self.ctxt.settings.variant_repr.width {
-            BitWidth::Bit8 => self.write_i8_variant(value as _),
-            BitWidth::Bit16 => self.write_i16_variant(value as _),
-            BitWidth::Bit32 => self.write_i32_variant(value as _),
-            BitWidth::Bit64 => self.write_i64_variant(value as _),
-            BitWidth::Bit128 => self.write_i128_variant(value as _),
-        }
-    }
-
-    /// Encodes the boolean state of a value.
-    /// If the flatten attribute is set to Some, this function checks
-    /// if the value matches but then returns immediately without writing,
-    /// otherwise it will behave identically to [`Self::write_bool`].
-    pub fn write_state(&mut self, value: bool) -> EncodingResult<()> {
-        if let Some(flatten) = self.ctxt.flatten() {
-            if (flatten != 0) != value {
-                return Err(EncodingError::FlattenError(FlattenError::BoolMismatch {
-                    expected: flatten != 0,
+    /// Encodes an unsigned `Variant`.
+    ///
+    /// If the `Variant` flatten variable is set to `Some`,
+    /// this function checks that the value matches but then returns
+    /// immediately without writing, otherwise it will encode the given `Variant`
+    /// to the underlying stream according to the endianness, numerical
+    /// encoding and bit-width in the encoder's state.
+    #[inline]
+    #[allow(private_bounds)]
+    pub fn write_uvariant<V>(&mut self, value: V) -> EncodingResult<()>
+    where
+        Opaque: From<V>,
+        V: Sign<Sign = Unsigned>,
+    {
+        let value = Opaque::from(value);
+        if let Some(variant) = self.ctxt.variant_flatten() {
+            if value != variant {
+                return Err(FlattenError::VariantMismatch {
+                    expected: variant,
                     got: value,
-                }));
+                }
+                .into());
             }
             Ok(())
         } else {
-            self.write_bool(value)
+            let width = self.ctxt.settings.variant_repr.width;
+            let encoding = self.ctxt.settings.variant_repr.num_encoding;
+            let endianness = self.ctxt.settings.variant_repr.endianness;
+            match width {
+                BitWidth::Bit8 => self.write_u8_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit16 => self.write_u16_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit32 => self.write_u32_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit64 => self.write_u64_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit128 => self.write_u128_direct(value.try_into()?, encoding, endianness),
+            }
         }
     }
 
-    /// Encodes a `bool` to the underlying stream, ignoring any encoding option.
+    /// Encodes a signed `Variant`.
+    ///
+    /// If the `Variant` flatten variable is set to `Some`,
+    /// this function checks that the value matches but then returns
+    /// immediately without writing, otherwise it will encode the given `Variant`
+    /// to the underlying stream according to the endianness, numerical
+    /// encoding and bit-width in the encoder's state.
+    #[inline]
+    #[allow(private_bounds)]
+    pub fn write_ivariant<V>(&mut self, value: V) -> EncodingResult<()>
+    where
+        Opaque: From<V>,
+        V: Sign<Sign = Signed>,
+    {
+        let value = Opaque::from(value);
+        if let Some(variant) = self.ctxt.variant_flatten() {
+            if value != variant {
+                return Err(FlattenError::VariantMismatch {
+                    expected: variant,
+                    got: value,
+                }
+                .into());
+            }
+            Ok(())
+        } else {
+            let width = self.ctxt.settings.variant_repr.width;
+            let encoding = self.ctxt.settings.variant_repr.num_encoding;
+            let endianness = self.ctxt.settings.variant_repr.endianness;
+            match width {
+                BitWidth::Bit8 => self.write_i8_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit16 => self.write_i16_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit32 => self.write_i32_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit64 => self.write_i64_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit128 => self.write_i128_direct(value.try_into()?, encoding, endianness),
+            }
+        }
+    }
+
+    /// Encodes a boolean value.
+    ///
     /// It is guaranteed that, if `value` is `true`, a single u8 will be written to the
-    /// underlying stream with the value `1`, and if `value` is `false`, with a value of `0`
+    /// underlying stream with the value `1`, and if `value` is `false`, with a value of `0`.
+    ///
+    /// If the `bool` flatten variable is set to `Some`,
+    /// this function checks that the value matches but then returns
+    /// immediately without writing, otherwise it will encode the given `bool`
+    /// as described above.
     pub fn write_bool(&mut self, value: bool) -> EncodingResult<()> {
-        self.write_u8_direct(value as u8, NumEncoding::Fixed, Endianness::LittleEndian)
+        if let Some(boolean) = self.ctxt.bool_flatten() {
+            if boolean != value {
+                return Err(FlattenError::BoolMismatch {
+                    expected: boolean,
+                    got: value,
+                }
+                .into());
+            }
+            Ok(())
+        } else {
+            self.write_byte(if value { 1 } else { 0 })
+        }
     }
 
     /// Encodes a `char` to the underlying stream, according to the endianness and string encoding
@@ -812,13 +1366,6 @@ impl<T: Write> Encoder<'_, T> {
     pub fn write_char(&mut self, value: char) -> EncodingResult<()> {
         let endianness = self.ctxt.settings.string_repr.endianness;
         match self.ctxt.settings.string_repr.str_encoding {
-            StrEncoding::Ascii => {
-                if !value.is_ascii() {
-                    return Err(EncodingError::StringError(StringError::InvalidAscii));
-                }
-
-                self.write_u8_direct(value as u8, NumEncoding::Fixed, Endianness::LittleEndian)
-            }
             StrEncoding::Utf8 => {
                 let mut buf = [0u8; 4];
                 let len = value.encode_utf8(&mut buf).len();
@@ -891,7 +1438,7 @@ impl<T: Write> Encoder<'_, T> {
         let size = sz_encoder.finish().0.size_written();
 
         // Now encode the length and the string data
-        self.write_length(size)?;
+        self.write_usize(size)?;
         for ch in chars {
             self.write_char(ch)?;
         }
@@ -916,16 +1463,12 @@ macro_rules! make_read_fns {
 	    type $uty:ty {
 		    pub u_read: $u_read:ident,
 		    pub u_read_direct: $u_read_direct:ident,
-		    priv u_read_size: $u_read_size:ident,
-		    priv u_read_variant: $u_read_variant:ident,
 		    priv uleb128_decode: $uleb128_decode:ident
 		    $(,)?
 	    },
 	    type $ity:ty {
 		    pub i_read: $i_read:ident,
 		    pub i_read_direct: $i_read_direct:ident,
-		    priv i_read_size: $i_read_size:ident,
-		    priv i_read_variant: $i_read_variant:ident,
 		    priv leb128_decode: $leb128_decode:ident
 		    $(,)?
 	    }
@@ -958,14 +1501,7 @@ macro_rules! make_read_fns {
 		    self.$u_read_direct(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 
-	    fn $u_read_size(&mut self) -> EncodingResult<$uty> {
-		    self.$u_read_direct(self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
-	    }
-
-	    fn $u_read_variant(&mut self) -> EncodingResult<$uty> {
-		    self.$u_read_direct(self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
-	    }
-
+	    #[inline]
         pub fn $u_read_direct(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$uty> {
 		    Ok(match num_encoding {
 		        NumEncoding::Fixed => {
@@ -1015,14 +1551,7 @@ macro_rules! make_read_fns {
 		    self.$i_read_direct(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 
-	    fn $i_read_size(&mut self) -> EncodingResult<$ity> {
-		    self.$i_read_direct(self.ctxt.settings.size_repr.num_encoding, self.ctxt.settings.size_repr.endianness)
-	    }
-
-	    fn $i_read_variant(&mut self) -> EncodingResult<$ity> {
-		    self.$i_read_direct(self.ctxt.settings.variant_repr.num_encoding, self.ctxt.settings.variant_repr.endianness)
-	    }
-
+	    #[inline]
         pub fn $i_read_direct(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$ity> {
 	        Ok(match num_encoding {
 		        NumEncoding::Fixed => {
@@ -1062,15 +1591,11 @@ impl<T: Read> Encoder<'_, T> {
         type u8 {
             pub u_read: read_u8,
             pub u_read_direct: read_u8_direct,
-            priv u_read_size: read_u8_size,
-            priv u_read_variant: read_u8_variant,
             priv uleb128_decode: uleb128_decode_u8,
         },
         type i8 {
             pub i_read: read_i8,
             pub i_read_direct: read_i8_direct,
-            priv i_read_size: read_i8_size,
-            priv i_read_variant: read_i8_variant,
             priv leb128_decode: leb128_decode_i8,
         },
     }
@@ -1078,15 +1603,11 @@ impl<T: Read> Encoder<'_, T> {
         type u16 {
             pub u_read: read_u16,
             pub u_read_direct: read_u16_direct,
-            priv u_read_size: read_u16_size,
-            priv u_read_variant: read_u16_variant,
             priv uleb128_decode: uleb128_decode_u16,
         },
         type i16 {
             pub i_read: read_i16,
             pub i_read_direct: read_i16_direct,
-            priv i_read_size: read_i16_size,
-            priv i_read_variant: read_i16_variant,
             priv leb128_decode: leb128_decode_i16,
         },
     }
@@ -1094,15 +1615,11 @@ impl<T: Read> Encoder<'_, T> {
         type u32 {
             pub u_read: read_u32,
             pub u_read_direct: read_u32_direct,
-            priv u_read_size: read_u32_size,
-            priv u_read_variant: read_u32_variant,
             priv uleb128_decode: uleb128_decode_u32,
         },
         type i32 {
             pub i_read: read_i32,
             pub i_read_direct: read_i32_direct,
-            priv i_read_size: read_i32_size,
-            priv i_read_variant: read_i32_variant,
             priv leb128_decode: leb128_decode_i32,
         },
     }
@@ -1110,15 +1627,11 @@ impl<T: Read> Encoder<'_, T> {
         type u64 {
             pub u_read: read_u64,
             pub u_read_direct: read_u64_direct,
-            priv u_read_size: read_u64_size,
-            priv u_read_variant: read_u64_variant,
             priv uleb128_decode: uleb128_decode_u64,
         },
         type i64 {
             pub i_read: read_i64,
             pub i_read_direct: read_i64_direct,
-            priv i_read_size: read_i64_size,
-            priv i_read_variant: read_i64_variant,
             priv leb128_decode: leb128_decode_i64,
         },
     }
@@ -1126,30 +1639,39 @@ impl<T: Read> Encoder<'_, T> {
         type u128 {
             pub u_read: read_u128,
             pub u_read_direct: read_u128_direct,
-            priv u_read_size: read_u128_size,
-            priv u_read_variant: read_u128_variant,
             priv uleb128_decode: uleb128_decode_u128,
         },
         type i128 {
             pub i_read: read_i128,
             pub i_read_direct: read_i128_direct,
-            priv i_read_size: read_i128_size,
-            priv i_read_variant: read_i128_variant,
             priv leb128_decode: leb128_decode_i128,
         },
     }
 
-    /// Decodes a length. If the flatten attribute is set to Some, this function
-    /// will return its value without reading, otherwise it will behave identically to
-    /// [`Self::read_usize`], with an additional check that the length does not exceed the
-    /// max size defined in the encoder's state.
-    pub fn read_length(&mut self) -> EncodingResult<usize> {
-        if let Some(length) = self.ctxt.flatten() {
-            Ok(length)
+    /// Decodes an `usize`.
+    ///
+    /// If the `usize` flatten variable is set to `Some`, this function
+    /// will return its value without reading, otherwise it will decode an `usize`
+    /// from the underlying stream, according to the endianness, numerical encoding
+    /// and bit-width in the encoder's state, with an additional check that the size
+    /// does not exceed the max size.
+    pub fn read_usize(&mut self) -> EncodingResult<usize> {
+        if let Some(size) = self.ctxt.size_flatten() {
+            Ok(size)
         } else {
-            let value = self.read_usize()?;
+            let encoding = self.ctxt.settings.size_repr.num_encoding;
+            let endianness = self.ctxt.settings.size_repr.endianness;
+            let value = match self.ctxt.settings.size_repr.width {
+                BitWidth::Bit8 => Opaque::from(self.read_u8_direct(encoding, endianness)?),
+                BitWidth::Bit16 => Opaque::from(self.read_u16_direct(encoding, endianness)?),
+                BitWidth::Bit32 => Opaque::from(self.read_u32_direct(encoding, endianness)?),
+                BitWidth::Bit64 => Opaque::from(self.read_u64_direct(encoding, endianness)?),
+                BitWidth::Bit128 => Opaque::from(self.read_u128_direct(encoding, endianness)?),
+            }
+            .try_into()?;
+
             if value > self.ctxt.settings.size_repr.max_size {
-                return Err(EncodingError::MaxLengthExceeded {
+                return Err(EncodingError::MaxSizeExceeded {
                     max: self.ctxt.settings.size_repr.max_size,
                     requested: value,
                 });
@@ -1158,78 +1680,102 @@ impl<T: Read> Encoder<'_, T> {
         }
     }
 
-    /// Decodes a `usize` from the underlying stream, according to the endianness,
-    /// numerical encoding and bit-width in the encoder's state
-    pub fn read_usize(&mut self) -> EncodingResult<usize> {
-        Ok(match self.ctxt.settings.size_repr.width {
-            BitWidth::Bit8 => self.read_u8_size()? as usize,
-            BitWidth::Bit16 => self.read_u16_size()? as usize,
-            BitWidth::Bit32 => self.read_u32_size()? as usize,
-            BitWidth::Bit64 => self.read_u64_size()? as usize,
-            BitWidth::Bit128 => self.read_u128_size()? as usize,
-        })
-    }
-
     /// Decodes a `isize` from the underlying stream, according to the endianness,
     /// numerical encoding and bit-width in the encoder's state
     pub fn read_isize(&mut self) -> EncodingResult<isize> {
-        Ok(match self.ctxt.settings.size_repr.width {
-            BitWidth::Bit8 => self.read_i8_size()? as isize,
-            BitWidth::Bit16 => self.read_i16_size()? as isize,
-            BitWidth::Bit32 => self.read_i32_size()? as isize,
-            BitWidth::Bit64 => self.read_i64_size()? as isize,
-            BitWidth::Bit128 => self.read_i128_size()? as isize,
-        })
+        let encoding = self.ctxt.settings.size_repr.num_encoding;
+        let endianness = self.ctxt.settings.size_repr.endianness;
+        match self.ctxt.settings.size_repr.width {
+            BitWidth::Bit8 => Opaque::from(self.read_i8_direct(encoding, endianness)?),
+            BitWidth::Bit16 => Opaque::from(self.read_i16_direct(encoding, endianness)?),
+            BitWidth::Bit32 => Opaque::from(self.read_i32_direct(encoding, endianness)?),
+            BitWidth::Bit64 => Opaque::from(self.read_i64_direct(encoding, endianness)?),
+            BitWidth::Bit128 => Opaque::from(self.read_i128_direct(encoding, endianness)?),
+        }
+        .try_into()
     }
 
-    /// Decodes an unsigned enum variant from the underlying stream, according to the endianness,
-    /// numerical encoding and bit-width in the encoder's state
-    pub fn read_uvariant(&mut self) -> EncodingResult<u128> {
-        Ok(match self.ctxt.settings.variant_repr.width {
-            BitWidth::Bit8 => self.read_u8_variant()? as _,
-            BitWidth::Bit16 => self.read_u16_variant()? as _,
-            BitWidth::Bit32 => self.read_u32_variant()? as _,
-            BitWidth::Bit64 => self.read_u64_variant()? as _,
-            BitWidth::Bit128 => self.read_u128_variant()? as _,
-        })
-    }
-
-    /// Decodes a signed enum variant from the underlying stream, according to the endianness,
-    /// numerical encoding and bit-width in the encoder's state
-    pub fn read_ivariant(&mut self) -> EncodingResult<i128> {
-        Ok(match self.ctxt.settings.variant_repr.width {
-            BitWidth::Bit8 => self.read_i8_variant()? as _,
-            BitWidth::Bit16 => self.read_i16_variant()? as _,
-            BitWidth::Bit32 => self.read_i32_variant()? as _,
-            BitWidth::Bit64 => self.read_i64_variant()? as _,
-            BitWidth::Bit128 => self.read_i128_variant()? as _,
-        })
-    }
-
-    /// Decodes the boolean state of a value. If the flatten attribute is set to Some,
-    /// this function will return its value (converted to a bool) without reading from the
-    /// underlying stream, otherwise it will behave identically to [`Self::read_bool`].
-    pub fn read_state(&mut self) -> EncodingResult<bool> {
-        if let Some(length) = self.ctxt.flatten() {
-            match length {
-                0 => Ok(false),
-                1 => Ok(true),
-                _ => Err(EncodingError::FlattenError(FlattenError::InvalidBool)),
-            }
+    /// Decodes an unsigned `Variant`.
+    ///
+    /// If the `Variant` flatten variable is set to `Some`, this function
+    /// will return its value without reading, otherwise it will decode a `Variant`
+    /// from the underlying stream, according to the endianness, numerical encoding
+    /// and bit-width in the encoder's state.
+    #[inline]
+    #[allow(private_bounds)]
+    pub fn read_uvariant<V>(&mut self) -> EncodingResult<V>
+    where
+        V: Sign<Sign = Unsigned>,
+        Opaque: TryInto<V, Error = EncodingError>,
+    {
+        if let Some(variant) = self.ctxt.variant_flatten() {
+            variant.try_into()
         } else {
-            self.read_bool()
+            let width = self.ctxt.settings.variant_repr.width;
+            let encoding = self.ctxt.settings.variant_repr.num_encoding;
+            let endianness = self.ctxt.settings.variant_repr.endianness;
+
+            match width {
+                BitWidth::Bit8 => Opaque::from(self.read_u8_direct(encoding, endianness)?),
+                BitWidth::Bit16 => Opaque::from(self.read_u16_direct(encoding, endianness)?),
+                BitWidth::Bit32 => Opaque::from(self.read_u32_direct(encoding, endianness)?),
+                BitWidth::Bit64 => Opaque::from(self.read_u64_direct(encoding, endianness)?),
+                BitWidth::Bit128 => Opaque::from(self.read_u128_direct(encoding, endianness)?),
+            }
+            .try_into()
         }
     }
 
-    /// Decodes a `bool` from the underlying stream, ignoring any encoding option.
-    /// It is guaranteed that, one u8 is read from the underlying stream and, if
+    /// Decodes a signed `Variant`.
+    ///
+    /// If the `Variant` flatten variable is set to `Some`, this function
+    /// will return its value without reading, otherwise it will decode a `Variant`
+    /// from the underlying stream, according to the endianness, numerical encoding
+    /// and bit-width in the encoder's state.
+    #[inline]
+    #[allow(private_bounds)]
+    pub fn read_ivariant<V>(&mut self) -> EncodingResult<V>
+    where
+        V: Sign<Sign = Signed>,
+        Opaque: TryInto<V, Error = EncodingError>,
+    {
+        if let Some(variant) = self.ctxt.variant_flatten() {
+            variant.try_into()
+        } else {
+            let width = self.ctxt.settings.variant_repr.width;
+            let encoding = self.ctxt.settings.variant_repr.num_encoding;
+            let endianness = self.ctxt.settings.variant_repr.endianness;
+
+            match width {
+                BitWidth::Bit8 => Opaque::from(self.read_u8_direct(encoding, endianness)?),
+                BitWidth::Bit16 => Opaque::from(self.read_i16_direct(encoding, endianness)?),
+                BitWidth::Bit32 => Opaque::from(self.read_i32_direct(encoding, endianness)?),
+                BitWidth::Bit64 => Opaque::from(self.read_i64_direct(encoding, endianness)?),
+                BitWidth::Bit128 => Opaque::from(self.read_i128_direct(encoding, endianness)?),
+            }
+            .try_into()
+        }
+    }
+
+    /// Decodes a boolean value.
+    ///
+    /// It is guaranteed that, one `u8` is read from the underlying stream and, if
     /// it's equal to `1`, `true` is returned, if it's equal to `0`, `false` is returned,
-    /// if it's equal to any other value, `InvalidBool` error will be returned
+    /// for any other value an [`InvalidBool`][`EncodingError::InvalidBool`]
+    /// error will be returned.
+    ///
+    /// If the `bool` flatten variable is set to `Some`,
+    /// then its value is returned without reading,
+    /// otherwise the boolean is decoded as described above.
     pub fn read_bool(&mut self) -> EncodingResult<bool> {
-        match self.read_u8_direct(NumEncoding::Fixed, Endianness::LittleEndian)? {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(EncodingError::InvalidBool),
+        if let Some(boolean) = self.ctxt.bool_flatten() {
+            Ok(boolean)
+        } else {
+            match self.read_byte()? {
+                0 => Ok(false),
+                1 => Ok(true),
+                _ => Err(EncodingError::InvalidBool),
+            }
         }
     }
 
@@ -1238,26 +1784,17 @@ impl<T: Read> Encoder<'_, T> {
     pub fn read_char(&mut self) -> EncodingResult<char> {
         let endianness = self.ctxt.settings.string_repr.endianness;
         match self.ctxt.settings.string_repr.str_encoding {
-            StrEncoding::Ascii => {
-                let buf = self.read_u8_direct(NumEncoding::Fixed, Endianness::LittleEndian)?;
-                let ch = char::from_u32(buf as u32).ok_or(StringError::InvalidAscii)?;
-
-                if !ch.is_ascii() {
-                    return Err(EncodingError::StringError(StringError::InvalidAscii));
-                }
-
-                Ok(ch)
-            }
             StrEncoding::Utf8 => {
                 // See https://en.wikipedia.org/wiki/UTF-8#Encoding
-                let mut buf = self.read_u8_direct(NumEncoding::Fixed, Endianness::LittleEndian)?;
-                let (add, rshift) = if (buf & (0b1000_0000)) == 0 {
+                let mut buf = self.read_byte()?;
+                let (add, rshift) = if buf.leading_ones() == 0 {
                     (0usize, 1u32)
                 } else {
                     let leading = buf.leading_ones();
                     if leading == 1 || leading > 4 {
-                        // Most likely malformed utf-8
-                        return Err(EncodingError::StringError(StringError::InvalidUtf8));
+                        // The first byte was either a continuation byte
+                        // or forward declared more than 3 continuation bytes
+                        return Err(StringError::InvalidUtf8.into());
                     }
                     (leading as usize - 1, leading + 1)
                 };
@@ -1266,18 +1803,18 @@ impl<T: Read> Encoder<'_, T> {
 
                 let mut shift = 0;
                 for _ in 0..add {
-                    buf = self.read_u8_direct(NumEncoding::Fixed, Endianness::LittleEndian)?;
+                    buf = self.read_byte()?;
 
                     if buf.leading_ones() != 1 {
-                        // Most likely malformed utf-8
-                        return Err(EncodingError::StringError(StringError::InvalidUtf8));
+                        // This byte was not a continuation byte, but we expected it to be
+                        return Err(StringError::InvalidUtf8.into());
                     }
 
                     shift += 6;
                     ch = (ch << shift) | ((buf & 0b0011_1111) as u32);
                 }
 
-                Ok(char::from_u32(ch).ok_or(StringError::InvalidUtf8)?)
+                char::from_u32(ch).ok_or(StringError::InvalidUtf8.into())
             }
             StrEncoding::Utf16 => {
                 // See https://en.wikipedia.org/wiki/UTF-16#Code_points_from_U+010000_to_U+10FFFF
@@ -1292,7 +1829,7 @@ impl<T: Read> Encoder<'_, T> {
                     if !(0xDC00 <= low_surrogate && low_surrogate <= 0xDFFF) {
                         // First character was in the high surrogate range,
                         // but the second character wasn't in the low surrogate range
-                        return Err(EncodingError::StringError(StringError::InvalidUtf16));
+                        return Err(StringError::InvalidUtf16.into());
                     }
 
                     const LOW_TEN_BITS: u16 = 0b0000_0011_1111_1111;
@@ -1303,23 +1840,23 @@ impl<T: Read> Encoder<'_, T> {
                     ch = (high_bits << 10) | low_bits;
                 } else if 0xDC00 <= buf && buf <= 0xDFFF {
                     // First character was in the low surrogate range
-                    return Err(EncodingError::StringError(StringError::InvalidUtf16));
+                    return Err(StringError::InvalidUtf16.into());
                 } else {
                     ch = buf as u32;
                 }
 
-                Ok(char::from_u32(ch).ok_or(StringError::InvalidUtf16)?)
+                char::from_u32(ch).ok_or(StringError::InvalidUtf16.into())
             }
             StrEncoding::Utf32 => {
                 let ch = self.read_u32_direct(NumEncoding::Fixed, endianness)?;
-                Ok(char::from_u32(ch).ok_or(StringError::InvalidUtf32)?)
+                char::from_u32(ch).ok_or(StringError::InvalidUtf32.into())
             }
         }
     }
 
     /// Decodes a `f32` from the underlying stream, ignoring the numeric encoding but respecting
     /// the endianness. Equivalent of `f32::from_bits(self.read_u32())` with the numeric
-    /// encoding set to Fixed
+    /// encoding set to [`NumEncoding::Fixed`].
     pub fn read_f32(&mut self) -> EncodingResult<f32> {
         Ok(f32::from_bits(self.read_u32_direct(
             NumEncoding::Fixed,
@@ -1329,7 +1866,7 @@ impl<T: Read> Encoder<'_, T> {
 
     /// Decodes a `f64` from the underlying stream, ignoring the numeric encoding but respecting
     /// the endianness. Equivalent of `f64::from_bits(self.read_u64())` with the numeric
-    /// encoding set to Fixed
+    /// encoding set to [`NumEncoding::Fixed`].
     pub fn read_f64(&mut self) -> EncodingResult<f64> {
         Ok(f64::from_bits(self.read_u64_direct(
             NumEncoding::Fixed,
@@ -1338,14 +1875,12 @@ impl<T: Read> Encoder<'_, T> {
     }
 
     /// Decodes a String from the underlying stream, according to the endianness,
-    /// string encoding and string-length encoding in the encoder's state
-    pub fn read_string<S>(&mut self) -> EncodingResult<S>
+    /// and string encoding in the encoder's state.
+    pub fn read_str<S>(&mut self) -> EncodingResult<S>
     where
         S: FromIterator<char>,
     {
-        let _encoding = self.ctxt.settings.string_repr.str_encoding;
-
-        let length = self.read_length()?;
+        let length = self.read_usize()?;
 
         struct CharIter<'iter, 'user, T: Read> {
             encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
@@ -1357,16 +1892,16 @@ impl<T: Read> Encoder<'_, T> {
                 match self.encoder.read_char() {
                     err @ Err(EncodingError::UnexpectedEnd) => {
                         if self.encoder.stream.remaining_readable() != 0 {
-                            // We reached the limit in the middle of a char
+                            // We reached the limit, but we were expecting more data
                             // This is a hard error
                             Some(err)
                         } else {
-                            // We reached the limit on a char boundary
+                            // We reached the limit, but we expected 0 more bytes
                             // this means we can end the iterator by returning None
                             None
                         }
                     }
-                    any @ _ => Some(any),
+                    any => Some(any),
                 }
             }
         }
@@ -1558,6 +2093,18 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
         // Depending on the alignment of the target system, this might fail.
         let conv: &[usize] = bytemuck::try_cast_slice(u8_slice)
             .map_err(|_| EncodingError::BorrowError(BorrowError::AlignmentMismatch))?;
+
+        // Check that none of the elements exceed the max size
+        for &elem in conv {
+            let max = self.ctxt.settings.size_repr.max_size;
+            if elem > max {
+                return Err(EncodingError::MaxSizeExceeded {
+                    requested: elem,
+                    max,
+                });
+            }
+        }
+
         Ok(conv)
     }
 
@@ -1641,7 +2188,7 @@ pub trait Decode: Sized {
 /// by borrowing the data.
 pub trait BorrowDecode<'data>: Sized {
     /// Decodes `Self` from a binary format.<br>
-    /// As a baseline, calling `decode` multiple times without changing the
+    /// As a baseline, calling `borrow_decode` multiple times without changing the
     /// encoder settings or the underlying binary data in-between calls must produce
     /// the same output.<br>
     /// If the result is Ok,

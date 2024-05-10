@@ -7,6 +7,7 @@ use ende_derive::{BorrowDecode, Decode, Encode};
 #[derive(BorrowDecode)]
 pub struct Borrow<'a, 'b> {
     string: &'a str,
+    #[ende(borrow)]
     data: &'b [u8],
 }
 
@@ -30,7 +31,7 @@ pub struct StructStruct {
 #[derive(Encode, Decode)]
 pub struct TupleStruct(
     u64,
-    #[ende(num: leb128, big_endian; size: max = 15, 16, little_endian, fixed; variant: 128, fixed, big_endian; flatten: 12)]
+    #[ende(num: leb128, big_endian; size: max = 15, bit16, little_endian, fixed; variant: bit128, fixed, big_endian)]
      f64,
 );
 
@@ -39,7 +40,7 @@ pub struct UnitStruct;
 
 #[derive(Encode, Decode)]
 #[repr(isize)]
-#[ende(size: 64; variant: 64, leb128)]
+#[ende(size: bit64; variant: bit64, leb128)]
 pub enum Enum {
     StructVariant {
         value1: u64,

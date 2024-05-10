@@ -36,11 +36,11 @@ impl Ctxt {
 
                 let read_variant = if self.enum_repr.signed() {
                     quote!(
-                        #crate_name::Encoder::read_ivariant(#encoder)? as _
+                        #crate_name::Encoder::read_ivariant(#encoder)?
                     )
                 } else {
                     quote!(
-                        #crate_name::Encoder::read_uvariant(#encoder)? as _
+                        #crate_name::Encoder::read_uvariant(#encoder)?
                     )
                 };
 
@@ -179,7 +179,9 @@ impl Field {
         let decode = if let Some(converter) = &self.flags.ty_mods {
             converter.convert_from(
                 self,
-                self.flags.function.derive_decode(ctxt, converter.ty(), &self)?,
+                self.flags
+                    .function
+                    .derive_decode(ctxt, converter.ty(), &self)?,
             )?
         } else {
             self.flags.function.derive_decode(ctxt, field_ty, &self)?

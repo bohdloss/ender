@@ -2,11 +2,11 @@ use proc_macro2::Ident;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::ToTokens;
 use syn::spanned::Spanned;
-use syn::{parse_quote, Error, Expr, Path, Type, Lifetime};
+use syn::{parse_quote, Error, Expr, Lifetime, Path, Type};
 
 use crate::ctxt::Scope;
 use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding};
-use crate::parse::{Flag, Formatting, ModTarget, Modifier};
+use crate::parse::{Flag, Formatting, ModTarget, Modifier, FlattenTarget};
 use crate::{dollar_crate, ENDE};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -181,25 +181,15 @@ impl ModifierGroup {
 
                 self.max = Some(max);
             }
-            Modifier::BitWidth { lit, width, .. } => {
+            Modifier::BitWidth { span, width, .. } => {
                 if !self.target.variant() && !self.target.size() {
-                    return Err(Error::new(lit.span(), ONLY_VARIANT_AND_SIZE));
+                    return Err(Error::new(span, ONLY_VARIANT_AND_SIZE));
                 }
                 if self.bit_width.is_some() {
-                    return Err(Error::new(lit.span(), REPEATED_BIT_WIDTH));
+                    return Err(Error::new(span, REPEATED_BIT_WIDTH));
                 }
 
                 self.bit_width = Some(width);
-            }
-            Modifier::Ascii { kw, .. } => {
-                if !self.target.string() {
-                    return Err(Error::new(kw.span(), ONLY_STRING));
-                }
-                if self.str_encoding.is_some() {
-                    return Err(Error::new(kw.span(), REPEATED_STR_ENCODING));
-                }
-
-                self.str_encoding = Some(StrEncoding::Ascii);
             }
             Modifier::Utf8 { kw, .. } => {
                 if !self.target.string() {
@@ -243,7 +233,9 @@ pub struct AllModifiers {
     pub size: ModifierGroup,
     pub variant: ModifierGroup,
     pub string: ModifierGroup,
-    pub flatten: Option<Expr>,
+    pub bool_flatten: Option<Expr>,
+    pub variant_flatten: Option<Expr>,
+    pub size_flatten: Option<Expr>,
 }
 
 impl AllModifiers {
@@ -261,12 +253,19 @@ impl AllModifiers {
             string: ModifierGroup::new(ModTarget::String {
                 kw: Default::default(),
             }),
-            flatten: None,
+            bool_flatten: None,
+            variant_flatten: None,
+            size_flatten: None,
         }
     }
 
     pub fn empty(&self) -> bool {
-        self.num.empty() && self.size.empty() && self.variant.empty() && self.flatten.is_none()
+        self.num.empty()
+            && self.size.empty()
+            && self.variant.empty()
+            && self.bool_flatten.is_none()
+            && self.variant_flatten.is_none()
+            && self.size_flatten.is_none()
     }
 
     pub fn apply(&mut self, target: ModTarget, modifier: Modifier) -> syn::Result<()> {
@@ -356,6 +355,8 @@ impl Flags {
             && self.mods.empty()
             && self.condition.is_none()
             && self.stream_modifiers.is_empty()
+            && self.ty_mods.is_none()
+            && self.borrow.is_none()
     }
 }
 
@@ -435,16 +436,42 @@ impl Flags {
 
                 self.ty_mods = Some(TypeModifier::Into(ty));
             }
-            Flag::Flatten { param, .. } => {
-                if self.mods.flatten.is_some() {
-                    return Err(Error::new(
-                        span,
-                        r#""flatten" flag declared more than once"#,
-                    ));
-                }
+            Flag::Flatten { target, param, .. } => {
+                match target {
+                    FlattenTarget::Bool { .. } => {
+                        if self.mods.bool_flatten.is_some() {
+                            return Err(Error::new(
+                                span,
+                                r#""flatten" flag declared more than once"#,
+                            ));
+                        }
 
-                let expr = parse_quote!(#param);
-                self.mods.flatten = Some(expr);
+                        let expr = parse_quote!(#param);
+                        self.mods.bool_flatten = Some(expr);
+                    }
+                    FlattenTarget::Variant { .. } => {
+                        if self.mods.variant_flatten.is_some() {
+                            return Err(Error::new(
+                                span,
+                                r#""flatten" flag declared more than once"#,
+                            ));
+                        }
+
+                        let expr = parse_quote!(#param);
+                        self.mods.variant_flatten = Some(expr);
+                    }
+                    FlattenTarget::Size { .. } => {
+                        if self.mods.size_flatten.is_some() {
+                            return Err(Error::new(
+                                span,
+                                r#""flatten" flag declared more than once"#,
+                            ));
+                        }
+
+                        let expr = parse_quote!(#param);
+                        self.mods.size_flatten = Some(expr);
+                    }
+                }
             }
             Flag::Validate { expr, fmt, .. } => {
                 if self.validate.is_some() {
@@ -495,14 +522,11 @@ impl Flags {
                 /* Lifetime bounds are solved in a later pass */
                 /* Here we simply track the flag if it is explicitly passed */
                 /* And error when it is duplicated */
-                
+
                 if self.borrow.is_some() {
-                    return Err(Error::new(
-                        span,
-                        r#""borrow" flag declared more than once"#
-                    ))
+                    return Err(Error::new(span, r#""borrow" flag declared more than once"#));
                 }
-                
+
                 if let Some(lifetimes) = lifetimes {
                     self.borrow = Some(lifetimes.1.into_iter().collect());
                 } else {

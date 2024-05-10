@@ -1,49 +1,72 @@
-Helper macros to derive [`Encode`] and [`Decode`] for a `struct` or `enum`.<br>
-This macro supports a series of helper flags to aid customization<br>
-<br>
-All flags follow the following format:<br>
-`#[ende(flag1; flag2; flag2; ...)]`<br>
-<br>
+Helper macros to derive [`Encode`], [`Decode`] and [`BorrowDecode`] for a `struct` or `enum`.<br>
+This macro supports a series of helper flags to aid customization.
+
+All flags follow the following format:
+`#[ende(flag1; flag2; flag2; ...)]`
+
 The 2 special flags `en` and `de`, called Scope flags, can be used only at the beginning
 of the list to indicate that all the flags in the attribute declaration only apply to the
-encoding process (`en`) or the decoding process (`de`).<br>
-<br>
+encoding process (`en`) or the decoding process (`de`).
+
 If neither of those flags are specified, then it is assumed that all the flags in the
-attribute declaration apply to both encoding and decoding<br>
-<br>
-The flags currently implemented are split into 5 groups:<br>
-<br>
+attribute declaration apply to both encoding and decoding.
+
+Whenever a flag is said to accept an `$expr`, this means any expression is accepted,
+and that it will have access to an immutable reference to all the fields that have been
+decoded so far (actually all the fields while encoding), but the `validate` flag additionally
+provides a reference to the field it is applied on.<br>
+If the fields are part of a tuple struct/variant, the references will be named `m{idx}` where `idx` are the
+indexes of the tuple fields (E.G. `m0`, `m1`, ...), otherwise their names will match those of the fields themselves.
+
+The flags currently implemented are split into 5 groups:
 # 1. Setting Modifiers
 Setting-Modifier flags temporarily change certain settings of the encoder and can be applied
 to Fields or Items (the whole struct or enum).<br>
 Multiple can be specified at the same time, as long as they don't overlap.<br>
-* `$target: big_endian, little_endian` - `$target` can be `num`, `size`, `variant`, `string`
-* `$target: fixed, leb128, protobuf_wasteful, protobuf_zz` - `$target` can be `num`, `size`, `variant`
-* `$target: 8, 16, 32, 64, 128` - `$target` can be `size`, `variant`
-* `$target: max = $expr` - `$target` can only be `size`<br>
-* `$target: ascii, utf_8, utf_16, utf_32` - `$target` can only be `string`<br>
-* `$target: nul_term, len_prefix` - `$target` can only be `string`<br>
-<br>
+All setting modifiers follow the `$target: $mod1, $mod2, ...` pattern.
+
+- Endianness modifiers: `big_endian`, `little_endian`
+  - Available targets:
+    - `num`
+    - `size`
+    - `variant`
+    - `string`
+- Numerical encoding modifiers: `fixed`, `leb128`, `protobuf_wasteful`, `protobuf_zz`
+  - Available targets:
+    - `num`,
+    - `size`,
+    - `variant`
+- Bit-width modifiers: `bit8`, `bit16`, `bit32`, `bit64`, `bit128`
+  - Available targets:
+    - `size`
+    - `variant`
+- Max-size modifier: `max = $expr`
+  - Available targets:
+    - `size`
+- String encoding modifier: `utf8`, `utf16`, `utf32`
+  - Available targets:
+    - `string`
+    <br>
 ### Example:
 ```rust
 use ende::{Encode, Decode};
 #[derive(Encode, Decode)]
-#[ende(crate: ende)]
+# #[ende(crate: ende)]
 /// The variants of this enum will be encoded in the little endian ordering,
 /// using a fixed numerical encoding and a 32-bit width.
-#[ende(variant: little_endian, fixed, 32)]
+#[ende(variant: little_endian, fixed, bit32)]
 enum MyEnum {
     VariantA {
         /// The length of this String will be encoded using big endian ordering,
         /// fixed numerical encoding and 16-bit width, with a max length of 100
-        #[ende(size: big_endian, fixed, 16, max = 100)]
-        /// field: String,
-        /// Encode this String with utf16
-        #[ende(string: utf_16, big_endian)]
+        #[ende(size: big_endian, fixed, bit16, max = 100)]
+        field: String,
+        /// Encode this String with utf16 big endian
+        #[ende(string: utf16, big_endian)]
         utf_16: String,
-        /// Encode this String as an ascii string
-        #[ende(string: ascii)]
-        ascii: String,
+        /// Encode this String as an utf8 string
+        #[ende(string: utf8)]
+        utf_8: String,
     },
     VariantB {
         /// This number will be encoded using little endian ordering, and the
@@ -61,7 +84,7 @@ to Fields or Items.<br>
 Note that the order in which stream modifiers are declared is very important:<br>
 They are applied in the declaration order during encoding, but in the reverse order during
 decoding, for consistency. However, the item-level modifiers take priority over the field-level
-modifiers (see [example](#ambiguous-example)).<br>
+modifiers (see [ambiguous example](#ambiguous-example)).<br>
 * `redir: $path(...)` - Currently the only supported stream modifier, but more may
 be added in the future. Uses the given path to find an encoding/decoding function which
 alters the writer/reader and passes a modified encoder to a closure.<br>
@@ -130,7 +153,7 @@ with the same signatures as above.
 use ende::{Encode, Decode};
 use ende::facade::fake::rsa;
 use uuid::Uuid;
-///
+
 #[derive(Encode, Decode)]
 #[ende(crate: ende)]
 struct Friends {
@@ -138,7 +161,7 @@ struct Friends {
     /// A perfect fit for integrating with serde!
     #[ende(serde)]
     uuid: Uuid,
-    /// Here we demonstrate how the with flag changes based on whether or not a scope
+    /// Here we demonstrate how the with flag changes based on whether a scope
     /// is declared. This:
     #[ende(with: person_encoder)]
     friend1: person_encoder::Person,
@@ -246,55 +269,67 @@ or item should be encoded/decoded.<br>
 * `crate: $crate` - Overwrites the default crate name which is assumed to be `ende`.
 Can only be applied to items.
 * `if: $expr` - The field will only be encoded/decoded if the given expression
-evaluates to true, otherwise the default value is computed
+evaluates to true, otherwise the default value is computed.
 * `default: $expr` - Overrides the default fallback for when a value can't be
-deserialized (`Default::default()`)
+decoded, which is `Default::default()`
 * `skip` - Will not encode/decode this field.
-When decoding, computes the default value
+When decoding, computes the default value.
 * `validate: $expr, $format_string, $arg1, $arg2, $arg3, ...` - Before encoding/after decoding, returns an error if the
-expression evaluates to false. The error message will use the given formatting (if present)
+expression evaluates to false. The error message will use the given formatting (if present).
 * `flatten: $expr` - Indicates that the length of the given field (for example
 a Vec or HashMap) doesn't need to be encoded/decoded, because it is known from the context.
 Can also be used with an `Option` in conjunction with the `if` flag and without the `$expr`
-to indicate that the presence of an optional value is known from the context.<br>
+to indicate that the presence of an optional value is known from the context.
+* `borrow: $lif1, $lif2, $lif3, ...` - Only available when deriving `BorrowDecode`. Indicates this field
+should be decoded using its borrowing decode implementation, and allows you to optionally specify a
+set of lifetimes to override those normally inferred by the macro. These lifetimes will be bound
+to the lifetime of the encoder's data.
 <br>
 ### Example:
+
 ```rust
-use ende::{Encode, Decode};
+use std::borrow::Cow;
+use ende::{Encode, Decode, BorrowDecode};
 use uuid::Uuid;
 
 // Hehe >:3
 extern crate ende as enderman;
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, BorrowDecode)]
 /// We specify the name of the re-exported ende crate.
 #[ende(crate: enderman)]
-struct PersonEntry {
-    /// Will come in handy later
-    name_present: bool,
-    /// Similar to the previous example, but with the addition of the flatten flag!
-    /// We know a Uuid is always 16 bytes long, so we omit writing/reading that data.
-    #[ende(serde; flatten: 16)]
-    uuid: Uuid,
-	/// Just the string version of the uuid, not present in the binary data.
-    /// Skip the Encoding step, and Decode it from the uuid.
-    #[ende(skip; default: uuid.to_string())]
-	uuid_string: String,
-    /// We know whether this is present from the context, therefore we don't write whether
-    /// the optional value is present, and when reading we assume it is.
-    /// Since the "if" flag is also present, the field will only be decoded if the expression
-    /// evaluates to true, making the previous operation safe~~~~
-	/// (no risk of decoding garbage data)
-    #[ende(flatten: some; if: *name_present)]
-    name: Option<String>,
-    /// Only present if the name is also present, but we want to provide a custom default!
-    #[ende(default: String::from("Smith"); if: *name_present)]
-    surname: String,
-    /// No-one allowed before 18!
-    #[ende(validate: *age >= 18, "User is too young: {}", age)]
-    age: u32,
-    /// This is temporary data, we don't care about including it in the binary format.
-    #[ende(skip; default: 100)]
-    health: u64,
+struct PersonEntry<'record> {
+  /// Will come in handy later
+  name_present: bool,
+  /// Similar to the previous example, but with the addition of the flatten flag!
+  /// We know a Uuid is always 16 bytes long, so we omit writing/reading that data.
+  #[ende(serde; flatten: 16)]
+  uuid: Uuid,
+  /// Just the string version of the uuid, not present in the binary data.
+  /// Skip the Encoding step, and Decode it from the uuid.
+  #[ende(skip; default: uuid.to_string())]
+  uuid_string: String,
+  /// We know whether this is present from the context, therefore we don't write whether
+  /// the optional value is present, and when reading we assume it is.
+  /// Since the "if" flag is also present, the field will only be decoded if the expression
+  /// evaluates to true, making the previous operation safe
+  /// (no risk of decoding garbage data)
+  #[ende(flatten: some; if: * name_present)]
+  name: Option<String>,
+  /// This might be too long to clone from the decoder, so we borrow it instead.
+  /// Decode impl -> Cow::Owned
+  /// BorrowDecode impl -> Cow::Borrowed
+  /// The macro will infer the borrow lifetime to be `'record`.
+  #[ende(borrow)]
+  criminal_record: Cow<'record, str>,
+  /// Only present if the name is also present, but we want to provide a custom default!
+  #[ende(default: String::from("Smith"); if: * name_present)]
+  surname: String,
+  /// No-one allowed before 18!
+  #[ende(validate: * age >= 18, "User is too young: {}", age)]
+  age: u32,
+  /// This is temporary data, we don't care about including it in the binary format.
+  #[ende(skip; default: 100)]
+  health: u64,
 }
 ```

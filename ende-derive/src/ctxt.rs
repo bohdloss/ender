@@ -1,12 +1,14 @@
-use parse_display::Display;
-use proc_macro2::{Ident, Span};
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote, TokenStreamExt, ToTokens};
-use syn::{Attribute, Data, DeriveInput, Error, Expr, Fields, Generics, Index, Lifetime, parse_quote, Type};
+use proc_macro2::{Ident, Span};
+use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use std::fmt::Display;
 use syn::spanned::Spanned;
+use syn::{
+    parse_quote, Attribute, Data, DeriveInput, Error, Expr, Fields, Generics, Index, Lifetime, Type,
+};
 
-use crate::flags::{Flags, FlagTarget};
-use crate::lifetime::discover_lifetime_bounds;
+use crate::flags::{FlagTarget, Flags};
+use crate::lifetime::process_field_lifetimes;
 use crate::parse::{EndeAttribute, Flag, ReprAttribute};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -82,7 +84,7 @@ pub enum ItemType {
     Enum,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Display)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Flavor {
     Unit,
     Tuple,
@@ -103,14 +105,26 @@ pub struct Variant {
     pub fields: Vec<Field>,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Display)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Target {
     Encode,
     Decode,
     BorrowDecode,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Display)]
+impl Display for Target {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            Target::Encode => "Encode",
+            Target::Decode => "Decode",
+            Target::BorrowDecode => "BorrowDecode",
+        }
+        .to_owned();
+        write!(f, "{}", str)
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Scope {
     Encode,
     Decode,
@@ -148,6 +162,17 @@ impl Field {
             ty,
             flags: Flags::new(FlagTarget::Field),
         }
+    }
+
+    /// Returns the type this field will be encoded to / decoded from.
+    /// In practice, this means if any type modifier flag is present,
+    /// its type is returned, otherwise the original field type is returned.
+    pub fn virtual_ty(&self) -> &Type {
+        self.flags
+            .ty_mods
+            .as_ref()
+            .map(|mods| mods.ty())
+            .unwrap_or(&self.ty)
     }
 }
 
@@ -261,14 +286,7 @@ impl Ctxt {
             Data::Struct(data) => {
                 // Extract the fields
                 let (flavor, mut fields) = extract_fields_and_flavor(&data.fields, target)?;
-
-                if target == Target::BorrowDecode {
-                    lifetimes.append(&mut discover_lifetime_bounds(&mut fields)?)
-                } else {
-                    for field in fields.iter_mut() {
-                        field.flags.borrow = None;
-                    }
-                }
+                process_field_lifetimes(target, &mut fields, &mut lifetimes)?;
 
                 struct_data = Struct { flavor, fields };
 
@@ -292,14 +310,7 @@ impl Ctxt {
                 for variant in data.variants.iter() {
                     // Extract the variant fields and flavor
                     let (flavor, mut fields) = extract_fields_and_flavor(&variant.fields, target)?;
-
-                    if target == Target::BorrowDecode {
-                        lifetimes.append(&mut discover_lifetime_bounds(&mut fields)?)
-                    } else {
-                        for field in fields.iter_mut() {
-                            field.flags.borrow = None;
-                        }
-                    }
+                    process_field_lifetimes(target, &mut fields, &mut lifetimes)?;
 
                     if let Some((_, discriminant)) = &variant.discriminant {
                         variant_index.value(discriminant);
@@ -332,7 +343,7 @@ impl Ctxt {
             lifetimes.sort();
             lifetimes.dedup();
         }
-        
+
         // Finally construct a context
         let mut ctxt = Ctxt {
             flags: Flags::new(FlagTarget::Item),
@@ -351,7 +362,7 @@ impl Ctxt {
             borrow_data: BorrowData {
                 decoder: Lifetime::new("'__data", Span::call_site()),
                 sub_lifetimes: lifetimes,
-            }
+            },
         };
 
         // Then obtain the item level flags and apply them
@@ -363,7 +374,7 @@ impl Ctxt {
                 }
             }
         }
-        
+
         // TODO Detect and fix any potential name clash here
 
         Ok(ctxt)
@@ -376,10 +387,13 @@ pub fn extract_fields_and_flavor(
     target: Target,
 ) -> syn::Result<(Flavor, Vec<Field>)> {
     match fields {
-        Fields::Named(fields) => Ok((Flavor::Struct, process_fields(fields.named.iter(), target)?)),
+        Fields::Named(fields) => Ok((
+            Flavor::Struct,
+            process_field_flags(fields.named.iter(), target)?,
+        )),
         Fields::Unnamed(fields) => Ok((
             Flavor::Tuple,
-            process_fields(fields.unnamed.iter(), target)?,
+            process_field_flags(fields.unnamed.iter(), target)?,
         )),
         Fields::Unit => Ok((Flavor::Unit, Vec::new())),
     }
@@ -387,7 +401,7 @@ pub fn extract_fields_and_flavor(
 
 /// Processes a syn field into our custom field type, applying flags on the way and
 /// extracting necessary data while discarding unneeded data.
-pub fn process_fields<'a>(
+pub fn process_field_flags<'a>(
     syn_fields: impl Iterator<Item = &'a syn::Field>,
     target: Target,
 ) -> syn::Result<Vec<Field>> {

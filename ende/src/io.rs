@@ -140,6 +140,7 @@ impl Read for SliceMut<'_> {
     }
 }
 
+#[derive(Clone)]
 #[repr(transparent)]
 pub struct Slice<'data>(&'data [u8]);
 
@@ -190,6 +191,44 @@ impl<'data> BorrowRead<'data> for Slice<'data> {
         let (first, second) = take(&mut self.0).split_at(len);
         self.0 = second;
         Ok(first)
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[derive(Clone, Eq, PartialEq, Debug)]
+#[repr(transparent)]
+pub struct VecWrite(Vec<u8>);
+
+#[cfg(feature = "std")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+impl VecWrite {
+    #[inline]
+    pub fn new(vec: Vec<u8>) -> Self {
+        Self(vec)
+    }
+    #[inline]
+    pub fn inner(&self) -> &Vec<u8> {
+        &self.0
+    }
+    #[inline]
+    pub fn inner_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.0
+    }
+    #[inline]
+    pub fn into_inner(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+impl Write for VecWrite {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> EncodingResult<()> {
+        self.0.reserve(buf.len());
+        self.0.extend_from_slice(buf);
+        Ok(())
     }
 }
 

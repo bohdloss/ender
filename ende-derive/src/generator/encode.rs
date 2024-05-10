@@ -95,11 +95,11 @@ impl Variant {
 
         let write_variant = if ctxt.enum_repr.signed() {
             quote!(
-                #crate_name::Encoder::write_ivariant(#encoder, #index as _)?;
+                #crate_name::Encoder::write_ivariant(#encoder, #index)?;
             )
         } else {
             quote!(
-                #crate_name::Encoder::write_uvariant(#encoder, #index as _)?;
+                #crate_name::Encoder::write_uvariant(#encoder, #index)?;
             )
         };
 

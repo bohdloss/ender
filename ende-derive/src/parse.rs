@@ -1,23 +1,17 @@
-// Reasoning: many tokens are simply written into the structs and never read.
-// Consider temporarily removing this if you intend to mess with the parser.
-#![allow(unused)]
+use std::fmt::Display;
 
-use crate::ctxt::Scope;
-use crate::enums::BitWidth;
-use parse_display::Display;
 use proc_macro2::{Ident, Span};
-use std::str::FromStr;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Paren;
-use syn::{parenthesized, Error, Expr, LitInt, LitStr, Path, Token, Type, Lifetime};
+use syn::{parenthesized, Error, Expr, Lifetime, LitStr, Path, Token, Type};
+
+use crate::ctxt::Scope;
+use crate::enums::BitWidth;
 
 const FLAGS_USAGE: &str = r#"Unknown Flag. Please refer to the documentation of the macro for a list of valid flags and their usage."#;
 
-const MODIFIER_USAGE: &str = r#"Unknown modifier. Modifier can be bit-width (8, 16, 32, 64, 128), endianness (big_endian, little_endian), num-encoding (fixed, leb128), max-size (max = $expr)"#;
-
-const BITWIDTH_USAGE: &str =
-    r#"Invalid bit-width modifier. Allowed bit-widths are 8, 16, 32, 64, 128"#;
+const MODIFIER_USAGE: &str = r#"Unknown modifier. Modifier can be str-encoding (utf8, utf16, utf32), bit-width (bit8, bit16, bit32, bit64, bit128), endianness (big_endian, little_endian), num-encoding (fixed, leb128, protobuf_wasteful, protobuf_zz), max-size (max = $expr)"#;
 
 pub mod kw {
     use syn::custom_keyword;
@@ -38,15 +32,21 @@ pub mod kw {
     /* Stream modifiers */
     custom_keyword!(redir);
 
-    /* Flatten flag helpers */
-    custom_keyword!(some);
-    custom_keyword!(none);
+    /* Flatten targets */
+    custom_keyword!(bool);
 
     /* Keywords used for modifiers TARGETS */
     custom_keyword!(num);
     custom_keyword!(size);
     custom_keyword!(variant);
     custom_keyword!(string);
+
+    /* Bit-width */
+    custom_keyword!(bit8);
+    custom_keyword!(bit16);
+    custom_keyword!(bit32);
+    custom_keyword!(bit64);
+    custom_keyword!(bit128);
 
     /* Keywords used for the modifiers themselves */
     // Numerical encodings
@@ -60,35 +60,44 @@ pub mod kw {
     // Max size
     custom_keyword!(max);
     // String encoding
-    custom_keyword!(ascii);
-    custom_keyword!(utf_8);
-    custom_keyword!(utf_16);
-    custom_keyword!(utf_32);
+    custom_keyword!(utf8);
+    custom_keyword!(utf16);
+    custom_keyword!(utf32);
 }
 
 /// The `#[repr($ty)]` attribute
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct ReprAttribute {
     pub ty: Type,
 }
 
 /// Represents a formatting, like `format!("A{}G", "BCDEF");`
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Formatting {
     pub format: LitStr,
     pub args: Option<(Token![,], Punctuated<Expr, Token![,]>)>,
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
+pub enum FlattenTarget {
+    Bool { kw: kw::bool },
+    Variant { kw: kw::variant },
+    Size { kw: kw::size },
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
 pub enum FlattenParam {
-    Some(kw::some),
-    None(kw::none),
     Expr(Expr),
 }
 
 /// Represents every kind of modifiers that can be applied to a [`ModTarget`].
 /// Example: `$target: $modifier, $modifier, ...`
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum Modifier {
     Fixed {
         kw: kw::fixed,
@@ -114,36 +123,44 @@ pub enum Modifier {
         max: Expr,
     },
     BitWidth {
-        lit: LitInt,
+        span: Span,
         width: BitWidth,
     },
-    Ascii {
-        kw: kw::ascii,
-    },
     Utf8 {
-        kw: kw::utf_8,
+        kw: kw::utf8,
     },
     Utf16 {
-        kw: kw::utf_16,
+        kw: kw::utf16,
     },
     Utf32 {
-        kw: kw::utf_32,
+        kw: kw::utf32,
     },
 }
 
 /// Represents every possible target for a [`Modifier`].
-#[derive(Clone, Display)]
+#[derive(Clone)]
+#[allow(dead_code)]
 pub enum ModTarget {
-    #[display("num")]
     Num { kw: kw::num },
-    #[display("size")]
     Size { kw: kw::size },
-    #[display("variant")]
     Variant { kw: kw::variant },
-    #[display("string")]
     String { kw: kw::string },
 }
 
+impl Display for ModTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            ModTarget::Num { .. } => "num",
+            ModTarget::Size { .. } => "size",
+            ModTarget::Variant { .. } => "variant",
+            ModTarget::String { .. } => "string",
+        }
+        .to_owned();
+        write!(f, "{}", str)
+    }
+}
+
+#[allow(dead_code)]
 impl ModTarget {
     pub fn num(&self) -> bool {
         match self {
@@ -191,6 +208,7 @@ impl ModTarget {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct FnArgs {
     pub paren: Paren,
     pub args: Punctuated<Expr, Token![,]>,
@@ -198,6 +216,7 @@ pub struct FnArgs {
 
 /// Every possible flag that can be attached to a field or item.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum Flag {
     /// All the following flags only apply to the encoding step
     En { kw: kw::en },
@@ -258,6 +277,7 @@ pub enum Flag {
     /// more info.
     Flatten {
         kw: kw::flatten,
+        target: FlattenTarget,
         colon: Token![:],
         param: FlattenParam,
     },
@@ -286,7 +306,7 @@ pub enum Flag {
     Borrow {
         kw: kw::borrow,
         lifetimes: Option<(Token![:], Punctuated<Lifetime, Token![,]>)>,
-    }
+    },
 }
 
 impl Flag {
@@ -313,10 +333,12 @@ impl Flag {
 
 /// Represents the `#[ende(... stuff ...)]` attribute
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct EndeAttribute {
     pub flags: Punctuated<Flag, Token![;]>,
 }
 
+#[allow(dead_code)]
 impl EndeAttribute {
     pub fn scope(&self) -> Scope {
         self.flags
@@ -354,15 +376,26 @@ impl Parse for Formatting {
     }
 }
 
+impl Parse for FlattenTarget {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(kw::bool) {
+            Ok(Self::Bool { kw: input.parse()? })
+        } else if input.peek(kw::variant) {
+            Ok(Self::Variant { kw: input.parse()? })
+        } else if input.peek(kw::size) {
+            Ok(Self::Size { kw: input.parse()? })
+        } else {
+            Err(Error::new(
+                input.span(),
+                r#""flatten" target: expected one of "bool", "variant" and "size""#,
+            ))
+        }
+    }
+}
+
 impl Parse for FlattenParam {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(kw::some) {
-            Ok(Self::Some(input.parse()?))
-        } else if input.peek(kw::none) {
-            Ok(Self::None(input.parse()?))
-        } else {
-            Ok(Self::Expr(input.parse()?))
-        }
+        Ok(Self::Expr(input.parse()?))
     }
 }
 
@@ -386,25 +419,41 @@ impl Parse for Modifier {
                 eq: input.parse()?,
                 max: input.parse()?,
             })
-        } else if input.peek(LitInt) {
-            let lit: LitInt = input.parse()?;
-            let width = match lit.base10_parse::<u8>()? {
-                8 => BitWidth::Bit8,
-                16 => BitWidth::Bit16,
-                32 => BitWidth::Bit32,
-                64 => BitWidth::Bit64,
-                128 => BitWidth::Bit128,
-                _ => return Err(Error::new(lit.span(), BITWIDTH_USAGE)),
-            };
-
-            Ok(Self::BitWidth { lit, width })
-        } else if input.peek(kw::ascii) {
-            Ok(Self::Ascii { kw: input.parse()? })
-        } else if input.peek(kw::utf_8) {
+        } else if input.peek(kw::bit8) {
+            let span = input.parse::<kw::bit8>()?.span;
+            Ok(Self::BitWidth {
+                span,
+                width: BitWidth::Bit8,
+            })
+        } else if input.peek(kw::bit16) {
+            let span = input.parse::<kw::bit16>()?.span;
+            Ok(Self::BitWidth {
+                span,
+                width: BitWidth::Bit16,
+            })
+        } else if input.peek(kw::bit32) {
+            let span = input.parse::<kw::bit32>()?.span;
+            Ok(Self::BitWidth {
+                span,
+                width: BitWidth::Bit32,
+            })
+        } else if input.peek(kw::bit64) {
+            let span = input.parse::<kw::bit64>()?.span;
+            Ok(Self::BitWidth {
+                span,
+                width: BitWidth::Bit64,
+            })
+        } else if input.peek(kw::bit128) {
+            let span = input.parse::<kw::bit128>()?.span;
+            Ok(Self::BitWidth {
+                span,
+                width: BitWidth::Bit128,
+            })
+        } else if input.peek(kw::utf8) {
             Ok(Self::Utf8 { kw: input.parse()? })
-        } else if input.peek(kw::utf_16) {
+        } else if input.peek(kw::utf16) {
             Ok(Self::Utf16 { kw: input.parse()? })
-        } else if input.peek(kw::utf_32) {
+        } else if input.peek(kw::utf32) {
             Ok(Self::Utf32 { kw: input.parse()? })
         } else {
             Err(Error::new(input.span(), MODIFIER_USAGE))
@@ -424,7 +473,7 @@ impl Parse for ModTarget {
             Ok(Self::String { kw: input.parse()? })
         } else {
             // We peek before parsing a Target, so this should be unreachable
-            unreachable!()
+            unreachable!("You found a bug! (ModTarget::parse)")
         }
     }
 }
@@ -500,6 +549,7 @@ impl Parse for Flag {
         } else if input.peek(kw::flatten) {
             Ok(Self::Flatten {
                 kw: input.parse()?,
+                target: input.parse()?,
                 colon: input.parse()?,
                 param: input.parse()?,
             })
@@ -538,7 +588,7 @@ impl Parse for Flag {
                     Some((input.parse()?, Punctuated::parse_terminated(input)?))
                 } else {
                     None
-                }
+                },
             })
         } else {
             Err(Error::new(input.span(), FLAGS_USAGE))
