@@ -7,30 +7,76 @@
 use crate::{EncodingError, EncodingResult};
 use core::mem::take;
 
+/// A compatibility layer between this crate's I/O traits and `std::io` traits.
+/// 
+/// If `T` implements [`std::io::Write`] or [`std::io::Read`] or both, `Std<T>` will implement
+/// [`Write`] or [`Read`] or both, and vice versa.
+/// 
+/// The memory layout is always guaranteed to be that of `T`.
 #[cfg(feature = "std")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 #[repr(transparent)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Std<T>(T);
 
 #[cfg(feature = "std")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 impl<T> Std<T> {
+    /// Wraps a `T`.
     #[inline]
     pub fn new(stream: T) -> Self {
         Self(stream)
     }
+    /// Read-only reference to `T`.
     #[inline]
     pub fn inner(&self) -> &T {
         &self.0
     }
+    /// Mutable reference to `T`.
     #[inline]
     pub fn inner_mut(&mut self) -> &mut T {
         &mut self.0
     }
+    /// Unwraps `T` and returns it.
     #[inline]
     pub fn into_inner(self) -> T {
         self.0
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+impl<T: Write> std::io::Write for Std<T> {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        <T as Write>::write(&mut self.0, buf).map_err(|x| match x {
+            EncodingError::IOError(error) => {
+                std::io::Error::from(<std::io::ErrorKind as From<_>>::from(error))
+            }
+            EncodingError::UnexpectedEnd => std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
+            error => std::io::Error::new(std::io::ErrorKind::Other, error),
+        })?;
+        Ok(buf.len())
+    }
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+impl<T: Read> std::io::Read for Std<T> {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        <T as Read>::read(&mut self.0, buf).map_err(|x| match x {
+            EncodingError::IOError(error) => {
+                std::io::Error::from(<std::io::ErrorKind as From<_>>::from(error))
+            }
+            EncodingError::UnexpectedEnd => std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
+            error => std::io::Error::new(std::io::ErrorKind::Other, error),
+        })?;
+        Ok(buf.len())
     }
 }
 
@@ -52,60 +98,27 @@ impl<T: std::io::Read> Read for Std<T> {
     }
 }
 
-#[repr(transparent)]
-#[derive(Clone, Debug)]
-pub struct Embedded<T>(T);
-
-impl<T> Embedded<T> {
-    #[inline]
-    pub fn new(stream: T) -> Self {
-        Self(stream)
-    }
-    #[inline]
-    pub fn inner(&self) -> &T {
-        &self.0
-    }
-    #[inline]
-    pub fn inner_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.0
-    }
-}
-
-impl<T: embedded_io::Write> Write for Embedded<T> {
-    #[inline]
-    fn write(&mut self, buf: &[u8]) -> EncodingResult<()> {
-        use embedded_io::Error;
-        <T as embedded_io::Write>::write_all(&mut self.0, buf).map_err(|x| x.kind().into())
-    }
-}
-
-impl<T: embedded_io::Read> Read for Embedded<T> {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
-        <T as embedded_io::Read>::read_exact(&mut self.0, buf).map_err(|x| x.into())
-    }
-}
-
-#[repr(transparent)]
+/// Wraps a mutable `u8` slice providing [`Write`] and [`Read`] implementations.
+#[derive(Eq, PartialEq, Debug)]
 pub struct SliceMut<'data>(&'data mut [u8]);
 
 impl<'data> SliceMut<'data> {
+    /// Wraps a mutable slice in an I/O object.
     #[inline]
     pub fn new(slice: &'data mut [u8]) -> Self {
         Self(slice)
     }
+    /// Read-only reference to the slice.
     #[inline]
     pub fn inner(&self) -> &[u8] {
         &self.0
     }
+    /// Mutable reference to the slice.
     #[inline]
     pub fn inner_mut(&mut self) -> &mut [u8] {
         &mut self.0
     }
+    /// Unwraps the slice, returning it.
     #[inline]
     pub fn into_inner(self) -> &'data mut [u8] {
         self.0
@@ -140,19 +153,22 @@ impl Read for SliceMut<'_> {
     }
 }
 
-#[derive(Clone)]
-#[repr(transparent)]
+/// Wraps an immutable `u8` slice providing [`Read`] and [`BorrowRead`] implementations.
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Slice<'data>(&'data [u8]);
 
 impl<'data> Slice<'data> {
+    /// Wraps an immutable slice in an I/O object.
     #[inline]
     pub fn new(slice: &'data [u8]) -> Self {
         Self(slice)
     }
+    /// Reference to the slice.
     #[inline]
     pub fn inner(&self) -> &[u8] {
         &self.0
     }
+    /// Unwraps the slice, returning it.
     #[inline]
     pub fn into_inner(self) -> &'data [u8] {
         self.0
@@ -194,14 +210,17 @@ impl<'data> BorrowRead<'data> for Slice<'data> {
     }
 }
 
-#[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+/// Wraps a `Vec` providing [`Write`] and [`Read`] implementations.
+/// 
+/// The advantage of this over a [`SliceMut`] is that when the end of the
+/// vector is reached, the backing memory is simply extended and writing can continue.
+#[cfg(feature = "alloc")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
 #[derive(Clone, Eq, PartialEq, Debug)]
-#[repr(transparent)]
-pub struct VecWrite(Vec<u8>);
+pub struct VecWrite(alloc::vec::Vec<u8>);
 
-#[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg(feature = "alloc")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
 impl VecWrite {
     #[inline]
     pub fn new(vec: Vec<u8>) -> Self {
@@ -221,8 +240,8 @@ impl VecWrite {
     }
 }
 
-#[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg(feature = "alloc")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
 impl Write for VecWrite {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> EncodingResult<()> {
@@ -232,7 +251,9 @@ impl Write for VecWrite {
     }
 }
 
-#[derive(Clone, Debug)]
+/// Wraps any type that implements [`Write`] or [`Read`] and keeps track of how many
+/// bytes are written and read, separately.
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct SizeTrack<T> {
     stream: T,
     wsize: usize,
@@ -240,6 +261,7 @@ pub struct SizeTrack<T> {
 }
 
 impl<T> SizeTrack<T> {
+    /// Creates a new tracker for `T`.
     #[inline]
     pub fn new(stream: T) -> Self {
         Self {
@@ -248,26 +270,38 @@ impl<T> SizeTrack<T> {
             rsize: 0,
         }
     }
+    
+    /// Returns the number of bytes written so far.
+    /// 
+    /// Note that if a write call fails, the value returned by
+    /// this function is left unchanged.
     #[inline]
     pub fn size_written(&self) -> usize {
         self.wsize
     }
 
+    /// Returns the number of bytes read so far.
+    ///
+    /// Note that if a read call fails, the value returned by
+    /// this function is left unchanged.
     #[inline]
     pub fn size_read(&self) -> usize {
         self.rsize
     }
 
+    /// Read-only reference to `T`.
     #[inline]
     pub fn inner(&self) -> &T {
         &self.stream
     }
 
+    /// Mutable reference to `T`.
     #[inline]
     pub fn inner_mut(&mut self) -> &mut T {
         &mut self.stream
     }
 
+    /// Unwraps `T`, returning it.
     #[inline]
     pub fn into_inner(self) -> T {
         self.stream
@@ -305,6 +339,8 @@ impl<'data, T: BorrowRead<'data>> BorrowRead<'data> for SizeTrack<T> {
     }
 }
 
+/// Wraps any type that implements [`Write`] or [`Read`] and limits how many
+/// bytes can be written and read, separately.
 #[derive(Clone, Debug)]
 pub struct SizeLimit<T> {
     stream: T,
@@ -313,6 +349,7 @@ pub struct SizeLimit<T> {
 }
 
 impl<T> SizeLimit<T> {
+    /// Creates a new limiter for `T`.
     #[inline]
     pub fn new(stream: T, write_limit: usize, read_limit: usize) -> Self {
         Self {
@@ -321,26 +358,38 @@ impl<T> SizeLimit<T> {
             rsize: read_limit,
         }
     }
+
+    /// Returns the number of bytes that can still be written.
+    ///
+    /// Note that if a write call fails, the value returned by
+    /// this function is left unchanged.
     #[inline]
     pub fn remaining_writable(&self) -> usize {
         self.wsize
     }
 
+    /// Returns the number of bytes that can still be read.
+    ///
+    /// Note that if a read call fails, the value returned by
+    /// this function is left unchanged.
     #[inline]
     pub fn remaining_readable(&self) -> usize {
         self.rsize
     }
 
+    /// Read-only reference to `T`.
     #[inline]
     pub fn inner(&self) -> &T {
         &self.stream
     }
 
+    /// Mutable reference to `T`.
     #[inline]
     pub fn inner_mut(&mut self) -> &mut T {
         &mut self.stream
     }
 
+    /// Unwraps `T`, returning it.
     #[inline]
     pub fn into_inner(self) -> T {
         self.stream
@@ -390,6 +439,7 @@ impl<'data, T: BorrowRead<'data>> BorrowRead<'data> for SizeLimit<T> {
     }
 }
 
+/// A NOP stream, that ignores write calls, and responds to read calls with infinite zeroes.
 #[derive(Clone)]
 pub struct Zero;
 
@@ -410,16 +460,29 @@ impl Read for Zero {
     }
 }
 
+/// Everything, be it a stream or buffer, which can be **encoded into**.
 pub trait Write {
+    /// Writes the entire contents of `buf`.
+    /// 
+    /// No guarantees are made about flushing.
     fn write(&mut self, buf: &[u8]) -> EncodingResult<()>;
 }
 
+/// Everything, be it a stream or buffer, which can be **decoded from**.
 pub trait Read {
+    /// Reads `buf.len()` bytes into `buf`.
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()>;
 }
 
+/// A buffer that is capable of lending data, in order to perform **zero copy decoding**.
 pub trait BorrowRead<'data>: Read {
+    /// Exactly the same as [`borrow_read`][`Self::borrow_read`], except the stream position
+    /// is not advanced. E.G. multiple subsequent calls to this function are guaranteed to produce
+    /// the same output.
     fn peek(&self, len: usize) -> EncodingResult<&'data [u8]>;
+    
+    /// Borrows a slice of bytes from the buffer, incrementing the buffer position.
+    /// The slice's lifetime is bound to the buffer's lifetime.
     fn borrow_read(&mut self, len: usize) -> EncodingResult<&'data [u8]>;
 }
 

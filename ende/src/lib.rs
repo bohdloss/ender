@@ -1143,60 +1143,60 @@ impl<T: Write> Encoder<'_, T> {
     make_write_fns! {
         type u8 {
             pub u_write: write_u8,
-            pub u_write_direct: write_u8_direct,
+            pub u_write_direct: write_u8_with,
             priv uleb128_encode: uleb128_encode_u8,
         },
         type i8 {
             pub i_write: write_i8,
-            pub i_write_direct: write_i8_direct,
+            pub i_write_direct: write_i8_with,
             priv leb128_encode: leb128_encode_i8,
         },
     }
     make_write_fns! {
         type u16 {
             pub u_write: write_u16,
-            pub u_write_direct: write_u16_direct,
+            pub u_write_direct: write_u16_with,
             priv uleb128_encode: uleb128_encode_u16,
         },
         type i16 {
             pub i_write: write_i16,
-            pub i_write_direct: write_i16_direct,
+            pub i_write_direct: write_i16_with,
             priv leb128_encode: leb128_encode_i16,
         },
     }
     make_write_fns! {
         type u32 {
             pub u_write: write_u32,
-            pub u_write_direct: write_u32_direct,
+            pub u_write_direct: write_u32_with,
             priv uleb128_encode: uleb128_encode_u32,
         },
         type i32 {
             pub i_write: write_i32,
-            pub i_write_direct: write_i32_direct,
+            pub i_write_direct: write_i32_with,
             priv leb128_encode: leb128_encode_i32,
         },
     }
     make_write_fns! {
         type u64 {
             pub u_write: write_u64,
-            pub u_write_direct: write_u64_direct,
+            pub u_write_direct: write_u64_with,
             priv uleb128_encode: uleb128_encode_u64,
         },
         type i64 {
             pub i_write: write_i64,
-            pub i_write_direct: write_i64_direct,
+            pub i_write_direct: write_i64_with,
             priv leb128_encode: leb128_encode_i64,
         },
     }
     make_write_fns! {
         type u128 {
             pub u_write: write_u128,
-            pub u_write_direct: write_u128_direct,
+            pub u_write_direct: write_u128_with,
             priv uleb128_encode: uleb128_encode_u128,
         },
         type i128 {
             pub i_write: write_i128,
-            pub i_write_direct: write_i128_direct,
+            pub i_write_direct: write_i128_with,
             priv leb128_encode: leb128_encode_i128,
         },
     }
@@ -1232,13 +1232,11 @@ impl<T: Write> Encoder<'_, T> {
             let opaque = Opaque::from(value);
 
             match self.ctxt.settings.size_repr.width {
-                BitWidth::Bit8 => self.write_u8_direct(opaque.try_into()?, encoding, endianness),
-                BitWidth::Bit16 => self.write_u16_direct(opaque.try_into()?, encoding, endianness),
-                BitWidth::Bit32 => self.write_u32_direct(opaque.try_into()?, encoding, endianness),
-                BitWidth::Bit64 => self.write_u64_direct(opaque.try_into()?, encoding, endianness),
-                BitWidth::Bit128 => {
-                    self.write_u128_direct(opaque.try_into()?, encoding, endianness)
-                }
+                BitWidth::Bit8 => self.write_u8_with(opaque.try_into()?, encoding, endianness),
+                BitWidth::Bit16 => self.write_u16_with(opaque.try_into()?, encoding, endianness),
+                BitWidth::Bit32 => self.write_u32_with(opaque.try_into()?, encoding, endianness),
+                BitWidth::Bit64 => self.write_u64_with(opaque.try_into()?, encoding, endianness),
+                BitWidth::Bit128 => self.write_u128_with(opaque.try_into()?, encoding, endianness),
             }
         }
     }
@@ -1253,11 +1251,11 @@ impl<T: Write> Encoder<'_, T> {
         let opaque = Opaque::from(value);
 
         match self.ctxt.settings.size_repr.width {
-            BitWidth::Bit8 => self.write_i8_direct(opaque.try_into()?, encoding, endianness),
-            BitWidth::Bit16 => self.write_i16_direct(opaque.try_into()?, encoding, endianness),
-            BitWidth::Bit32 => self.write_i32_direct(opaque.try_into()?, encoding, endianness),
-            BitWidth::Bit64 => self.write_i64_direct(opaque.try_into()?, encoding, endianness),
-            BitWidth::Bit128 => self.write_i128_direct(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit8 => self.write_i8_with(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit16 => self.write_i16_with(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit32 => self.write_i32_with(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit64 => self.write_i64_with(opaque.try_into()?, encoding, endianness),
+            BitWidth::Bit128 => self.write_i128_with(opaque.try_into()?, encoding, endianness),
         }
     }
 
@@ -1290,11 +1288,11 @@ impl<T: Write> Encoder<'_, T> {
             let encoding = self.ctxt.settings.variant_repr.num_encoding;
             let endianness = self.ctxt.settings.variant_repr.endianness;
             match width {
-                BitWidth::Bit8 => self.write_u8_direct(value.try_into()?, encoding, endianness),
-                BitWidth::Bit16 => self.write_u16_direct(value.try_into()?, encoding, endianness),
-                BitWidth::Bit32 => self.write_u32_direct(value.try_into()?, encoding, endianness),
-                BitWidth::Bit64 => self.write_u64_direct(value.try_into()?, encoding, endianness),
-                BitWidth::Bit128 => self.write_u128_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit8 => self.write_u8_with(value.try_into()?, encoding, endianness),
+                BitWidth::Bit16 => self.write_u16_with(value.try_into()?, encoding, endianness),
+                BitWidth::Bit32 => self.write_u32_with(value.try_into()?, encoding, endianness),
+                BitWidth::Bit64 => self.write_u64_with(value.try_into()?, encoding, endianness),
+                BitWidth::Bit128 => self.write_u128_with(value.try_into()?, encoding, endianness),
             }
         }
     }
@@ -1328,11 +1326,11 @@ impl<T: Write> Encoder<'_, T> {
             let encoding = self.ctxt.settings.variant_repr.num_encoding;
             let endianness = self.ctxt.settings.variant_repr.endianness;
             match width {
-                BitWidth::Bit8 => self.write_i8_direct(value.try_into()?, encoding, endianness),
-                BitWidth::Bit16 => self.write_i16_direct(value.try_into()?, encoding, endianness),
-                BitWidth::Bit32 => self.write_i32_direct(value.try_into()?, encoding, endianness),
-                BitWidth::Bit64 => self.write_i64_direct(value.try_into()?, encoding, endianness),
-                BitWidth::Bit128 => self.write_i128_direct(value.try_into()?, encoding, endianness),
+                BitWidth::Bit8 => self.write_i8_with(value.try_into()?, encoding, endianness),
+                BitWidth::Bit16 => self.write_i16_with(value.try_into()?, encoding, endianness),
+                BitWidth::Bit32 => self.write_i32_with(value.try_into()?, encoding, endianness),
+                BitWidth::Bit64 => self.write_i64_with(value.try_into()?, encoding, endianness),
+                BitWidth::Bit128 => self.write_i128_with(value.try_into()?, encoding, endianness),
             }
         }
     }
@@ -1377,13 +1375,11 @@ impl<T: Write> Encoder<'_, T> {
                 let len = value.encode_utf16(&mut buf).len();
 
                 for block in buf[..len].iter() {
-                    self.write_u16_direct(*block, NumEncoding::Fixed, endianness)?;
+                    self.write_u16_with(*block, NumEncoding::Fixed, endianness)?;
                 }
                 Ok(())
             }
-            StrEncoding::Utf32 => {
-                self.write_u32_direct(value as u32, NumEncoding::Fixed, endianness)
-            }
+            StrEncoding::Utf32 => self.write_u32_with(value as u32, NumEncoding::Fixed, endianness),
         }
     }
 
@@ -1391,7 +1387,7 @@ impl<T: Write> Encoder<'_, T> {
     /// the endianness. Equivalent of `Self::write_u32(value.to_bits())` with the numeric
     /// encoding set to Fixed
     pub fn write_f32(&mut self, value: f32) -> EncodingResult<()> {
-        self.write_u32_direct(
+        self.write_u32_with(
             value.to_bits(),
             NumEncoding::Fixed,
             self.ctxt.settings.num_repr.endianness,
@@ -1402,7 +1398,7 @@ impl<T: Write> Encoder<'_, T> {
     /// the endianness. Equivalent of `Self::write_u64(value.to_bits())` with the numeric
     /// encoding set to Fixed
     pub fn write_f64(&mut self, value: f64) -> EncodingResult<()> {
-        self.write_u64_direct(
+        self.write_u64_with(
             value.to_bits(),
             NumEncoding::Fixed,
             self.ctxt.settings.num_repr.endianness,
@@ -1590,60 +1586,60 @@ impl<T: Read> Encoder<'_, T> {
     make_read_fns! {
         type u8 {
             pub u_read: read_u8,
-            pub u_read_direct: read_u8_direct,
+            pub u_read_direct: read_u8_with,
             priv uleb128_decode: uleb128_decode_u8,
         },
         type i8 {
             pub i_read: read_i8,
-            pub i_read_direct: read_i8_direct,
+            pub i_read_direct: read_i8_with,
             priv leb128_decode: leb128_decode_i8,
         },
     }
     make_read_fns! {
         type u16 {
             pub u_read: read_u16,
-            pub u_read_direct: read_u16_direct,
+            pub u_read_direct: read_u16_with,
             priv uleb128_decode: uleb128_decode_u16,
         },
         type i16 {
             pub i_read: read_i16,
-            pub i_read_direct: read_i16_direct,
+            pub i_read_direct: read_i16_with,
             priv leb128_decode: leb128_decode_i16,
         },
     }
     make_read_fns! {
         type u32 {
             pub u_read: read_u32,
-            pub u_read_direct: read_u32_direct,
+            pub u_read_direct: read_u32_with,
             priv uleb128_decode: uleb128_decode_u32,
         },
         type i32 {
             pub i_read: read_i32,
-            pub i_read_direct: read_i32_direct,
+            pub i_read_direct: read_i32_with,
             priv leb128_decode: leb128_decode_i32,
         },
     }
     make_read_fns! {
         type u64 {
             pub u_read: read_u64,
-            pub u_read_direct: read_u64_direct,
+            pub u_read_direct: read_u64_with,
             priv uleb128_decode: uleb128_decode_u64,
         },
         type i64 {
             pub i_read: read_i64,
-            pub i_read_direct: read_i64_direct,
+            pub i_read_direct: read_i64_with,
             priv leb128_decode: leb128_decode_i64,
         },
     }
     make_read_fns! {
         type u128 {
             pub u_read: read_u128,
-            pub u_read_direct: read_u128_direct,
+            pub u_read_direct: read_u128_with,
             priv uleb128_decode: uleb128_decode_u128,
         },
         type i128 {
             pub i_read: read_i128,
-            pub i_read_direct: read_i128_direct,
+            pub i_read_direct: read_i128_with,
             priv leb128_decode: leb128_decode_i128,
         },
     }
@@ -1662,11 +1658,11 @@ impl<T: Read> Encoder<'_, T> {
             let encoding = self.ctxt.settings.size_repr.num_encoding;
             let endianness = self.ctxt.settings.size_repr.endianness;
             let value = match self.ctxt.settings.size_repr.width {
-                BitWidth::Bit8 => Opaque::from(self.read_u8_direct(encoding, endianness)?),
-                BitWidth::Bit16 => Opaque::from(self.read_u16_direct(encoding, endianness)?),
-                BitWidth::Bit32 => Opaque::from(self.read_u32_direct(encoding, endianness)?),
-                BitWidth::Bit64 => Opaque::from(self.read_u64_direct(encoding, endianness)?),
-                BitWidth::Bit128 => Opaque::from(self.read_u128_direct(encoding, endianness)?),
+                BitWidth::Bit8 => Opaque::from(self.read_u8_with(encoding, endianness)?),
+                BitWidth::Bit16 => Opaque::from(self.read_u16_with(encoding, endianness)?),
+                BitWidth::Bit32 => Opaque::from(self.read_u32_with(encoding, endianness)?),
+                BitWidth::Bit64 => Opaque::from(self.read_u64_with(encoding, endianness)?),
+                BitWidth::Bit128 => Opaque::from(self.read_u128_with(encoding, endianness)?),
             }
             .try_into()?;
 
@@ -1686,11 +1682,11 @@ impl<T: Read> Encoder<'_, T> {
         let encoding = self.ctxt.settings.size_repr.num_encoding;
         let endianness = self.ctxt.settings.size_repr.endianness;
         match self.ctxt.settings.size_repr.width {
-            BitWidth::Bit8 => Opaque::from(self.read_i8_direct(encoding, endianness)?),
-            BitWidth::Bit16 => Opaque::from(self.read_i16_direct(encoding, endianness)?),
-            BitWidth::Bit32 => Opaque::from(self.read_i32_direct(encoding, endianness)?),
-            BitWidth::Bit64 => Opaque::from(self.read_i64_direct(encoding, endianness)?),
-            BitWidth::Bit128 => Opaque::from(self.read_i128_direct(encoding, endianness)?),
+            BitWidth::Bit8 => Opaque::from(self.read_i8_with(encoding, endianness)?),
+            BitWidth::Bit16 => Opaque::from(self.read_i16_with(encoding, endianness)?),
+            BitWidth::Bit32 => Opaque::from(self.read_i32_with(encoding, endianness)?),
+            BitWidth::Bit64 => Opaque::from(self.read_i64_with(encoding, endianness)?),
+            BitWidth::Bit128 => Opaque::from(self.read_i128_with(encoding, endianness)?),
         }
         .try_into()
     }
@@ -1716,11 +1712,11 @@ impl<T: Read> Encoder<'_, T> {
             let endianness = self.ctxt.settings.variant_repr.endianness;
 
             match width {
-                BitWidth::Bit8 => Opaque::from(self.read_u8_direct(encoding, endianness)?),
-                BitWidth::Bit16 => Opaque::from(self.read_u16_direct(encoding, endianness)?),
-                BitWidth::Bit32 => Opaque::from(self.read_u32_direct(encoding, endianness)?),
-                BitWidth::Bit64 => Opaque::from(self.read_u64_direct(encoding, endianness)?),
-                BitWidth::Bit128 => Opaque::from(self.read_u128_direct(encoding, endianness)?),
+                BitWidth::Bit8 => Opaque::from(self.read_u8_with(encoding, endianness)?),
+                BitWidth::Bit16 => Opaque::from(self.read_u16_with(encoding, endianness)?),
+                BitWidth::Bit32 => Opaque::from(self.read_u32_with(encoding, endianness)?),
+                BitWidth::Bit64 => Opaque::from(self.read_u64_with(encoding, endianness)?),
+                BitWidth::Bit128 => Opaque::from(self.read_u128_with(encoding, endianness)?),
             }
             .try_into()
         }
@@ -1747,11 +1743,11 @@ impl<T: Read> Encoder<'_, T> {
             let endianness = self.ctxt.settings.variant_repr.endianness;
 
             match width {
-                BitWidth::Bit8 => Opaque::from(self.read_u8_direct(encoding, endianness)?),
-                BitWidth::Bit16 => Opaque::from(self.read_i16_direct(encoding, endianness)?),
-                BitWidth::Bit32 => Opaque::from(self.read_i32_direct(encoding, endianness)?),
-                BitWidth::Bit64 => Opaque::from(self.read_i64_direct(encoding, endianness)?),
-                BitWidth::Bit128 => Opaque::from(self.read_i128_direct(encoding, endianness)?),
+                BitWidth::Bit8 => Opaque::from(self.read_u8_with(encoding, endianness)?),
+                BitWidth::Bit16 => Opaque::from(self.read_i16_with(encoding, endianness)?),
+                BitWidth::Bit32 => Opaque::from(self.read_i32_with(encoding, endianness)?),
+                BitWidth::Bit64 => Opaque::from(self.read_i64_with(encoding, endianness)?),
+                BitWidth::Bit128 => Opaque::from(self.read_i128_with(encoding, endianness)?),
             }
             .try_into()
         }
@@ -1818,13 +1814,13 @@ impl<T: Read> Encoder<'_, T> {
             }
             StrEncoding::Utf16 => {
                 // See https://en.wikipedia.org/wiki/UTF-16#Code_points_from_U+010000_to_U+10FFFF
-                let buf = self.read_u16_direct(NumEncoding::Fixed, endianness)?;
+                let buf = self.read_u16_with(NumEncoding::Fixed, endianness)?;
                 let ch;
 
                 // This is a high surrogate
                 if 0xD800 <= buf && buf <= 0xDBFF {
                     let high_surrogate = buf;
-                    let low_surrogate = self.read_u16_direct(NumEncoding::Fixed, endianness)?;
+                    let low_surrogate = self.read_u16_with(NumEncoding::Fixed, endianness)?;
 
                     if !(0xDC00 <= low_surrogate && low_surrogate <= 0xDFFF) {
                         // First character was in the high surrogate range,
@@ -1848,7 +1844,7 @@ impl<T: Read> Encoder<'_, T> {
                 char::from_u32(ch).ok_or(StringError::InvalidUtf16.into())
             }
             StrEncoding::Utf32 => {
-                let ch = self.read_u32_direct(NumEncoding::Fixed, endianness)?;
+                let ch = self.read_u32_with(NumEncoding::Fixed, endianness)?;
                 char::from_u32(ch).ok_or(StringError::InvalidUtf32.into())
             }
         }
@@ -1858,7 +1854,7 @@ impl<T: Read> Encoder<'_, T> {
     /// the endianness. Equivalent of `f32::from_bits(self.read_u32())` with the numeric
     /// encoding set to [`NumEncoding::Fixed`].
     pub fn read_f32(&mut self) -> EncodingResult<f32> {
-        Ok(f32::from_bits(self.read_u32_direct(
+        Ok(f32::from_bits(self.read_u32_with(
             NumEncoding::Fixed,
             self.ctxt.settings.num_repr.endianness,
         )?))
@@ -1868,7 +1864,7 @@ impl<T: Read> Encoder<'_, T> {
     /// the endianness. Equivalent of `f64::from_bits(self.read_u64())` with the numeric
     /// encoding set to [`NumEncoding::Fixed`].
     pub fn read_f64(&mut self) -> EncodingResult<f64> {
-        Ok(f64::from_bits(self.read_u64_direct(
+        Ok(f64::from_bits(self.read_u64_with(
             NumEncoding::Fixed,
             self.ctxt.settings.num_repr.endianness,
         )?))

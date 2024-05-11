@@ -6,7 +6,7 @@ use syn::{parse_quote, Error, Expr, Lifetime, Path, Type};
 
 use crate::ctxt::Scope;
 use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding};
-use crate::parse::{Flag, Formatting, ModTarget, Modifier, FlattenTarget};
+use crate::parse::{Flag, FlattenTarget, Formatting, ModTarget, Modifier};
 use crate::{dollar_crate, ENDE};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -436,43 +436,41 @@ impl Flags {
 
                 self.ty_mods = Some(TypeModifier::Into(ty));
             }
-            Flag::Flatten { target, param, .. } => {
-                match target {
-                    FlattenTarget::Bool { .. } => {
-                        if self.mods.bool_flatten.is_some() {
-                            return Err(Error::new(
-                                span,
-                                r#""flatten" flag declared more than once"#,
-                            ));
-                        }
-
-                        let expr = parse_quote!(#param);
-                        self.mods.bool_flatten = Some(expr);
+            Flag::Flatten { target, param, .. } => match target {
+                FlattenTarget::Bool { .. } => {
+                    if self.mods.bool_flatten.is_some() {
+                        return Err(Error::new(
+                            span,
+                            r#""flatten" flag declared more than once"#,
+                        ));
                     }
-                    FlattenTarget::Variant { .. } => {
-                        if self.mods.variant_flatten.is_some() {
-                            return Err(Error::new(
-                                span,
-                                r#""flatten" flag declared more than once"#,
-                            ));
-                        }
 
-                        let expr = parse_quote!(#param);
-                        self.mods.variant_flatten = Some(expr);
-                    }
-                    FlattenTarget::Size { .. } => {
-                        if self.mods.size_flatten.is_some() {
-                            return Err(Error::new(
-                                span,
-                                r#""flatten" flag declared more than once"#,
-                            ));
-                        }
-
-                        let expr = parse_quote!(#param);
-                        self.mods.size_flatten = Some(expr);
-                    }
+                    let expr = parse_quote!(#param);
+                    self.mods.bool_flatten = Some(expr);
                 }
-            }
+                FlattenTarget::Variant { .. } => {
+                    if self.mods.variant_flatten.is_some() {
+                        return Err(Error::new(
+                            span,
+                            r#""flatten" flag declared more than once"#,
+                        ));
+                    }
+
+                    let expr = parse_quote!(#param);
+                    self.mods.variant_flatten = Some(expr);
+                }
+                FlattenTarget::Size { .. } => {
+                    if self.mods.size_flatten.is_some() {
+                        return Err(Error::new(
+                            span,
+                            r#""flatten" flag declared more than once"#,
+                        ));
+                    }
+
+                    let expr = parse_quote!(#param);
+                    self.mods.size_flatten = Some(expr);
+                }
+            },
             Flag::Validate { expr, fmt, .. } => {
                 if self.validate.is_some() {
                     return Err(Error::new(

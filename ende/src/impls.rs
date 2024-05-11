@@ -1073,7 +1073,7 @@ impl Decode for alloc::ffi::CString {
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
         let mut data = alloc::vec::Vec::new();
         loop {
-            let val = decoder.read_u8_direct(NumEncoding::Fixed, crate::Endianness::native())?;
+            let val = decoder.read_byte()?;
             data.push(val);
             if val == 0 {
                 break;
