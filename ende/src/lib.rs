@@ -2,7 +2,7 @@
 #![cfg_attr(feature = "unstable", feature(never_type))]
 #![cfg_attr(feature = "unstable", feature(error_in_core))]
 #![cfg_attr(not(feature = "std"), no_std)]
-// #![doc = include_str!("../../README.md")]
+
 //! A rust **EN**coding and **DE**coding library for writing custom protocols and file formats.
 //!
 //! It aims to be **intuitive**, **expandable** and **correct**.
@@ -484,7 +484,7 @@ pub use ende_derive::{BorrowDecode, Decode, Encode};
 pub use error::*;
 pub use opaque::*;
 
-use crate::io::{BorrowRead, Read, SizeLimit, SizeTrack, Write, Zero};
+use crate::io::{BorrowRead, Read, Seek, SizeLimit, SizeTrack, Write, Zero};
 
 #[cfg(test)]
 mod test;
@@ -2153,46 +2153,138 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
 
 /// A binary data structure specification which can be **encoded** into its binary representation.
 pub trait Encode {
-    /// Encodes `self` into its binary format.<br>
-    /// As a baseline, calling `encode` multiple times on the same value without
-    /// changing the encoder settings or the value itself in-between calls must produce
-    /// the same output.<br>
+    /// Encodes `self` into its binary format.
+    /// 
+    /// Calling `encode` multiple times on the same value without
+    /// changing the encoder settings or the value itself in-between calls should produce
+    /// the same output.
+    /// 
     /// If the result is Ok,
     /// implementations should guarantee that the state of the encoder
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.<br>
+    /// and users should reset it before reuse.
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()>;
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation
 /// into an owned type.
 pub trait Decode: Sized {
-    /// Decodes `Self` from a binary format.<br>
-    /// As a baseline, calling `decode` multiple times without changing the
-    /// encoder settings or the underlying binary data in-between calls must produce
-    /// the same output.<br>
+    /// Decodes an owned version of `Self` from its binary format.
+    /// 
+    /// Calling `decode` multiple times without changing the
+    /// encoder settings or the underlying binary data in-between calls should produce
+    /// the same output.
+    /// 
     /// If the result is Ok,
     /// implementations should guarantee that the state of the encoder
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.<br>
+    /// and users should reset it before reuse.
     fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self>;
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation
 /// by borrowing the data.
 pub trait BorrowDecode<'data>: Sized {
-    /// Decodes `Self` from a binary format.<br>
-    /// As a baseline, calling `borrow_decode` multiple times without changing the
-    /// encoder settings or the underlying binary data in-between calls must produce
-    /// the same output.<br>
+    /// Decodes a borrowed version of `Self` from its binary format.
+    /// 
+    /// Calling `borrow_decode` multiple times without changing the
+    /// encoder settings or the underlying binary data in-between calls should produce
+    /// the same output.
+    /// 
     /// If the result is Ok,
     /// implementations should guarantee that the state of the encoder
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.<br>
+    /// and users should reset it before reuse.
     fn borrow_decode<Reader: BorrowRead<'data>>(
         decoder: &mut Encoder<Reader>,
     ) -> EncodingResult<Self>;
+}
+
+/// A binary data structure specification which can be **encoded** into its binary representation,
+/// but necessitates to possibly **seek** back and forth in the stream to achieve that.
+/// 
+/// A blanket implementation of this trait is provided for every `T` implementing [`Encode`].
+pub trait SeekEncode {
+    /// Encodes `self` into its binary format, but requires the writer to implement [`Seek`].
+    ///
+    /// Calling `seek_encode` multiple times on the same value without
+    /// changing the encoder settings or the value itself in-between calls should produce
+    /// the same output.
+    ///
+    /// If the result is Ok,
+    /// implementations should guarantee that the state of the encoder
+    /// is preserved. If the result is Err,
+    /// no guarantees are made about the state of the encoder,
+    /// and users should reset it before reuse.
+    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()>;
+}
+
+/// A binary data structure specification which can be **decoded** from its binary representation
+/// into an owned type, but necessitates to possibly **seek** back and forth in the stream to
+/// achieve that.
+/// 
+/// A blanket implementation of this trait is provided for every `T` implementing [`Decode`].
+pub trait SeekDecode: Sized {
+    /// Decodes an owned version of `Self` from its binary format,
+    /// but requires the reader to implement [`Seek`].
+    ///
+    /// Calling `seek_decode` multiple times without changing the
+    /// encoder settings or the underlying binary data in-between calls should produce
+    /// the same output.
+    ///
+    /// If the result is Ok,
+    /// implementations should guarantee that the state of the encoder
+    /// is preserved. If the result is Err,
+    /// no guarantees are made about the state of the encoder,
+    /// and users should reset it before reuse.
+    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self>;
+}
+
+/// A binary data structure specification which can be **decoded** from its binary representation
+/// by borrowing the data, but necessitates to possibly **seek** back and forth in the stream to
+/// achieve that.
+/// 
+/// **DON'T LET THE NAME SCARE YOU!**<br>
+/// This is just the equivalent of [`BorrowDecode`] but with the extra requirement that the encoder
+/// must support **seeking**.
+/// 
+/// A blanket implementation of this trait is provided for every `T` implementing [`BorrowDecode`].
+pub trait SeekBorrowDecode<'data>: Sized {
+    /// Decodes a borrowed version of `Self` from its binary format,
+    /// but requires the reader to implement [`Seek`]
+    ///
+    /// Calling `seek_borrow_decode` multiple times without changing the
+    /// encoder settings or the underlying binary data in-between calls should produce
+    /// the same output.
+    ///
+    /// If the result is Ok,
+    /// implementations should guarantee that the state of the encoder
+    /// is preserved. If the result is Err,
+    /// no guarantees are made about the state of the encoder,
+    /// and users should reset it before reuse.
+    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self>;
+}
+
+impl<T: Encode> SeekEncode for T {
+    #[inline]
+    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+        self.encode(encoder)
+    }
+}
+
+impl<T: Decode> SeekDecode for T {
+    #[inline]
+    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+        Self::decode(decoder)
+    }
+}
+
+impl<'data, T: BorrowDecode<'data>> SeekBorrowDecode<'data> for T {
+    #[inline]
+    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+        Self::borrow_decode(decoder)
+    }
 }

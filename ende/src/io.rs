@@ -4,14 +4,26 @@
 //! Custom [`Write`], [`Read`], [`BorrowRead`] traits are provided, as well
 //! as a compatibility layer with `std::io` (see [`Std`])
 
-use crate::{EncodingError, EncodingResult};
-use core::mem::take;
+use crate::{EncodingError, EncodingResult, SeekError};
+
+#[cfg(feature = "std")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+fn io_err(err: EncodingError) -> std::io::Error {
+    match err {
+        EncodingError::IOError(error) => {
+            std::io::Error::from(<std::io::ErrorKind as From<_>>::from(error))
+        }
+        EncodingError::UnexpectedEnd => std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
+        error => std::io::Error::new(std::io::ErrorKind::Other, error),
+    }
+}
 
 /// A compatibility layer between this crate's I/O traits and `std::io` traits.
-/// 
-/// If `T` implements [`std::io::Write`] or [`std::io::Read`] or both, `Std<T>` will implement
-/// [`Write`] or [`Read`] or both, and vice versa.
-/// 
+///
+/// If `T` implements either [`std::io::Write`], [`std::io::Read`], [`std::io::Seek`]
+/// or any combination of those, `Std<T>` will implement either [`Write`], [`Read`], [`Seek`]
+/// or any combination of those, and vice versa.
+///
 /// The memory layout is always guaranteed to be that of `T`.
 #[cfg(feature = "std")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
@@ -49,13 +61,7 @@ impl<T> Std<T> {
 impl<T: Write> std::io::Write for Std<T> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        <T as Write>::write(&mut self.0, buf).map_err(|x| match x {
-            EncodingError::IOError(error) => {
-                std::io::Error::from(<std::io::ErrorKind as From<_>>::from(error))
-            }
-            EncodingError::UnexpectedEnd => std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
-            error => std::io::Error::new(std::io::ErrorKind::Other, error),
-        })?;
+        <T as Write>::write(&mut self.0, buf).map_err(io_err)?;
         Ok(buf.len())
     }
     #[inline]
@@ -69,14 +75,22 @@ impl<T: Write> std::io::Write for Std<T> {
 impl<T: Read> std::io::Read for Std<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        <T as Read>::read(&mut self.0, buf).map_err(|x| match x {
-            EncodingError::IOError(error) => {
-                std::io::Error::from(<std::io::ErrorKind as From<_>>::from(error))
-            }
-            EncodingError::UnexpectedEnd => std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
-            error => std::io::Error::new(std::io::ErrorKind::Other, error),
-        })?;
+        <T as Read>::read(&mut self.0, buf).map_err(io_err)?;
         Ok(buf.len())
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+impl<T: Seek> std::io::Seek for Std<T> {
+    #[inline]
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let pos = match pos {
+            std::io::SeekFrom::Start(off) => SeekFrom::Start(off),
+            std::io::SeekFrom::End(off) => SeekFrom::End(off),
+            std::io::SeekFrom::Current(off) => SeekFrom::Current(off),
+        };
+        <T as Seek>::seek(&mut self.0, pos).map_err(io_err)
     }
 }
 
@@ -85,7 +99,7 @@ impl<T: Read> std::io::Read for Std<T> {
 impl<T: std::io::Write> Write for Std<T> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> EncodingResult<()> {
-        <T as std::io::Write>::write_all(&mut self.0, buf).map_err(|x| x.into())
+        <T as std::io::Write>::write_all(&mut self.0, buf).map_err(Into::into)
     }
 }
 
@@ -94,47 +108,67 @@ impl<T: std::io::Write> Write for Std<T> {
 impl<T: std::io::Read> Read for Std<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
-        <T as std::io::Read>::read_exact(&mut self.0, buf).map_err(|x| x.into())
+        <T as std::io::Read>::read_exact(&mut self.0, buf).map_err(Into::into)
     }
 }
 
-/// Wraps a mutable `u8` slice providing [`Write`] and [`Read`] implementations.
+#[cfg(feature = "std")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+impl<T: std::io::Seek> Seek for Std<T> {
+    #[inline]
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+        let seek = match seek {
+            SeekFrom::Start(off) => std::io::SeekFrom::Start(off),
+            SeekFrom::End(off) => std::io::SeekFrom::End(off),
+            SeekFrom::Current(off) => std::io::SeekFrom::Current(off),
+        };
+        <T as std::io::Seek>::seek(&mut self.0, seek).map_err(Into::into)
+    }
+}
+
+/// Wraps a mutable `u8` slice providing [`Write`], [`Read`] and [`Seek`] implementations.
 #[derive(Eq, PartialEq, Debug)]
-pub struct SliceMut<'data>(&'data mut [u8]);
+pub struct SliceMut<'data> {
+    slice: &'data mut [u8],
+    pos: usize,
+}
 
 impl<'data> SliceMut<'data> {
     /// Wraps a mutable slice in an I/O object.
     #[inline]
     pub fn new(slice: &'data mut [u8]) -> Self {
-        Self(slice)
+        Self {
+            slice,
+            pos: 0,
+        }
     }
     /// Read-only reference to the slice.
     #[inline]
     pub fn inner(&self) -> &[u8] {
-        &self.0
+        &self.slice
     }
     /// Mutable reference to the slice.
     #[inline]
     pub fn inner_mut(&mut self) -> &mut [u8] {
-        &mut self.0
+        &mut self.slice
     }
     /// Unwraps the slice, returning it.
     #[inline]
     pub fn into_inner(self) -> &'data mut [u8] {
-        self.0
+        self.slice
     }
 }
 
 impl Write for SliceMut<'_> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> EncodingResult<()> {
-        if buf.len() > self.0.len() {
+        let rem = self.slice.len() - self.pos;
+        if buf.len() > rem {
             return Err(EncodingError::UnexpectedEnd);
         }
-
-        let (first, second) = take(&mut self.0).split_at_mut(buf.len());
-        first.copy_from_slice(buf);
-        self.0 = second;
+        let sub = &mut self.slice[self.pos..(self.pos + buf.len())];
+        sub.copy_from_slice(buf);
+        self.pos += buf.len();
         Ok(())
     }
 }
@@ -142,49 +176,65 @@ impl Write for SliceMut<'_> {
 impl Read for SliceMut<'_> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
-        if buf.len() > self.0.len() {
+        let rem = self.slice.len() - self.pos;
+        if buf.len() > rem {
             return Err(EncodingError::UnexpectedEnd);
         }
-
-        let (first, second) = take(&mut self.0).split_at_mut(buf.len());
-        buf.copy_from_slice(first);
-        self.0 = second;
+        let sub = &self.slice[self.pos..(self.pos + buf.len())];
+        buf.copy_from_slice(sub);
+        self.pos += buf.len();
         Ok(())
     }
 }
 
-/// Wraps an immutable `u8` slice providing [`Read`] and [`BorrowRead`] implementations.
+impl Seek for SliceMut<'_> {
+    #[inline]
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+        // `as` conversion never fails, unless we are on a 128-bit system I guess?
+        let offset = seek.as_buf_offset(self.pos as _, self.slice.len() as _)?;
+        self.pos = offset;
+        Ok(offset as u64)
+    }
+}
+
+/// Wraps an immutable `u8` slice providing [`Read`], [`BorrowRead`] and [`Seek`] implementations.
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub struct Slice<'data>(&'data [u8]);
+pub struct Slice<'data> {
+    slice: &'data [u8],
+    pos: usize,
+}
 
 impl<'data> Slice<'data> {
     /// Wraps an immutable slice in an I/O object.
     #[inline]
     pub fn new(slice: &'data [u8]) -> Self {
-        Self(slice)
+        Self {
+            slice,
+            pos: 0,
+        }
     }
     /// Reference to the slice.
     #[inline]
     pub fn inner(&self) -> &[u8] {
-        &self.0
+        &self.slice
     }
     /// Unwraps the slice, returning it.
     #[inline]
     pub fn into_inner(self) -> &'data [u8] {
-        self.0
+        self.slice
     }
 }
 
 impl Read for Slice<'_> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
-        if buf.len() > self.0.len() {
+        let rem = self.slice.len() - self.pos;
+        if buf.len() > rem {
             return Err(EncodingError::UnexpectedEnd);
         }
-
-        let (first, second) = take(&mut self.0).split_at(buf.len());
-        buf.copy_from_slice(first);
-        self.0 = second;
+        let sub = &self.slice[self.pos..(self.pos + buf.len())];
+        buf.copy_from_slice(sub);
+        self.pos += buf.len();
         Ok(())
     }
 }
@@ -192,62 +242,124 @@ impl Read for Slice<'_> {
 impl<'data> BorrowRead<'data> for Slice<'data> {
     #[inline]
     fn peek(&self, len: usize) -> EncodingResult<&'data [u8]> {
-        if len > self.0.len() {
+        let rem = self.slice.len() - self.pos;
+        if len > rem {
             return Err(EncodingError::UnexpectedEnd);
         }
-
-        Ok(&self.0[..len])
+        let sub = &self.slice[self.pos..(self.pos + len)];
+        Ok(sub)
     }
     #[inline]
     fn borrow_read(&mut self, len: usize) -> EncodingResult<&'data [u8]> {
-        if len > self.0.len() {
+        let rem = self.slice.len() - self.pos;
+        if len > rem {
             return Err(EncodingError::UnexpectedEnd);
         }
-
-        let (first, second) = take(&mut self.0).split_at(len);
-        self.0 = second;
-        Ok(first)
+        let sub = &self.slice[self.pos..(self.pos + len)];
+        self.pos += len;
+        Ok(sub)
     }
 }
 
-/// Wraps a `Vec` providing [`Write`] and [`Read`] implementations.
-/// 
+impl Seek for Slice<'_> {
+    #[inline]
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+        let offset = seek.as_buf_offset(self.pos as _, self.slice.len() as _)?;
+        self.pos = offset;
+        Ok(offset as u64)
+    }
+}
+
+/// Wraps a `Vec` providing [`Write`], [`Read`] and [`Seek`] implementations.
+///
 /// The advantage of this over a [`SliceMut`] is that when the end of the
-/// vector is reached, the backing memory is simply extended and writing can continue.
+/// vector's capacity is reached, the backing memory is simply extended and writing can continue.
 #[cfg(feature = "alloc")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub struct VecWrite(alloc::vec::Vec<u8>);
+pub struct VecStream {
+    vec: alloc::vec::Vec<u8>,
+    pos: usize,
+}
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
-impl VecWrite {
+impl VecStream {
+    /// Wraps a `Vec` in a type implementing "infinite" read, write and seek.
+    /// 
+    /// The `start` parameter is used to determine the initial value of the stream pointer.
     #[inline]
-    pub fn new(vec: Vec<u8>) -> Self {
-        Self(vec)
+    pub fn new(vec: alloc::vec::Vec<u8>, start: usize) -> Self {
+        let mut this = Self {
+            vec,
+            pos: start,
+        };
+        this.ensure_capacity(this.pos);
+        this
     }
+    /// Read-only window into the contents of the vector written so far.
     #[inline]
-    pub fn inner(&self) -> &Vec<u8> {
-        &self.0
+    pub fn inner(&self) -> &[u8] {
+        &self.vec[..self.pos]
     }
+    /// Returns the vector, truncated to the length of the stream pointer at the moment
+    /// of calling this function.
     #[inline]
-    pub fn inner_mut(&mut self) -> &mut Vec<u8> {
-        &mut self.0
+    pub fn into_inner(mut self) -> alloc::vec::Vec<u8> {
+        self.vec.truncate(self.pos);
+        self.vec
     }
-    #[inline]
-    pub fn into_inner(self) -> Vec<u8> {
-        self.0
+
+    // Ensure the capacity is at least `at_least`, if it isn't
+    // then reserve the missing number of elements to reach that capacity,
+    // then pad with zeros
+    fn ensure_capacity(&mut self, at_least: usize) {
+        if at_least > self.vec.capacity() {
+            self.vec.reserve(at_least - self.vec.len());
+            for _ in self.vec.len()..self.vec.capacity() {
+                self.vec.push(0);
+            }
+        }
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
-impl Write for VecWrite {
+impl Write for VecStream {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> EncodingResult<()> {
-        self.0.reserve(buf.len());
-        self.0.extend_from_slice(buf);
+        self.ensure_capacity(self.pos + buf.len());
+        let sub = &mut self.vec[self.pos..(self.pos + buf.len())];
+        sub.copy_from_slice(buf);
         Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
+impl Read for VecStream {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
+        self.ensure_capacity(self.pos + buf.len());
+        let sub = &self.vec[self.pos..(self.pos + buf.len())];
+        buf.copy_from_slice(sub);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
+impl Seek for VecStream {
+    #[inline]
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+        if let SeekFrom::End(_) = seek {
+            return Err(SeekError::UnknownRange.into());
+        }
+        
+        let offset = seek.as_buf_offset(self.pos, 0)?;
+        self.ensure_capacity(offset);
+        self.pos = offset;
+        Ok(offset as u64)
     }
 }
 
@@ -270,9 +382,9 @@ impl<T> SizeTrack<T> {
             rsize: 0,
         }
     }
-    
+
     /// Returns the number of bytes written so far.
-    /// 
+    ///
     /// Note that if a write call fails, the value returned by
     /// this function is left unchanged.
     #[inline]
@@ -439,7 +551,8 @@ impl<'data, T: BorrowRead<'data>> BorrowRead<'data> for SizeLimit<T> {
     }
 }
 
-/// A NOP stream, that ignores write calls, and responds to read calls with infinite zeroes.
+/// A NOP stream, that ignores write and seek calls,and responds to read calls
+/// with infinite zeroes.
 #[derive(Clone)]
 pub struct Zero;
 
@@ -460,10 +573,17 @@ impl Read for Zero {
     }
 }
 
+impl Seek for Zero {
+    #[inline]
+    fn seek(&mut self, _seek: SeekFrom) -> EncodingResult<u64> {
+        Ok(0)
+    }
+}
+
 /// Everything, be it a stream or buffer, which can be **encoded into**.
 pub trait Write {
     /// Writes the entire contents of `buf`.
-    /// 
+    ///
     /// No guarantees are made about flushing.
     fn write(&mut self, buf: &[u8]) -> EncodingResult<()>;
 }
@@ -480,10 +600,83 @@ pub trait BorrowRead<'data>: Read {
     /// is not advanced. E.G. multiple subsequent calls to this function are guaranteed to produce
     /// the same output.
     fn peek(&self, len: usize) -> EncodingResult<&'data [u8]>;
-    
+
     /// Borrows a slice of bytes from the buffer, incrementing the buffer position.
     /// The slice's lifetime is bound to the buffer's lifetime.
     fn borrow_read(&mut self, len: usize) -> EncodingResult<&'data [u8]>;
+}
+
+/// The argument to a call to [`Seek::seek`].
+///
+/// Supports seeking relative to the current position, the beginning or the end
+/// of a stream or buffer.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum SeekFrom {
+    /// Offsets `n` bytes from the beginning of the stream or buffer.
+    ///
+    /// If `n` is beyond the end, a [`SeekError`][`crate::SeekError`]
+    /// is returned.
+    Start(u64),
+    /// Offsets `n` bytes from the end of the stream or buffer.
+    ///
+    /// If `n` is before the beginning of the stream, or if it is beyond the end of the stream,
+    /// a [`SeekError`][`crate::SeekError`] is returned.
+    End(i64),
+    /// Offsets `n` bytes from the current position in the stream or buffer.
+    ///
+    /// If `n` is before the beginning of the stream, or if it is beyond the end of the stream,
+    /// a [`SeekError`][`crate::SeekError`] is returned.
+    Current(i64),
+}
+
+impl SeekFrom {
+    /// Calculates the new stream position in the case a seek operation is applied
+    /// to a buffer, given the current position and the length of the buffer.
+    ///
+    /// Returns the offset, or a [`SeekError`] if the resulting offset would
+    /// be outside of bounds.
+    pub const fn as_buf_offset(&self, pos: usize, len: usize) -> Result<usize, SeekError> {
+        let offset = match *self {
+            SeekFrom::Start(off) => {
+                off as i64
+            }
+            SeekFrom::End(off) => {
+                len as i64 + off
+            }
+            SeekFrom::Current(off) => {
+                pos as i64 + off
+            }
+        };
+
+        if offset > len as i64 {
+            Err(SeekError::AfterEnd(offset as u64))
+        } else if offset < 0 {
+            Err(SeekError::BeforeBeginning(offset))
+        } else {
+            Ok(offset as usize)
+        }
+    }
+    
+    /// Returns a [`SeekFrom`] such that when passed to [`Seek::seek`],
+    /// the position is left unchanged and the return value of the call
+    /// will contain the current position.
+    /// 
+    /// This function is not magic: it is literally defined as `SeekFrom::Current(0)`
+    pub const fn get_pos() -> Self {
+        Self::Current(0)
+    }
+}
+
+/// Any stream or buffer that supports moving the stream position forwards and backwards,
+/// as well as returning the current position.
+pub trait Seek {
+    /// Offsets the stream position using the given [`SeekFrom`] argument.
+    ///
+    /// In general, a seek beyond the end or to a negative offset
+    /// will yield a [`SeekError`][`crate::SeekError`].
+    ///
+    /// Returns the new position, as an offset from the start of the stream.
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64>;
 }
 
 impl<T: Write> Write for &mut T {
@@ -497,6 +690,13 @@ impl<T: Read> Read for &mut T {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         <T as Read>::read(self, buf)
+    }
+}
+
+impl<T: Seek> Seek for &mut T {
+    #[inline]
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+        <T as Seek>::seek(self, seek)
     }
 }
 

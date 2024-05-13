@@ -34,6 +34,9 @@ pub enum EncodingError {
     /// The end of the file or buffer was reached but more data was expected
     #[display("Unexpected end of file/buffer")]
     UnexpectedEnd,
+    /// An error involving the [`seek`][`crate::io::Seek::seek`] operation occurred.
+    #[display("Seek error: {0}")]
+    SeekError(SeekError),
     /// A var-int was malformed and could not be decoded
     #[display("Malformed var-int encoding")]
     VarIntError,
@@ -172,6 +175,12 @@ impl From<BorrowError> for EncodingError {
     }
 }
 
+impl From<SeekError> for EncodingError {
+    fn from(value: SeekError) -> Self {
+        Self::SeekError(value)
+    }
+}
+
 /// Represents an error occurred while encoding or decoding a string, including intermediate
 /// conversion errors and the presence of null bytes in unexpected scenarios.
 #[derive(Debug, Display)]
@@ -233,6 +242,19 @@ pub enum BorrowError {
 }
 
 impl_error!(BorrowError);
+
+#[derive(Debug, Display)]
+#[non_exhaustive]
+pub enum SeekError {
+    #[display("Tried to seek to a negative offset: {0}")]
+    BeforeBeginning(i64),
+    #[display("Tried to seek to an offset beyond the end: {0}")]
+    AfterEnd(u64),
+    #[display("Tried to seek to the beginning/end but they are unknown")]
+    UnknownRange,
+}
+
+impl_error!(SeekError);
 
 /// A convenience alias to `Result<T, EncodingError>`
 pub type EncodingResult<T> = Result<T, EncodingError>;
