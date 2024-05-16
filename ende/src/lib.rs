@@ -230,8 +230,7 @@ use parse_display::Display;
 /// They are applied in the declaration order during encoding, but in the reverse order during
 /// decoding, for consistency. However, the item-level modifiers take priority over the field-level
 /// modifiers (see [ambiguous example](#ambiguous-example)).<br>
-/// * `redir: $path(...)` - Currently the only supported stream modifier, but more may
-/// be added in the future. Uses the given path to find an encoding/decoding function which
+/// * `redir: $path(...)` - Uses the given path to find an encoding/decoding function which
 /// alters the writer/reader and passes a modified encoder to a closure.<br>
 /// This can be used to implement encryption, compression and other transformations of the
 /// underlying stream, or even redirections to another stream.<br>
@@ -242,6 +241,10 @@ use parse_display::Display;
 ///     * If the scope is Decode, the path must be callable as `decode`.<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
 /// with the same signatures as above.
+/// * `ptr $seek: $expr` - Seeks to the location given by $expr
+/// (which must be of type usize or isize) relative to $seek - which can be
+/// "start", "end" or "cur"rrent - before encoding/decoding this field, then seeks back to the
+/// previous location.
 /// ### Example:
 /// ```rust
 /// # use ende::{Encode, Decode};
@@ -256,6 +259,14 @@ use parse_display::Display;
 ///     #[ende(redir: gzip(9))]
 ///     #[ende(redir: aes(iv, secret_key))]
 ///     super_secret_data: Vec<u8>,
+///     file_pointer: usize,
+///     /// Marks the current offset, seeks to `file_pointer` bytes from the start of the file,
+///     /// encodes/decodes the field, then seeks back.
+///     #[ende(ptr start: *file_pointer)]
+///     apple_count: u64,
+///     /// This field is effectively laid *right after* `file_pointer`
+///     /// in the binary representation.
+///     other_data: i32,
 /// }
 /// ```
 /// ### Ambiguous example:
@@ -430,6 +441,11 @@ use parse_display::Display;
 /// should be decoded using its borrowing decode implementation, and allows you to optionally specify a
 /// set of lifetimes to override those normally inferred by the macro. These lifetimes will be bound
 /// to the lifetime of the encoder's data.
+/// * `goto $seek: $expr` - Indicates a jump to a different stream position before encoding this
+/// field or item. $seek can be any of "start", "end" or "cur", while $expr must produce a value of
+/// type usize or isize relative to $seek.<br>
+/// If you need the stream position to be restored after encoding/decoding the field, see the
+/// `ptr` *stream modifier`.
 /// <br>
 /// ### Example:
 ///
@@ -461,11 +477,15 @@ use parse_display::Display;
 ///   /// (no risk of decoding garbage data)
 ///   #[ende(flatten bool: true; if: * name_present)]
 ///   name: Option<String>,
+///   /// Contains a file offset to the rest of the data
+///   pointer_to_data: usize,
+///   /// Go to the location in the specified file offset from this point onwards.
+///   ///
 ///   /// This might be too long to clone from the decoder, so we borrow it instead.
 ///   /// Decode impl -> Cow::Owned
 ///   /// BorrowDecode impl -> Cow::Borrowed
 ///   /// The macro will infer the borrow lifetime to be `'record`.
-///   #[ende(borrow)]
+///   #[ende(goto start: *pointer_to_data; borrow)]
 ///   criminal_record: Cow<'record, str>,
 ///   /// Only present if the name is also present, but we want to provide a custom default!
 ///   #[ende(default: String::from("Smith"); if: * name_present)]
@@ -484,7 +504,7 @@ pub use ende_derive::{BorrowDecode, Decode, Encode};
 pub use error::*;
 pub use opaque::*;
 
-use crate::io::{BorrowRead, Read, Seek, SizeLimit, SizeTrack, Write, Zero};
+use crate::io::{BorrowRead, Read, Seek, SeekFrom, SizeLimit, SizeTrack, Write, Zero};
 
 #[cfg(test)]
 mod test;
@@ -882,7 +902,7 @@ pub struct Context<'a> {
     /// In case of an error occurring, no guarantee is made about the state of the settings:
     /// for this reason it's good practice to store a copy of the settings somewhere.
     pub settings: BinSettings,
-    /// The Variant flatten state variable.
+    /// The `bool` flatten state variable.
     ///
     /// When present, for `Option`, `Result` and any `bool` it indicates,
     /// while **Encoding** not to write the value,
@@ -918,7 +938,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Just like [`Self::new`] but uses the given settings instead of the default
+    /// Just like [`Self::new`] but uses the given settings instead of the default.
     #[inline]
     pub fn with_settings(settings: BinSettings) -> Self {
         Self {
@@ -931,6 +951,7 @@ impl<'a> Context<'a> {
     }
 
     /// Just like [`Self::new`] but uses the given settings instead of the default
+    /// and the given user data.
     #[inline]
     pub fn with_user_data(settings: BinSettings, data: &'a dyn Any) -> Self {
         Self {
@@ -946,6 +967,7 @@ impl<'a> Context<'a> {
     #[inline]
     pub fn reset(&mut self, options: BinSettings) {
         self.settings = options;
+        self.bool_flatten = None;
         self.variant_flatten = None;
         self.size_flatten = None;
     }
@@ -969,9 +991,9 @@ impl<'a> Context<'a> {
     }
 }
 
-/// The base type for encoding/decoding. References a stream, and a [`Context`].<br>
+/// The base type for encoding/decoding. Wraps a stream, and a [`Context`].<br>
 /// It's recommended to wrap the stream in a [`std::io::BufReader`] or [`std::io::BufWriter`],
-/// because many small write and read calls will be made
+/// because many small write and read calls will be made.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct Encoder<'a, T> {
@@ -2151,14 +2173,44 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
     }
 }
 
+impl<T: Seek> Encoder<'_, T> {
+    pub fn stream_position(&mut self) -> EncodingResult<usize> {
+        self.stream.seek(SeekFrom::POSITION)
+    }
+
+    pub fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
+        self.stream.seek(seek)
+    }
+
+    // Notice the `StreamModifier` signature
+    pub fn with_seek<F, R>(&mut self, f: F, seek: SeekFrom) -> EncodingResult<R>
+    where
+        F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>,
+    {
+        // Track the current position
+        let prev = self.stream_position()? as isize;
+        // Seek to the desired location, and track the location now
+        let cur = self.stream.seek(seek)? as isize;
+        // Find the difference
+        let diff = prev - cur;
+
+        // Magic fn!
+        let ret = f(self);
+
+        // Now we can seek even on streams that don't support seeking from the Start or End
+        self.stream.seek(SeekFrom::Current(diff))?;
+        ret
+    }
+}
+
 /// A binary data structure specification which can be **encoded** into its binary representation.
 pub trait Encode {
     /// Encodes `self` into its binary format.
-    /// 
+    ///
     /// Calling `encode` multiple times on the same value without
     /// changing the encoder settings or the value itself in-between calls should produce
     /// the same output.
-    /// 
+    ///
     /// If the result is Ok,
     /// implementations should guarantee that the state of the encoder
     /// is preserved. If the result is Err,
@@ -2171,11 +2223,11 @@ pub trait Encode {
 /// into an owned type.
 pub trait Decode: Sized {
     /// Decodes an owned version of `Self` from its binary format.
-    /// 
+    ///
     /// Calling `decode` multiple times without changing the
     /// encoder settings or the underlying binary data in-between calls should produce
     /// the same output.
-    /// 
+    ///
     /// If the result is Ok,
     /// implementations should guarantee that the state of the encoder
     /// is preserved. If the result is Err,
@@ -2188,11 +2240,11 @@ pub trait Decode: Sized {
 /// by borrowing the data.
 pub trait BorrowDecode<'data>: Sized {
     /// Decodes a borrowed version of `Self` from its binary format.
-    /// 
+    ///
     /// Calling `borrow_decode` multiple times without changing the
     /// encoder settings or the underlying binary data in-between calls should produce
     /// the same output.
-    /// 
+    ///
     /// If the result is Ok,
     /// implementations should guarantee that the state of the encoder
     /// is preserved. If the result is Err,
@@ -2205,7 +2257,7 @@ pub trait BorrowDecode<'data>: Sized {
 
 /// A binary data structure specification which can be **encoded** into its binary representation,
 /// but necessitates to possibly **seek** back and forth in the stream to achieve that.
-/// 
+///
 /// A blanket implementation of this trait is provided for every `T` implementing [`Encode`].
 pub trait SeekEncode {
     /// Encodes `self` into its binary format, but requires the writer to implement [`Seek`].
@@ -2219,13 +2271,16 @@ pub trait SeekEncode {
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()>;
+    fn seek_encode<Writer: Write + Seek>(
+        &self,
+        encoder: &mut Encoder<Writer>,
+    ) -> EncodingResult<()>;
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation
 /// into an owned type, but necessitates to possibly **seek** back and forth in the stream to
 /// achieve that.
-/// 
+///
 /// A blanket implementation of this trait is provided for every `T` implementing [`Decode`].
 pub trait SeekDecode: Sized {
     /// Decodes an owned version of `Self` from its binary format,
@@ -2246,11 +2301,11 @@ pub trait SeekDecode: Sized {
 /// A binary data structure specification which can be **decoded** from its binary representation
 /// by borrowing the data, but necessitates to possibly **seek** back and forth in the stream to
 /// achieve that.
-/// 
+///
 /// **DON'T LET THE NAME SCARE YOU!**<br>
 /// This is just the equivalent of [`BorrowDecode`] but with the extra requirement that the encoder
 /// must support **seeking**.
-/// 
+///
 /// A blanket implementation of this trait is provided for every `T` implementing [`BorrowDecode`].
 pub trait SeekBorrowDecode<'data>: Sized {
     /// Decodes a borrowed version of `Self` from its binary format,
@@ -2265,12 +2320,17 @@ pub trait SeekBorrowDecode<'data>: Sized {
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
-    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self>;
+    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(
+        decoder: &mut Encoder<Reader>,
+    ) -> EncodingResult<Self>;
 }
 
 impl<T: Encode> SeekEncode for T {
     #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn seek_encode<Writer: Write + Seek>(
+        &self,
+        encoder: &mut Encoder<Writer>,
+    ) -> EncodingResult<()> {
         self.encode(encoder)
     }
 }
@@ -2284,7 +2344,9 @@ impl<T: Decode> SeekDecode for T {
 
 impl<'data, T: BorrowDecode<'data>> SeekBorrowDecode<'data> for T {
     #[inline]
-    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(
+        decoder: &mut Encoder<Reader>,
+    ) -> EncodingResult<Self> {
         Self::borrow_decode(decoder)
     }
 }

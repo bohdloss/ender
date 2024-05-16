@@ -218,6 +218,18 @@ impl Flags {
             quote!()
         })
     }
+
+    pub fn derive_seek(&self, ctxt: &Ctxt) -> syn::Result<TokenStream2> {
+        Ok(if let Some(seek) = &self.seek {
+            let seek = seek.ctxt_tokens(ctxt);
+            let ref crate_name = ctxt.flags.crate_name;
+            let ref encoder = ctxt.encoder;
+
+            quote!(#crate_name::Encoder::seek(#encoder, #seek)?;)
+        } else {
+            quote!()
+        })
+    }
 }
 
 impl ModifierGroup {
@@ -400,6 +412,7 @@ impl Flags {
 impl StreamModifier {
     pub fn derive(&self, ctxt: &Ctxt, input: TokenStream2) -> syn::Result<TokenStream2> {
         let ref encoder = ctxt.encoder;
+        let ref crate_name = ctxt.flags.crate_name;
 
         Ok(match self {
             StreamModifier::Transform { path, args, scope } => {
@@ -439,6 +452,12 @@ impl StreamModifier {
                         }
                     }
                 }
+            }
+            StreamModifier::Ptr { seek } => {
+                let seek = seek.ctxt_tokens(ctxt);
+                quote!(
+                    #crate_name::Encoder::with_seek(&mut * #encoder, |#encoder| { Ok({ #input }) }, #seek )?
+                )
             }
         })
     }

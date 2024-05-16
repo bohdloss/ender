@@ -6,6 +6,34 @@
 
 use crate::{EncodingError, EncodingResult, SeekError};
 
+#[allow(unused)]
+fn usize_to_u64(val: usize) -> u64 {
+    // PANIC SAFETY
+    // `as` conversion never fails, unless we are on a >64-bit system I guess?
+    val as _
+}
+
+#[allow(unused)]
+fn isize_to_i64(val: isize) -> i64 {
+    // PANIC SAFETY
+    // Same as above
+    val as _
+}
+
+#[allow(unused)]
+fn u64_to_usize(val: u64) -> usize {
+    assert!(val <= isize::MAX as _);
+
+    val as _
+}
+
+#[allow(unused)]
+fn i64_to_isize(val: i64) -> isize {
+    assert!(val <= isize::MAX as _);
+
+    val as _
+}
+
 #[cfg(feature = "std")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 fn io_err(err: EncodingError) -> std::io::Error {
@@ -86,11 +114,14 @@ impl<T: Seek> std::io::Seek for Std<T> {
     #[inline]
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         let pos = match pos {
-            std::io::SeekFrom::Start(off) => SeekFrom::Start(off),
-            std::io::SeekFrom::End(off) => SeekFrom::End(off),
-            std::io::SeekFrom::Current(off) => SeekFrom::Current(off),
+            std::io::SeekFrom::Start(off) => SeekFrom::Start(u64_to_usize(off)),
+            std::io::SeekFrom::End(off) => SeekFrom::End(i64_to_isize(off)),
+            std::io::SeekFrom::Current(off) => SeekFrom::Current(i64_to_isize(off)),
         };
-        <T as Seek>::seek(&mut self.0, pos).map_err(io_err)
+        match <T as Seek>::seek(&mut self.0, pos) {
+            Ok(off) => Ok(usize_to_u64(off)),
+            Err(err) => Err(io_err(err)),
+        }
     }
 }
 
@@ -116,13 +147,18 @@ impl<T: std::io::Read> Read for Std<T> {
 #[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
 impl<T: std::io::Seek> Seek for Std<T> {
     #[inline]
-    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
+        // PANIC SAFETY
+        // `as` conversion never fails, unless we are on a >64-bit system I guess?
         let seek = match seek {
-            SeekFrom::Start(off) => std::io::SeekFrom::Start(off),
-            SeekFrom::End(off) => std::io::SeekFrom::End(off),
-            SeekFrom::Current(off) => std::io::SeekFrom::Current(off),
+            SeekFrom::Start(off) => std::io::SeekFrom::Start(usize_to_u64(off)),
+            SeekFrom::End(off) => std::io::SeekFrom::End(isize_to_i64(off)),
+            SeekFrom::Current(off) => std::io::SeekFrom::Current(isize_to_i64(off)),
         };
-        <T as std::io::Seek>::seek(&mut self.0, seek).map_err(Into::into)
+        match <T as std::io::Seek>::seek(&mut self.0, seek) {
+            Ok(off) => Ok(u64_to_usize(off)),
+            Err(x) => Err(x.into()),
+        }
     }
 }
 
@@ -137,10 +173,7 @@ impl<'data> SliceMut<'data> {
     /// Wraps a mutable slice in an I/O object.
     #[inline]
     pub fn new(slice: &'data mut [u8]) -> Self {
-        Self {
-            slice,
-            pos: 0,
-        }
+        Self { slice, pos: 0 }
     }
     /// Read-only reference to the slice.
     #[inline]
@@ -189,11 +222,10 @@ impl Read for SliceMut<'_> {
 
 impl Seek for SliceMut<'_> {
     #[inline]
-    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
-        // `as` conversion never fails, unless we are on a 128-bit system I guess?
-        let offset = seek.as_buf_offset(self.pos as _, self.slice.len() as _)?;
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
+        let offset = seek.as_buf_offset(self.pos, self.slice.len())?;
         self.pos = offset;
-        Ok(offset as u64)
+        Ok(offset)
     }
 }
 
@@ -208,10 +240,7 @@ impl<'data> Slice<'data> {
     /// Wraps an immutable slice in an I/O object.
     #[inline]
     pub fn new(slice: &'data [u8]) -> Self {
-        Self {
-            slice,
-            pos: 0,
-        }
+        Self { slice, pos: 0 }
     }
     /// Reference to the slice.
     #[inline]
@@ -263,10 +292,10 @@ impl<'data> BorrowRead<'data> for Slice<'data> {
 
 impl Seek for Slice<'_> {
     #[inline]
-    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
         let offset = seek.as_buf_offset(self.pos as _, self.slice.len() as _)?;
         self.pos = offset;
-        Ok(offset as u64)
+        Ok(offset)
     }
 }
 
@@ -286,14 +315,11 @@ pub struct VecStream {
 #[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
 impl VecStream {
     /// Wraps a `Vec` in a type implementing "infinite" read, write and seek.
-    /// 
+    ///
     /// The `start` parameter is used to determine the initial value of the stream pointer.
     #[inline]
     pub fn new(vec: alloc::vec::Vec<u8>, start: usize) -> Self {
-        let mut this = Self {
-            vec,
-            pos: start,
-        };
+        let mut this = Self { vec, pos: start };
         this.ensure_capacity(this.pos);
         this
     }
@@ -351,15 +377,15 @@ impl Read for VecStream {
 #[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
 impl Seek for VecStream {
     #[inline]
-    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
         if let SeekFrom::End(_) = seek {
             return Err(SeekError::UnknownRange.into());
         }
-        
+
         let offset = seek.as_buf_offset(self.pos, 0)?;
         self.ensure_capacity(offset);
         self.pos = offset;
-        Ok(offset as u64)
+        Ok(offset)
     }
 }
 
@@ -575,7 +601,7 @@ impl Read for Zero {
 
 impl Seek for Zero {
     #[inline]
-    fn seek(&mut self, _seek: SeekFrom) -> EncodingResult<u64> {
+    fn seek(&mut self, _seek: SeekFrom) -> EncodingResult<usize> {
         Ok(0)
     }
 }
@@ -616,54 +642,47 @@ pub enum SeekFrom {
     ///
     /// If `n` is beyond the end, a [`SeekError`][`crate::SeekError`]
     /// is returned.
-    Start(u64),
+    Start(usize),
     /// Offsets `n` bytes from the end of the stream or buffer.
     ///
     /// If `n` is before the beginning of the stream, or if it is beyond the end of the stream,
     /// a [`SeekError`][`crate::SeekError`] is returned.
-    End(i64),
+    End(isize),
     /// Offsets `n` bytes from the current position in the stream or buffer.
     ///
     /// If `n` is before the beginning of the stream, or if it is beyond the end of the stream,
     /// a [`SeekError`][`crate::SeekError`] is returned.
-    Current(i64),
+    Current(isize),
 }
 
 impl SeekFrom {
+    /// A [`SeekFrom`] such that when passed to [`Seek::seek`],
+    /// the position is left unchanged and the return value of the call
+    /// will contain the current position.
+    pub const POSITION: Self = Self::Current(0);
+
     /// Calculates the new stream position in the case a seek operation is applied
     /// to a buffer, given the current position and the length of the buffer.
     ///
     /// Returns the offset, or a [`SeekError`] if the resulting offset would
     /// be outside of bounds.
     pub const fn as_buf_offset(&self, pos: usize, len: usize) -> Result<usize, SeekError> {
+        assert!(pos <= isize::MAX as _);
+        assert!(len <= isize::MAX as _);
+
         let offset = match *self {
-            SeekFrom::Start(off) => {
-                off as i64
-            }
-            SeekFrom::End(off) => {
-                len as i64 + off
-            }
-            SeekFrom::Current(off) => {
-                pos as i64 + off
-            }
+            SeekFrom::Start(off) => off as isize,
+            SeekFrom::End(off) => len as isize + off,
+            SeekFrom::Current(off) => pos as isize + off,
         };
 
-        if offset > len as i64 {
-            Err(SeekError::AfterEnd(offset as u64))
+        if offset > len as isize {
+            Err(SeekError::AfterEnd(offset as usize))
         } else if offset < 0 {
             Err(SeekError::BeforeBeginning(offset))
         } else {
             Ok(offset as usize)
         }
-    }
-    
-    /// Returns a [`SeekFrom`] such that when passed to [`Seek::seek`],
-    /// the position is left unchanged and the return value of the call
-    /// will contain the current position.
-    /// 
-    /// This function is not magic: it is literally defined as `SeekFrom::Current(0)`
-    pub const fn get_pos() -> Self {
-        Self::Current(0)
     }
 }
 
@@ -676,7 +695,7 @@ pub trait Seek {
     /// will yield a [`SeekError`][`crate::SeekError`].
     ///
     /// Returns the new position, as an offset from the start of the stream.
-    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64>;
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize>;
 }
 
 impl<T: Write> Write for &mut T {
@@ -695,7 +714,7 @@ impl<T: Read> Read for &mut T {
 
 impl<T: Seek> Seek for &mut T {
     #[inline]
-    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<u64> {
+    fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
         <T as Seek>::seek(self, seek)
     }
 }

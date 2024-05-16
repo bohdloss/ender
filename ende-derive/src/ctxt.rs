@@ -7,7 +7,7 @@ use syn::{
     parse_quote, Attribute, Data, DeriveInput, Error, Expr, Fields, Generics, Index, Lifetime, Type,
 };
 
-use crate::flags::{FlagTarget, Flags};
+use crate::flags::{FlagTarget, Flags, TypeModifier};
 use crate::lifetime::process_field_lifetimes;
 use crate::parse::{EndeAttribute, Flag, ReprAttribute};
 
@@ -171,7 +171,7 @@ impl Field {
         self.flags
             .ty_mods
             .as_ref()
-            .map(|mods| mods.ty())
+            .map(TypeModifier::ty)
             .unwrap_or(&self.ty)
     }
 }
@@ -378,6 +378,22 @@ impl Ctxt {
         // TODO Detect and fix any potential name clash here
 
         Ok(ctxt)
+    }
+
+    pub fn requires_seeking_impl(&self) -> bool {
+        self.flags.requires_seeking_impl()
+            || self
+                .struct_data
+                .fields
+                .iter()
+                .map(|x| &x.flags)
+                .any(Flags::requires_seeking_impl)
+            || self
+                .variants
+                .iter()
+                .flat_map(|x| &x.fields)
+                .map(|x| &x.flags)
+                .any(Flags::requires_seeking_impl)
     }
 }
 

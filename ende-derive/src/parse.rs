@@ -28,9 +28,16 @@ pub mod kw {
     custom_keyword!(flatten);
     custom_keyword!(validate);
     custom_keyword!(borrow);
+    custom_keyword!(goto);
+
+    /* Keywords related to `Seek` specifically */
+    custom_keyword!(start);
+    custom_keyword!(end);
+    custom_keyword!(cur);
 
     /* Stream modifiers */
     custom_keyword!(redir);
+    custom_keyword!(ptr);
 
     /* Flatten targets */
     custom_keyword!(bool);
@@ -214,6 +221,14 @@ pub struct FnArgs {
     pub args: Punctuated<Expr, Token![,]>,
 }
 
+#[derive(Clone)]
+#[allow(dead_code)]
+pub enum SeekTarget {
+    Start { kw: kw::start },
+    End { kw: kw::end },
+    Cur { kw: kw::cur },
+}
+
 /// Every possible flag that can be attached to a field or item.
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -302,10 +317,25 @@ pub enum Flag {
         path: Path,
         args: Option<FnArgs>,
     },
+    /// A seek operation should be applied to the underlying stream while encoding/decoding this field,
+    /// then back.
+    Ptr {
+        kw: kw::ptr,
+        target: SeekTarget,
+        colon: Token![:],
+        seek: Expr,
+    },
     /// The field must be borrowed from the encoder when deriving `BorrowDecode`
     Borrow {
         kw: kw::borrow,
         lifetimes: Option<(Token![:], Punctuated<Lifetime, Token![,]>)>,
+    },
+    /// We should seek to the given position and not go back
+    Goto {
+        kw: kw::goto,
+        target: SeekTarget,
+        colon: Token![:],
+        seek: Expr,
     },
 }
 
@@ -326,7 +356,9 @@ impl Flag {
             Flag::Validate { kw, .. } => kw.span,
             Flag::Modifiers { target, .. } => target.span(),
             Flag::Redir { kw, .. } => kw.span,
+            Flag::Ptr { kw, .. } => kw.span,
             Flag::Borrow { kw, .. } => kw.span,
+            Flag::Goto { kw, .. } => kw.span,
         }
     }
 }
@@ -488,6 +520,23 @@ impl Parse for FnArgs {
     }
 }
 
+impl Parse for SeekTarget {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(kw::start) {
+            Ok(Self::Start { kw: input.parse()? })
+        } else if input.peek(kw::end) {
+            Ok(Self::End { kw: input.parse()? })
+        } else if input.peek(kw::cur) {
+            Ok(Self::Cur { kw: input.parse()? })
+        } else {
+            Err(Error::new(
+                input.span(),
+                r#"Allowed seek targets are "start", "end" and "cur""#,
+            ))
+        }
+    }
+}
+
 impl Parse for Flag {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(kw::en) {
@@ -581,6 +630,13 @@ impl Parse for Flag {
                     None
                 },
             })
+        } else if input.peek(kw::ptr) {
+            Ok(Self::Ptr {
+                kw: input.parse()?,
+                target: input.parse()?,
+                colon: input.parse()?,
+                seek: input.parse()?,
+            })
         } else if input.peek(kw::borrow) {
             Ok(Self::Borrow {
                 kw: input.parse()?,
@@ -589,6 +645,13 @@ impl Parse for Flag {
                 } else {
                     None
                 },
+            })
+        } else if input.peek(kw::goto) {
+            Ok(Self::Goto {
+                kw: input.parse()?,
+                target: input.parse()?,
+                colon: input.parse()?,
+                seek: input.parse()?,
             })
         } else {
             Err(Error::new(input.span(), FLAGS_USAGE))

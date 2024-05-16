@@ -11,9 +11,11 @@ impl Ctxt {
                 let (pre, post) = self.flags.mods.derive(self)?;
                 let body = self.struct_data.derive_decode(self)?;
                 let modified = self.flags.derive_stream_modifiers(self, body)?;
+                let seek = self.flags.derive_seek(self)?;
 
                 Ok(quote!(
                     #pre
+                    #seek
                     let __val: Self = { #modified };
                     #post
                     #crate_name::EncodingResult::Ok(__val)
@@ -56,11 +58,13 @@ impl Ctxt {
                     }?
                 );
                 let modified = self.flags.derive_stream_modifiers(self, body)?;
+                let seek = self.flags.derive_seek(self)?;
 
                 Ok(quote!(
                     #const_code
 
                     #pre
+                    #seek
                     let __val: Self = { #modified };
                     #post
                     #crate_name::EncodingResult::Ok(__val)
@@ -187,6 +191,8 @@ impl Field {
             self.flags.function.derive_decode(ctxt, field_ty, &self)?
         };
         let modified = self.flags.derive_stream_modifiers(ctxt, decode)?;
+        let seek = self.flags.derive_seek(ctxt)?;
+
         let decode = if self.flags.skip {
             quote!(
                 {
@@ -200,6 +206,7 @@ impl Field {
                     #ref_code
                     if #condition {
                         #pre
+                        #seek
                         let __val: #field_ty = #modified;
                         #post
                         __val
@@ -213,6 +220,7 @@ impl Field {
                 {
                     #ref_code
                     #pre
+                    #seek
                     let __val: #field_ty = #modified;
                     #post
                     __val

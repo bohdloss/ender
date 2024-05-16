@@ -47,10 +47,25 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
         Err(err) => return TokenStream1::from(err.to_compile_error()),
     };
 
+    let seek = ctxt.requires_seeking_impl();
+    let trait_name = if seek {
+        quote!(SeekEncode)
+    } else {
+        quote!(Encode)
+    };
+    let fn_name = if seek {
+        quote!(seek_encode)
+    } else {
+        quote!(encode)
+    };
+
+    // Seek trait bound
+    let maybe_seek = seek.then_some(quote!(+ #crate_name::io::Seek));
+
     quote!(
 		#[automatically_derived]
-		impl #impl_generics #crate_name::Encode for #item_name #ty_generics #where_clause {
-			fn encode<#encoder_generic: #crate_name::io::Write>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
+		impl #impl_generics #crate_name::#trait_name for #item_name #ty_generics #where_clause {
+			fn #fn_name<#encoder_generic: #crate_name::io::Write #maybe_seek>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
 				#body
 			}
 		}
@@ -76,10 +91,25 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
         Err(err) => return TokenStream1::from(err.to_compile_error()),
     };
 
+    let seek = ctxt.requires_seeking_impl();
+    let trait_name = if seek {
+        quote!(SeekDecode)
+    } else {
+        quote!(Decode)
+    };
+    let fn_name = if seek {
+        quote!(seek_decode)
+    } else {
+        quote!(decode)
+    };
+
+    // Seek trait bound
+    let maybe_seek = seek.then_some(quote!(+ #crate_name::io::Seek));
+
     quote!(
 		#[automatically_derived]
-		impl #impl_generics #crate_name::Decode for #item_name #ty_generics #where_clause {
-			fn decode<#encoder_generic: #crate_name::io::Read>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
+		impl #impl_generics #crate_name::#trait_name for #item_name #ty_generics #where_clause {
+			fn #fn_name<#encoder_generic: #crate_name::io::Read #maybe_seek>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
 				#body
 			}
 		}
@@ -124,10 +154,25 @@ pub fn borrow_decode(input: TokenStream1) -> TokenStream1 {
     let ref encoder = ctxt.encoder;
     let ref encoder_generic = ctxt.encoder_generic;
 
+    let seek = ctxt.requires_seeking_impl();
+    let trait_name = if seek {
+        quote!(SeekBorrowDecode)
+    } else {
+        quote!(BorrowDecode)
+    };
+    let fn_name = if seek {
+        quote!(seek_borrow_decode)
+    } else {
+        quote!(borrow_decode)
+    };
+
+    // Seek trait bound
+    let maybe_seek = seek.then_some(quote!(+ #crate_name::io::Seek));
+
     quote!(
 		#[automatically_derived]
-		impl #impl_generics #crate_name::BorrowDecode<#decoder_lif> for #item_name #ty_generics #where_clause {
-			fn borrow_decode<#encoder_generic: #crate_name::io::BorrowRead<#decoder_lif>>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
+		impl #impl_generics #crate_name::#trait_name<#decoder_lif> for #item_name #ty_generics #where_clause {
+			fn #fn_name<#encoder_generic: #crate_name::io::BorrowRead<#decoder_lif> #maybe_seek>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
 				#body
 			}
 		}

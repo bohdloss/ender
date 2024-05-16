@@ -6,7 +6,7 @@ use syn::{parse_quote, Error, Expr, Lifetime, Path, Type};
 
 use crate::ctxt::Scope;
 use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding};
-use crate::parse::{Flag, FlattenTarget, Formatting, ModTarget, Modifier};
+use crate::parse::{Flag, FlattenTarget, Formatting, ModTarget, Modifier, SeekTarget};
 use crate::{dollar_crate, ENDE};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -298,6 +298,24 @@ pub enum StreamModifier {
         args: Vec<Expr>,
         scope: Scope,
     },
+    Ptr {
+        seek: SeekParam,
+    },
+}
+
+impl StreamModifier {
+    pub fn is_ptr(&self) -> bool {
+        match self {
+            Self::Ptr { .. } => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SeekParam {
+    pub target: SeekTarget,
+    pub seek: Expr,
 }
 
 /// All the possible flags a field or item can have. The target allows the apply method to
@@ -331,6 +349,9 @@ pub struct Flags {
     /// The field requires to be borrowed for these lifetimes, possibly introducing further
     /// bounds in the derived impl.
     pub borrow: Option<Vec<Lifetime>>,
+    /// Before encoding this field seek to the given offset, and don't come back (affects
+    /// all the following fields)
+    pub seek: Option<SeekParam>,
 }
 
 impl Flags {
@@ -347,7 +368,12 @@ impl Flags {
             condition: None,
             stream_modifiers: Vec::new(),
             borrow: None,
+            seek: None,
         }
+    }
+
+    pub fn requires_seeking_impl(&self) -> bool {
+        self.seek.is_some() || self.stream_modifiers.iter().any(StreamModifier::is_ptr)
     }
 
     pub fn skip_compatible(&self) -> bool {
@@ -357,6 +383,7 @@ impl Flags {
             && self.stream_modifiers.is_empty()
             && self.ty_mods.is_none()
             && self.borrow.is_none()
+            && self.seek.is_none()
     }
 }
 
@@ -510,6 +537,15 @@ impl Flags {
                 self.stream_modifiers
                     .push(StreamModifier::Transform { path, args, scope })
             }
+            Flag::Ptr { target, seek, .. } => {
+                if self.stream_modifiers.iter().any(StreamModifier::is_ptr) {
+                    return Err(Error::new(span, r#""ptr" flag declared more than once"#));
+                }
+
+                self.stream_modifiers.push(StreamModifier::Ptr {
+                    seek: SeekParam { target, seek },
+                })
+            }
             Flag::En { .. } | Flag::De { .. } => {
                 return Err(Error::new(
                     span,
@@ -530,6 +566,13 @@ impl Flags {
                 } else {
                     self.borrow = Some(Vec::new());
                 }
+            }
+            Flag::Goto { target, seek, .. } => {
+                if self.seek.is_some() {
+                    return Err(Error::new(span, r#""goto" flag declared more than once"#));
+                }
+
+                self.seek = Some(SeekParam { target, seek })
             }
         }
 

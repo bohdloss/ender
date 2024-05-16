@@ -3,7 +3,8 @@ use quote::{quote, ToTokens, TokenStreamExt};
 
 use crate::ctxt::Ctxt;
 use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding};
-use crate::parse::{FlattenParam, ModTarget};
+use crate::flags::SeekParam;
+use crate::parse::{FlattenParam, ModTarget, SeekTarget};
 
 /// A trait similar to ToTokens, except it requires a reference to a Ctxt
 pub trait CtxtToTokens {
@@ -58,5 +59,20 @@ impl ToTokens for ModTarget {
             ModTarget::Variant { .. } => quote!(variant_repr),
             ModTarget::String { .. } => quote!(string_repr),
         })
+    }
+}
+
+impl CtxtToTokens for SeekParam {
+    fn ctxt_tokens(&self, ctxt: &Ctxt) -> TokenStream2 {
+        let ref crate_name = ctxt.flags.crate_name;
+
+        let variant = match self.target {
+            SeekTarget::Start { .. } => quote!(Start),
+            SeekTarget::End { .. } => quote!(End),
+            SeekTarget::Cur { .. } => quote!(Current),
+        };
+
+        let ref seek = self.seek;
+        quote!(#crate_name::io::SeekFrom::#variant(#seek))
     }
 }

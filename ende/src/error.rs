@@ -247,9 +247,9 @@ impl_error!(BorrowError);
 #[non_exhaustive]
 pub enum SeekError {
     #[display("Tried to seek to a negative offset: {0}")]
-    BeforeBeginning(i64),
+    BeforeBeginning(isize),
     #[display("Tried to seek to an offset beyond the end: {0}")]
-    AfterEnd(u64),
+    AfterEnd(usize),
     #[display("Tried to seek to the beginning/end but they are unknown")]
     UnknownRange,
 }

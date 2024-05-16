@@ -29,6 +29,25 @@ pub struct StructStruct {
 }
 
 #[derive(Encode, Decode)]
+struct MyStruct {
+    secret_key: Vec<u8>,
+    iv: Vec<u8>,
+    /// While **encoding**, this field is compressed -> encrypted.
+    /// While **decoding**, this field is decrypted -> decompressed.
+    #[ende(redir: gzip(9))]
+    #[ende(redir: aes(iv, secret_key))]
+    super_secret_data: Vec<u8>,
+    file_pointer: usize,
+    /// Marks the current offset, seeks to `file_pointer` bytes from the start of the file,
+    /// encodes/decodes the field, then seeks back.
+    #[ende(ptr start: * file_pointer)]
+    apple_count: u64,
+    /// This field is effectively laid *right after* `file_pointer`
+    /// in the binary representation.
+    other_data: i32,
+}
+
+#[derive(Encode, Decode)]
 pub struct TupleStruct(
     u64,
     #[ende(num: leb128, big_endian; size: max = 15, bit16, little_endian, fixed; variant: bit128, fixed, big_endian)]
