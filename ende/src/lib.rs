@@ -535,6 +535,47 @@ pub fn decode_with<T: Read, V: Decode>(reader: T, context: Context) -> EncodingR
     V::decode(&mut decoder)
 }
 
+/// Borrow-Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
+/// with the given context.
+pub fn borrow_decode_with<'data, T: BorrowRead<'data>, V: BorrowDecode<'data>>(
+    reader: T,
+    context: Context,
+) -> EncodingResult<V> {
+    let mut decoder = Encoder::new(reader, context);
+    V::borrow_decode(&mut decoder)
+}
+
+/// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
+/// with the given context.
+pub fn seek_encode_with<T: Write + Seek, V: SeekEncode>(
+    writer: T,
+    context: Context,
+    value: V,
+) -> EncodingResult<()> {
+    let mut encoder = Encoder::new(writer, context);
+    value.seek_encode(&mut encoder)
+}
+
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
+/// with the given context.
+pub fn seek_decode_with<T: Read + Seek, V: SeekDecode>(
+    reader: T,
+    context: Context,
+) -> EncodingResult<V> {
+    let mut decoder = Encoder::new(reader, context);
+    V::seek_decode(&mut decoder)
+}
+
+/// Borrow-Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
+/// with the given context.
+pub fn seek_borrow_decode_with<'data, T: BorrowRead<'data> + Seek, V: SeekBorrowDecode<'data>>(
+    reader: T,
+    context: Context,
+) -> EncodingResult<V> {
+    let mut decoder = Encoder::new(reader, context);
+    V::seek_borrow_decode(&mut decoder)
+}
+
 /// Controls the endianness of a numerical value. Endianness is just
 /// the order in which the value's bytes are written.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Display)]
