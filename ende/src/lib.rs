@@ -1,4 +1,4 @@
-#![cfg_attr(doc_cfg, feature(doc_cfg))]
+#![cfg_attr(feature = "unstable", feature(doc_cfg))]
 #![cfg_attr(feature = "unstable", feature(never_type))]
 #![cfg_attr(feature = "unstable", feature(error_in_core))]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -163,6 +163,11 @@ use parse_display::Display;
 /// If the fields are part of a tuple struct/variant, the references will be named `m{idx}` where `idx` are the
 /// indexes of the tuple fields (E.G. `m0`, `m1`, ...), otherwise their names will match those of the fields themselves.
 ///
+/// A seeking impl is an implementation of [`SeekEncode`], [`SeekDecode`] or [`SeekBorrowDecode`] rather
+/// than their non-seek variants.
+/// When a flag is said to be a `seek` flag, it means that when used anywhere it will switch the
+/// impl to a seeking impl.
+/// 
 /// The flags currently implemented are split into 5 groups:
 /// # 1. Setting Modifiers
 /// Setting-Modifier flags temporarily change certain settings of the encoder and can be applied
@@ -241,7 +246,7 @@ use parse_display::Display;
 ///     * If the scope is Decode, the path must be callable as `decode`.<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
 /// with the same signatures as above.
-/// * `ptr $seek: $expr` - Seeks to the location given by $expr
+/// * `ptr $seek: $expr` - This is a `seek` flag. Seeks to the location given by $expr
 /// (which must be of type usize or isize) relative to $seek - which can be
 /// "start", "end" or "cur"rrent - before encoding/decoding this field, then seeks back to the
 /// previous location.
@@ -441,12 +446,18 @@ use parse_display::Display;
 /// should be decoded using its borrowing decode implementation, and allows you to optionally specify a
 /// set of lifetimes to override those normally inferred by the macro. These lifetimes will be bound
 /// to the lifetime of the encoder's data.
-/// * `goto $seek: $expr` - Indicates a jump to a different stream position before encoding this
-/// field or item. $seek can be any of "start", "end" or "cur", while $expr must produce a value of
+/// * `goto $seek: $expr` - This is a `seek` flag. Indicates a jump to a different stream position
+/// before encoding this field or item.
+/// $seek can be any of "start", "end" or "cur", while $expr must produce a value of
 /// type usize or isize relative to $seek.<br>
 /// If you need the stream position to be restored after encoding/decoding the field, see the
 /// `ptr` *stream modifier`.
+/// * `pos_tracker: $ident` - This is a `seek` flag. Stores the current stream position in a
+/// variable with the given name.
+/// Note that the position is stored *before* the `ptr` and `goto` flags, if any.
 /// <br>
+/// `seeking` - This is a `seek` flag. Does nothing, but simply forces a seeking impl to be used.
+/// This can only be applied to the whole item, as it doesn't make sense on individual fields.
 /// ### Example:
 ///
 /// ```rust
@@ -459,6 +470,9 @@ use parse_display::Display;
 /// #[derive(Encode, Decode, BorrowDecode)]
 /// /// We specify the name of the re-exported ende crate.
 /// #[ende(crate: enderman)]
+/// /// We specify this should use a seeking impl
+/// /// This is redundant of course, but we include it for completeness :P
+/// #[ende(seeking)]
 /// struct PersonEntry<'record> {
 ///   /// Will come in handy later
 ///   name_present: bool,
@@ -498,8 +512,35 @@ use parse_display::Display;
 ///   health: u64,
 /// }
 /// ```
+/// # Relationship between seek flags
+/// 
+/// ```
+/// # use ende_derive::{Decode, Encode};
+/// #[derive(Encode, Decode)]
+/// # #[ende(crate: ende)]
+/// /// This is the same...
+/// struct Ptr {
+///     pointer: usize,
+///     #[ende(ptr start: *pointer)]
+///     data: /* ... */
+/// #   (),
+/// }
+/// 
+/// #[derive(Encode, Decode)]
+/// # #[ende(crate: ende)]
+/// /// As this!
+/// struct Goto {
+///     pointer: usize,
+///     #[ende(pos_tracker: current)]
+///     #[ende(goto start: *pointer)]
+///     data: /* ... */
+/// #   (),
+///     #[ende(goto start: current)]
+///     seek_back: (),
+/// }
+/// ```
 #[cfg(feature = "derive")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "derive")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "derive")))]
 pub use ende_derive::{BorrowDecode, Decode, Encode};
 pub use error::*;
 pub use opaque::*;
@@ -547,7 +588,7 @@ pub fn borrow_decode_with<'data, T: BorrowRead<'data>, V: BorrowDecode<'data>>(
 
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
 /// with the given context.
-pub fn seek_encode_with<T: Write + Seek, V: SeekEncode>(
+pub fn seek_encode_with<T: Write + Seek, V: Encode>(
     writer: T,
     context: Context,
     value: V,
@@ -558,7 +599,7 @@ pub fn seek_encode_with<T: Write + Seek, V: SeekEncode>(
 
 /// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
 /// with the given context.
-pub fn seek_decode_with<T: Read + Seek, V: SeekDecode>(
+pub fn seek_decode_with<T: Read + Seek, V: Decode>(
     reader: T,
     context: Context,
 ) -> EncodingResult<V> {
@@ -568,7 +609,7 @@ pub fn seek_decode_with<T: Read + Seek, V: SeekDecode>(
 
 /// Borrow-Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
 /// with the given context.
-pub fn seek_borrow_decode_with<'data, T: BorrowRead<'data> + Seek, V: SeekBorrowDecode<'data>>(
+pub fn seek_borrow_decode_with<'data, T: BorrowRead<'data> + Seek, V: BorrowDecode<'data>>(
     reader: T,
     context: Context,
 ) -> EncodingResult<V> {
@@ -675,10 +716,6 @@ impl BitWidth {
     /// [`isize`]: prim@isize
     #[inline]
     pub const fn native() -> BitWidth {
-        #[cfg(target_pointer_width = "128")]
-        {
-            BitWidth::Bit128
-        }
         #[cfg(target_pointer_width = "64")]
         {
             BitWidth::Bit64
@@ -690,10 +727,6 @@ impl BitWidth {
         #[cfg(target_pointer_width = "16")]
         {
             BitWidth::Bit16
-        }
-        #[cfg(target_pointer_width = "8")]
-        {
-            BitWidth::Bit8
         }
     }
 
@@ -771,7 +804,6 @@ impl StrEncoding {
 /// Specifically, controls the [`Endianness`] and [`NumEncoding`].
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("endianness = {endianness}, encoding = {num_encoding}")]
-#[non_exhaustive]
 pub struct NumRepr {
     pub endianness: Endianness,
     pub num_encoding: NumEncoding,
@@ -800,7 +832,6 @@ impl Default for NumRepr {
 /// and the greatest encodable/decodable size before an error is thrown
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("endianness = {endianness} , encoding = {num_encoding}, bit_width = {width}, max_size = {max_size}")]
-#[non_exhaustive]
 pub struct SizeRepr {
     pub endianness: Endianness,
     pub num_encoding: NumEncoding,
@@ -833,7 +864,6 @@ impl Default for SizeRepr {
 /// Specifically, controls the [`Endianness`], the [`NumEncoding`], and the [`BitWidth`].
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("endianness = {endianness} , encoding = {num_encoding}, bit_width = {width}")]
-#[non_exhaustive]
 pub struct VariantRepr {
     pub endianness: Endianness,
     pub num_encoding: NumEncoding,
@@ -870,7 +900,6 @@ impl Default for VariantRepr {
 /// length (1 byte for UTF-8 and ASCII, 2 bytes for UTF-16, 4 bytes for UTF-32)
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("str_encoding = {str_encoding}, endianness = {endianness}")]
-#[non_exhaustive]
 pub struct StringRepr {
     pub str_encoding: StrEncoding,
     pub endianness: Endianness,
@@ -897,7 +926,6 @@ impl Default for StringRepr {
 /// An aggregation of [`NumRepr`], [`SizeRepr`], [`VariantRepr`], [`StringRepr`]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[display("num_repr = ({num_repr}), size_repr = ({size_repr}), variant_repr = ({variant_repr}), string_repr = ({string_repr})")]
-#[non_exhaustive]
 pub struct BinSettings {
     pub num_repr: NumRepr,
     pub size_repr: SizeRepr,
@@ -1055,6 +1083,16 @@ impl<'a, T> Encoder<'a, T> {
     #[inline]
     pub fn swap_stream(&mut self, new: T) -> T {
         replace(&mut self.stream, new)
+    }
+    
+    /// Retrieves the user data and attempts to cast it to the given concrete type,
+    /// returning a validation error in case the types don't match or no user data is stored.
+    #[inline]
+    pub fn user_data<U: Any>(&self) -> EncodingResult<&U> {
+        self.ctxt.user
+            .ok_or(val_error!("User-data requested, but none is present"))
+            .and_then(|x| x.downcast_ref()
+                .ok_or(val_error!("User-data doesnt match the requested concrete type of {}", stringify!(U))))
     }
 }
 
@@ -2228,19 +2266,24 @@ impl<T: Seek> Encoder<'_, T> {
     where
         F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>,
     {
-        // Track the current position
-        let prev = self.stream_position()? as isize;
-        // Seek to the desired location, and track the location now
-        let cur = self.stream.seek(seek)? as isize;
-        // Find the difference
-        let diff = prev - cur;
-
-        // Magic fn!
+        let cur = self.stream_position()?;
+        self.seek(seek)?;
         let ret = f(self);
-
-        // Now we can seek even on streams that don't support seeking from the Start or End
-        self.stream.seek(SeekFrom::Current(diff))?;
+        self.seek(SeekFrom::Start(cur))?;
         ret
+        // // Track the current position
+        // let prev = self.stream_position()? as isize;
+        // // Seek to the desired location, and track the location now
+        // let cur = self.stream.seek(seek)? as isize;
+        // // Find the difference
+        // let diff = prev - cur;
+        // 
+        // // Magic fn!
+        // let ret = f(self);
+        // 
+        // // Now we can seek even on streams that don't support seeking from the Start or End
+        // self.stream.seek(SeekFrom::Current(diff))?;
+        // ret
     }
 }
 
@@ -2248,6 +2291,9 @@ impl<T: Seek> Encoder<'_, T> {
 pub trait Encode {
     /// Encodes `self` into its binary format.
     ///
+    /// Implementations that **need** to seek, should implement [`seek_encode`][`Self::seek_encode`]
+    /// instead, and define this method to return a [`SeekError::SeekNecessary`]
+    /// 
     /// Calling `encode` multiple times on the same value without
     /// changing the encoder settings or the value itself in-between calls should produce
     /// the same output.
@@ -2258,51 +2304,17 @@ pub trait Encode {
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
     fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()>;
-}
 
-/// A binary data structure specification which can be **decoded** from its binary representation
-/// into an owned type.
-pub trait Decode: Sized {
-    /// Decodes an owned version of `Self` from its binary format.
-    ///
-    /// Calling `decode` multiple times without changing the
-    /// encoder settings or the underlying binary data in-between calls should produce
-    /// the same output.
-    ///
-    /// If the result is Ok,
-    /// implementations should guarantee that the state of the encoder
-    /// is preserved. If the result is Err,
-    /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self>;
-}
-
-/// A binary data structure specification which can be **decoded** from its binary representation
-/// by borrowing the data.
-pub trait BorrowDecode<'data>: Sized {
-    /// Decodes a borrowed version of `Self` from its binary format.
-    ///
-    /// Calling `borrow_decode` multiple times without changing the
-    /// encoder settings or the underlying binary data in-between calls should produce
-    /// the same output.
-    ///
-    /// If the result is Ok,
-    /// implementations should guarantee that the state of the encoder
-    /// is preserved. If the result is Err,
-    /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
-    ) -> EncodingResult<Self>;
-}
-
-/// A binary data structure specification which can be **encoded** into its binary representation,
-/// but necessitates to possibly **seek** back and forth in the stream to achieve that.
-///
-/// A blanket implementation of this trait is provided for every `T` implementing [`Encode`].
-pub trait SeekEncode {
     /// Encodes `self` into its binary format, but requires the writer to implement [`Seek`].
     ///
+    /// Implementations that **don't need** to seek, should implement [`encode`][`Self::encode`]
+    /// instead, and define this method to simply call that.
+    /// (or use the [`empty_seek!`][`empty_seek`] macro to reduce boilerplate).<br>
+    /// If you're defining a collection/container type, then you should implement
+    /// this method but replace all calls to `encode` to
+    /// `seek_encode` for the contained elements.
+    /// 
+    /// 
     /// Calling `seek_encode` multiple times on the same value without
     /// changing the encoder settings or the value itself in-between calls should produce
     /// the same output.
@@ -2319,13 +2331,33 @@ pub trait SeekEncode {
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation
-/// into an owned type, but necessitates to possibly **seek** back and forth in the stream to
-/// achieve that.
-///
-/// A blanket implementation of this trait is provided for every `T` implementing [`Decode`].
-pub trait SeekDecode: Sized {
+/// into an owned type.
+pub trait Decode: Sized {
+    /// Decodes an owned version of `Self` from its binary format.
+    ///
+    /// Implementations that **need** to seek, should implement [`seek_decode`][`Self::seek_decode`]
+    /// instead, and define this method to return a [`SeekError::SeekNecessary`]
+    /// 
+    /// Calling `decode` multiple times without changing the
+    /// encoder settings or the underlying binary data in-between calls should produce
+    /// the same output.
+    ///
+    /// If the result is Ok,
+    /// implementations should guarantee that the state of the encoder
+    /// is preserved. If the result is Err,
+    /// no guarantees are made about the state of the encoder,
+    /// and users should reset it before reuse.
+    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self>;
+
     /// Decodes an owned version of `Self` from its binary format,
     /// but requires the reader to implement [`Seek`].
+    ///
+    /// Implementations that **don't need** to seek, should implement [`encode`][`Self::encode`]
+    /// instead, and define this method to simply call that.
+    /// (or use the [`empty_seek!`][`empty_seek`] macro to reduce boilerplate).<br>
+    /// If you're defining a collection/container type, then you should implement
+    /// this method but replace all calls to `decode` to
+    /// `seek_decode` for the contained elements.
     ///
     /// Calling `seek_decode` multiple times without changing the
     /// encoder settings or the underlying binary data in-between calls should produce
@@ -2340,18 +2372,36 @@ pub trait SeekDecode: Sized {
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation
-/// by borrowing the data, but necessitates to possibly **seek** back and forth in the stream to
-/// achieve that.
-///
-/// **DON'T LET THE NAME SCARE YOU!**<br>
-/// This is just the equivalent of [`BorrowDecode`] but with the extra requirement that the encoder
-/// must support **seeking**.
-///
-/// A blanket implementation of this trait is provided for every `T` implementing [`BorrowDecode`].
-pub trait SeekBorrowDecode<'data>: Sized {
+/// by borrowing the data.
+pub trait BorrowDecode<'data>: Sized {
+    /// Decodes a borrowed version of `Self` from its binary format.
+    ///
+    /// Implementations that **need** to seek, should implement [`seek_borrow_decode`][`Self::seek_borrow_decode`]
+    /// instead, and define this method to return a [`SeekError::SeekNecessary`]
+    /// 
+    /// Calling `borrow_decode` multiple times without changing the
+    /// encoder settings or the underlying binary data in-between calls should produce
+    /// the same output.
+    ///
+    /// If the result is Ok,
+    /// implementations should guarantee that the state of the encoder
+    /// is preserved. If the result is Err,
+    /// no guarantees are made about the state of the encoder,
+    /// and users should reset it before reuse.
+    fn borrow_decode<Reader: BorrowRead<'data>>(
+        decoder: &mut Encoder<Reader>,
+    ) -> EncodingResult<Self>;
+
     /// Decodes a borrowed version of `Self` from its binary format,
     /// but requires the reader to implement [`Seek`]
     ///
+    /// Implementations that **don't need** to seek, should implement [`borrow_decode`][`Self::borrow_decode`]
+    /// instead, and define this method to simply call that.
+    /// (or use the [`empty_seek!`][`empty_seek`] macro to reduce boilerplate).<br>
+    /// If you're defining a collection/container type, then you should implement
+    /// this method but replace all calls to `borrow_decode` to
+    /// `borrow_seek_decode` for the contained elements.
+    /// 
     /// Calling `seek_borrow_decode` multiple times without changing the
     /// encoder settings or the underlying binary data in-between calls should produce
     /// the same output.
@@ -2364,30 +2414,4 @@ pub trait SeekBorrowDecode<'data>: Sized {
     fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(
         decoder: &mut Encoder<Reader>,
     ) -> EncodingResult<Self>;
-}
-
-impl<T: Encode> SeekEncode for T {
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(
-        &self,
-        encoder: &mut Encoder<Writer>,
-    ) -> EncodingResult<()> {
-        self.encode(encoder)
-    }
-}
-
-impl<T: Decode> SeekDecode for T {
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Self::decode(decoder)
-    }
-}
-
-impl<'data, T: BorrowDecode<'data>> SeekBorrowDecode<'data> for T {
-    #[inline]
-    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(
-        decoder: &mut Encoder<Reader>,
-    ) -> EncodingResult<Self> {
-        Self::borrow_decode(decoder)
-    }
 }

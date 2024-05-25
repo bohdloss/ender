@@ -1,6 +1,6 @@
-use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote, ToTokens, TokenStreamExt};
-use syn::{parse_quote, Expr, Type};
+use proc_macro2::{TokenStream as TokenStream2};
+use quote::{format_ident, quote, TokenStreamExt, ToTokens};
+use syn::{Expr, LitStr, parse_quote, Type};
 
 use crate::ctxt::{Ctxt, Field, ItemType, Scope, Target, Variant};
 use crate::flags::{AllModifiers, Flags, Function, ModifierGroup, StreamModifier, TypeModifier};
@@ -107,7 +107,11 @@ impl Function {
         let ref encoder = ctxt.encoder;
         Ok(match self {
             Function::Default => {
-                quote!(<#ty as #crate_name::Encode>::encode(#input, #encoder)?)
+                if ctxt.requires_seeking_impl() {
+                    quote!(<#ty as #crate_name::Encode>::seek_encode(#input, #encoder)?)
+                } else {
+                    quote!(<#ty as #crate_name::Encode>::encode(#input, #encoder)?)
+                }
             }
             Function::Serde(serde_crate) => {
                 quote!(<#ty as #serde_crate::Serialize>::serialize(#input, &mut * #encoder)?)
@@ -130,10 +134,18 @@ impl Function {
         let ref encoder = ctxt.encoder;
         Ok(match self {
             Function::Default => {
-                if field.flags.borrow.is_some() {
-                    quote!(<#ty as #crate_name::BorrowDecode>::borrow_decode(#encoder)?)
+                if ctxt.requires_seeking_impl() {
+                    if field.flags.borrow.is_some() {
+                        quote!(<#ty as #crate_name::BorrowDecode>::seek_borrow_decode(#encoder)?)
+                    } else {
+                        quote!(<#ty as #crate_name::Decode>::seek_decode(#encoder)?)
+                    }
                 } else {
-                    quote!(<#ty as #crate_name::Decode>::decode(#encoder)?)
+                    if field.flags.borrow.is_some() {
+                        quote!(<#ty as #crate_name::BorrowDecode>::borrow_decode(#encoder)?)
+                    } else {
+                        quote!(<#ty as #crate_name::Decode>::decode(#encoder)?)
+                    }
                 }
             }
             Function::Serde(serde_crate) => {
@@ -196,14 +208,25 @@ impl ToTokens for Formatting {
 
 impl Flags {
     /// Derives validation code for a field about to be encoded or which has just been decoded
-    pub fn derive_validation(&self, ctxt: &Ctxt, ref_code: &RefCode) -> syn::Result<TokenStream2> {
+    pub fn derive_validation(&self, ctxt: &Ctxt, ref_code: Option<&RefCode>) -> syn::Result<TokenStream2> {
         Ok(if let Some((validate, fmt)) = &self.validate {
             let ref crate_name = ctxt.flags.crate_name;
+            let ref item_name = ctxt.item_name;
 
             let format = if let Some(fmt) = fmt.as_ref() {
+                let mut fmt = fmt.clone();
+                let span = fmt.format.span();
+                
+                // CAUTION! This is the formatting of a formatting!
+                // item_name is fine, because it is an ident.
+                // then we append the original formatting, which is also ok and behaves predictably.
+                let string = format!("[{}] {}", item_name, fmt.format.value());
+                fmt.format = LitStr::new(&string, span);
+                
                 quote!(::core::format_args!(#fmt))
             } else {
-                quote!(::core::format_args!("Assertion failed"))
+                let format = format!("[{}] Assertion failed `{}`", item_name, validate.to_token_stream());
+                quote!(::core::format_args!(#format))
             };
 
             quote!(
@@ -226,6 +249,19 @@ impl Flags {
             let ref encoder = ctxt.encoder;
 
             quote!(#crate_name::Encoder::seek(#encoder, #seek)?;)
+        } else {
+            quote!()
+        })
+    }
+
+    pub fn derive_pos_tracker(&self, ctxt: &Ctxt) -> syn::Result<TokenStream2> {
+        Ok(if let Some(var) = &self.pos_tracker {
+            let ref crate_name = ctxt.flags.crate_name;
+            let ref encoder = ctxt.encoder;
+
+            let var = format_ident!("{}", var);
+
+            quote!(let #var = #crate_name::Encoder::stream_position(#encoder)?;)
         } else {
             quote!()
         })
@@ -320,6 +356,7 @@ impl ModifierGroup {
 impl AllModifiers {
     pub fn derive(&self, ctxt: &Ctxt) -> syn::Result<(TokenStream2, TokenStream2)> {
         let ref encoder = ctxt.encoder;
+        let ref crate_name = ctxt.flags.crate_name;
 
         let mut save: Vec<TokenStream2> = Vec::new();
         let mut set: Vec<TokenStream2> = Vec::new();
@@ -364,7 +401,7 @@ impl AllModifiers {
                 let __variant_flatten = #encoder.ctxt.variant_flatten;
             ));
             set.push(quote!(
-                #encoder.ctxt.variant_flatten = Some(#flatten);
+                #encoder.ctxt.variant_flatten = Some(#crate_name::Opaque::from(#flatten));
             ));
             restore.push(quote!(
                 #encoder.ctxt.variant_flatten = __variant_flatten;

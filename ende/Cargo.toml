@@ -54,4 +54,4 @@ serde = ["dep:serde"]
 derive = []
 
 # Enables features only available in nightly.
-unstable = []
+unstable = ["ende-derive/unstable"]

@@ -13,8 +13,10 @@ impl Ctxt {
                 let body = self.struct_data.derive_encode(self)?;
                 let modified = self.flags.derive_stream_modifiers(self, body)?;
                 let seek = self.flags.derive_seek(self)?;
+                let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
                 Ok(quote!(
+                    #pos_tracker
                     #pre
                     #seek
                     { #modified }
@@ -46,10 +48,12 @@ impl Ctxt {
                 );
                 let modified = self.flags.derive_stream_modifiers(self, body)?;
                 let seek = self.flags.derive_seek(self)?;
+                let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
                 Ok(quote!(
                     #const_code
 
+                    #pos_tracker
                     #pre
                     #seek
                     { #modified }
@@ -142,8 +146,9 @@ impl Field {
         let ref field_ty = self.ty;
 
         let (pre, post) = self.flags.mods.derive(ctxt)?;
-        let validate = self.flags.derive_validation(ctxt, &ref_code)?;
+        let validate = self.flags.derive_validation(ctxt, Some(&ref_code))?;
         let seek = self.flags.derive_seek(ctxt)?;
+        let pos_tracker = self.flags.derive_pos_tracker(ctxt)?;
         let encode = if let Some(converter) = &self.flags.ty_mods {
             self.flags.function.derive_encode(
                 ctxt,
@@ -162,6 +167,7 @@ impl Field {
         } else if let Some(condition) = &self.flags.condition {
             quote!(
                 #validate
+                #pos_tracker
                 if #condition {
                     #pre
                     #seek
@@ -172,6 +178,7 @@ impl Field {
         } else {
             quote!(
                 #validate
+                #pos_tracker
                 #pre
                 #seek
                 #encode;

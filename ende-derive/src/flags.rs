@@ -352,6 +352,13 @@ pub struct Flags {
     /// Before encoding this field seek to the given offset, and don't come back (affects
     /// all the following fields)
     pub seek: Option<SeekParam>,
+    /// Keeps track of the position at this point, before the field it's applied on is encoded/decoded
+    /// and stores it in a variable of the given name.
+    /// 
+    /// Can only be applied to fields
+    pub pos_tracker: Option<Ident>,
+    /// Forces a `Seek*` implementation
+    pub force_seek: bool,
 }
 
 impl Flags {
@@ -369,11 +376,16 @@ impl Flags {
             stream_modifiers: Vec::new(),
             borrow: None,
             seek: None,
+            pos_tracker: None,
+            force_seek: false,
         }
     }
 
     pub fn requires_seeking_impl(&self) -> bool {
-        self.seek.is_some() || self.stream_modifiers.iter().any(StreamModifier::is_ptr)
+        self.force_seek ||
+        self.seek.is_some() ||
+            self.pos_tracker.is_some() ||
+            self.stream_modifiers.iter().any(StreamModifier::is_ptr)
     }
 
     pub fn skip_compatible(&self) -> bool {
@@ -384,6 +396,7 @@ impl Flags {
             && self.ty_mods.is_none()
             && self.borrow.is_none()
             && self.seek.is_none()
+            && self.pos_tracker.is_none()
     }
 }
 
@@ -573,6 +586,23 @@ impl Flags {
                 }
 
                 self.seek = Some(SeekParam { target, seek })
+            }
+            Flag::PosTracker { var, .. } => {
+                if self.pos_tracker.is_some() {
+                    return Err(Error::new(span, r#""pos_tracker" flag declared more than once"#));
+                }
+                
+                self.pos_tracker = Some(var);
+            }
+            Flag::Seek { .. } => {
+                if self.force_seek {
+                    return Err(Error::new(span, r#""seek" flag declared more than once"#));
+                }
+                if self.target != FlagTarget::Item {
+                    return Err(Error::new(span, r#""seek" flag can only be declared on items"#));
+                }
+                
+                self.force_seek = true;
             }
         }
 

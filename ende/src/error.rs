@@ -50,8 +50,8 @@ pub enum EncodingError {
     #[display("A size of {requested} exceeded the max allowed value of {max}")]
     MaxSizeExceeded { max: usize, requested: usize },
     /// Tried to decode an unrecognized enum variant
-    #[display("Unrecognized enum variant")]
-    InvalidVariant,
+    #[display("Unrecognized enum variant ({0})")]
+    InvalidVariant(Opaque),
     /// Tried to squeeze a value into fewer bits than what is required to fully represent it.
     #[display(r#"A value of "{value}" is too large to fit in {requested_width}"#)]
     TooLarge {
@@ -84,14 +84,24 @@ pub enum EncodingError {
     ),
     /// A generic serde error occurred
     #[cfg(all(feature = "serde", feature = "alloc"))]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "serde")))]
+    #[cfg_attr(feature = "unstable", doc(cfg(feature = "serde")))]
     #[display("Serde error: {0}")]
     SerdeError(alloc::string::String),
     /// A generic serde error occurred
     #[cfg(all(feature = "serde", not(feature = "alloc")))]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "serde")))]
+    #[cfg_attr(feature = "unstable", doc(cfg(feature = "serde")))]
     #[display("Serde error")]
     SerdeError,
+}
+
+#[macro_export]
+macro_rules! val_error {
+    (Err: $($tt:tt)*) => {{
+        Err($crate::EncodingError::validation_error(::core::format_args!($($tt)*)))
+    }};
+    ($($tt:tt)*) => {{
+        $crate::EncodingError::validation_error(::core::format_args!($($tt)*))
+    }};
 }
 
 impl EncodingError {
@@ -110,6 +120,12 @@ impl EncodingError {
                 Self::ValidationError("Unknown")
             }
         }
+    }
+    
+    pub fn invalid_variant<V>(v: V) -> Self
+    where Opaque: From<V>
+    {
+        Self::InvalidVariant(Opaque::from(v))
     }
 }
 
@@ -246,6 +262,8 @@ impl_error!(BorrowError);
 #[derive(Debug, Display)]
 #[non_exhaustive]
 pub enum SeekError {
+    #[display("[{0}] Cannot encode/decode this structure without seeking!")]
+    SeekNecessary(&'static str),
     #[display("Tried to seek to a negative offset: {0}")]
     BeforeBeginning(isize),
     #[display("Tried to seek to an offset beyond the end: {0}")]

@@ -34,6 +34,8 @@ pub mod kw {
     custom_keyword!(start);
     custom_keyword!(end);
     custom_keyword!(cur);
+    custom_keyword!(pos_tracker);
+    custom_keyword!(seeking);
 
     /* Stream modifiers */
     custom_keyword!(redir);
@@ -337,6 +339,17 @@ pub enum Flag {
         colon: Token![:],
         seek: Expr,
     },
+    /// Keeps track of the position at this point, before the field it's applied on is encoded/decoded
+    /// and stores it in a variable of the given name
+    PosTracker {
+        kw: kw::pos_tracker,
+        colon: Token![:],
+        var: Ident,
+    },
+    /// Forces a `Seek*` implementation
+    Seek {
+        kw: kw::seeking,
+    }
 }
 
 impl Flag {
@@ -359,6 +372,8 @@ impl Flag {
             Flag::Ptr { kw, .. } => kw.span,
             Flag::Borrow { kw, .. } => kw.span,
             Flag::Goto { kw, .. } => kw.span,
+            Flag::PosTracker { kw, .. } => kw.span,
+            Flag::Seek { kw } => kw.span,
         }
     }
 }
@@ -652,6 +667,16 @@ impl Parse for Flag {
                 target: input.parse()?,
                 colon: input.parse()?,
                 seek: input.parse()?,
+            })
+        } else if input.peek(kw::pos_tracker) {
+            Ok(Self::PosTracker {
+                kw: input.parse()?,
+                colon: input.parse()?,
+                var: input.parse()?,
+            })
+        } else if input.peek(kw::seeking) {
+            Ok(Self::Seek {
+                kw: input.parse()?,
             })
         } else {
             Err(Error::new(input.span(), FLAGS_USAGE))

@@ -1,5 +1,7 @@
 #![allow(unused)]
 
+use alloc::borrow::Cow;
+use uuid::Uuid;
 use crate::facade::fake::*;
 
 use ende_derive::{BorrowDecode, Decode, Encode};

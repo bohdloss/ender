@@ -375,8 +375,11 @@ impl Ctxt {
             }
         }
 
+        let seek = ctxt.requires_seeking_impl();
+        ctxt.flags.force_seek = seek;
+        
         // TODO Detect and fix any potential name clash here
-
+        
         Ok(ctxt)
     }
 

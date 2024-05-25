@@ -35,7 +35,7 @@ fn i64_to_isize(val: i64) -> isize {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 fn io_err(err: EncodingError) -> std::io::Error {
     match err {
         EncodingError::IOError(error) => {
@@ -54,13 +54,13 @@ fn io_err(err: EncodingError) -> std::io::Error {
 ///
 /// The memory layout is always guaranteed to be that of `T`.
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 #[repr(transparent)]
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Std<T>(T);
 
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 impl<T> Std<T> {
     /// Wraps a `T`.
     #[inline]
@@ -85,7 +85,7 @@ impl<T> Std<T> {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 impl<T: Write> std::io::Write for Std<T> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -99,7 +99,7 @@ impl<T: Write> std::io::Write for Std<T> {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 impl<T: Read> std::io::Read for Std<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -109,7 +109,7 @@ impl<T: Read> std::io::Read for Std<T> {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 impl<T: Seek> std::io::Seek for Std<T> {
     #[inline]
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
@@ -126,7 +126,7 @@ impl<T: Seek> std::io::Seek for Std<T> {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 impl<T: std::io::Write> Write for Std<T> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> EncodingResult<()> {
@@ -135,7 +135,7 @@ impl<T: std::io::Write> Write for Std<T> {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 impl<T: std::io::Read> Read for Std<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
@@ -144,7 +144,7 @@ impl<T: std::io::Read> Read for Std<T> {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "std")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
 impl<T: std::io::Seek> Seek for Std<T> {
     #[inline]
     fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
@@ -304,7 +304,7 @@ impl Seek for Slice<'_> {
 /// The advantage of this over a [`SliceMut`] is that when the end of the
 /// vector's capacity is reached, the backing memory is simply extended and writing can continue.
 #[cfg(feature = "alloc")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct VecStream {
     vec: alloc::vec::Vec<u8>,
@@ -312,7 +312,7 @@ pub struct VecStream {
 }
 
 #[cfg(feature = "alloc")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
 impl VecStream {
     /// Wraps a `Vec` in a type implementing "infinite" read, write and seek.
     ///
@@ -350,7 +350,7 @@ impl VecStream {
 }
 
 #[cfg(feature = "alloc")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
 impl Write for VecStream {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> EncodingResult<()> {
@@ -362,7 +362,7 @@ impl Write for VecStream {
 }
 
 #[cfg(feature = "alloc")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
 impl Read for VecStream {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
@@ -374,7 +374,7 @@ impl Read for VecStream {
 }
 
 #[cfg(feature = "alloc")]
-#[cfg_attr(doc_cfg, doc(cfg(feature = "alloc")))]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
 impl Seek for VecStream {
     #[inline]
     fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {

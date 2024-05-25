@@ -12,8 +12,10 @@ impl Ctxt {
                 let body = self.struct_data.derive_decode(self)?;
                 let modified = self.flags.derive_stream_modifiers(self, body)?;
                 let seek = self.flags.derive_seek(self)?;
+                let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
                 Ok(quote!(
+                    #pos_tracker
                     #pre
                     #seek
                     let __val: Self = { #modified };
@@ -28,7 +30,7 @@ impl Ctxt {
                 // Edge case for 0-variant enums
                 if self.variants.len() == 0 {
                     return Ok(quote!(
-                        #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant)
+                        #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant(#crate_name::Opaque::from(0usize)))
                     ));
                 }
 
@@ -54,15 +56,17 @@ impl Ctxt {
                 let body = quote!(
                     match #read_variant {
                         #variant_code
-                        _ => #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant),
+                        __unknown_variant => #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant(#crate_name::Opaque::from(__unknown_variant))),
                     }?
                 );
                 let modified = self.flags.derive_stream_modifiers(self, body)?;
                 let seek = self.flags.derive_seek(self)?;
+                let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
                 Ok(quote!(
                     #const_code
 
+                    #pos_tracker
                     #pre
                     #seek
                     let __val: Self = { #modified };
@@ -192,6 +196,7 @@ impl Field {
         };
         let modified = self.flags.derive_stream_modifiers(ctxt, decode)?;
         let seek = self.flags.derive_seek(ctxt)?;
+        let pos_tracker = self.flags.derive_pos_tracker(ctxt)?;
 
         let decode = if self.flags.skip {
             quote!(
@@ -229,9 +234,10 @@ impl Field {
         };
 
         ref_code.append(self);
-        let validate = self.flags.derive_validation(ctxt, &ref_code)?;
+        let validate = self.flags.derive_validation(ctxt, Some(&ref_code))?;
 
         let decode = quote!(
+            #pos_tracker
             let #field_name: #field_ty = #decode;
             #validate
         );

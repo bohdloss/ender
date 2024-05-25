@@ -1,8 +1,8 @@
 use proc_macro::TokenStream as TokenStream1;
 
 use proc_macro2::{Ident, Span};
-use quote::quote;
-use syn::{parse_macro_input, parse_quote, DeriveInput, GenericParam, LifetimeParam};
+use quote::{quote};
+use syn::{DeriveInput, GenericParam, LifetimeParam, parse_macro_input, parse_quote};
 
 use crate::ctxt::{Ctxt, Target};
 
@@ -46,30 +46,30 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
         Ok(ctxt) => ctxt,
         Err(err) => return TokenStream1::from(err.to_compile_error()),
     };
-
-    let seek = ctxt.requires_seeking_impl();
-    let trait_name = if seek {
-        quote!(SeekEncode)
+        
+    if ctxt.requires_seeking_impl() {
+        quote!(
+            #[automatically_derived]
+            impl #impl_generics #crate_name::Encode for #item_name #ty_generics #where_clause {
+                #crate_name::requires_seek!(encode);
+                
+                fn seek_encode<#encoder_generic: #crate_name::io::Write + #crate_name::io::Seek>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
+                    #body
+                }
+            }
+        )
     } else {
-        quote!(Encode)
-    };
-    let fn_name = if seek {
-        quote!(seek_encode)
-    } else {
-        quote!(encode)
-    };
-
-    // Seek trait bound
-    let maybe_seek = seek.then_some(quote!(+ #crate_name::io::Seek));
-
-    quote!(
-		#[automatically_derived]
-		impl #impl_generics #crate_name::#trait_name for #item_name #ty_generics #where_clause {
-			fn #fn_name<#encoder_generic: #crate_name::io::Write #maybe_seek>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
-				#body
-			}
-		}
-	).into()
+        quote!(
+            #[automatically_derived]
+            impl #impl_generics #crate_name::Encode for #item_name #ty_generics #where_clause {
+                fn encode<#encoder_generic: #crate_name::io::Write>(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
+                    #body
+                }
+                
+                #crate_name::empty_seek!(encode);
+            }
+        )
+    }.into()
 }
 
 #[proc_macro_derive(Decode, attributes(ende))]
@@ -91,29 +91,29 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
         Err(err) => return TokenStream1::from(err.to_compile_error()),
     };
 
-    let seek = ctxt.requires_seeking_impl();
-    let trait_name = if seek {
-        quote!(SeekDecode)
+    if ctxt.requires_seeking_impl() {
+        quote!(
+            #[automatically_derived]
+            impl #impl_generics #crate_name::Decode for #item_name #ty_generics #where_clause {
+                #crate_name::requires_seek!(decode);
+                
+                fn seek_decode<#encoder_generic: #crate_name::io::Read + #crate_name::io::Seek>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
+                    #body
+                }
+            }
+        )
     } else {
-        quote!(Decode)
-    };
-    let fn_name = if seek {
-        quote!(seek_decode)
-    } else {
-        quote!(decode)
-    };
-
-    // Seek trait bound
-    let maybe_seek = seek.then_some(quote!(+ #crate_name::io::Seek));
-
-    quote!(
-		#[automatically_derived]
-		impl #impl_generics #crate_name::#trait_name for #item_name #ty_generics #where_clause {
-			fn #fn_name<#encoder_generic: #crate_name::io::Read #maybe_seek>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
-				#body
-			}
-		}
-	).into()
+        quote!(
+            #[automatically_derived]
+            impl #impl_generics #crate_name::Decode for #item_name #ty_generics #where_clause {
+                fn decode<#encoder_generic: #crate_name::io::Read>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
+                    #body
+                }
+                
+                #crate_name::empty_seek!(decode);
+            }
+        )
+    }.into()
 }
 
 #[proc_macro_derive(BorrowDecode, attributes(ende))]
@@ -154,27 +154,27 @@ pub fn borrow_decode(input: TokenStream1) -> TokenStream1 {
     let ref encoder = ctxt.encoder;
     let ref encoder_generic = ctxt.encoder_generic;
 
-    let seek = ctxt.requires_seeking_impl();
-    let trait_name = if seek {
-        quote!(SeekBorrowDecode)
+    if ctxt.requires_seeking_impl() {
+        quote!(
+            #[automatically_derived]
+            impl #impl_generics #crate_name::BorrowDecode<#decoder_lif> for #item_name #ty_generics #where_clause {
+                #crate_name::requires_seek!(borrow_decode(#decoder_lif));
+                
+                fn seek_borrow_decode<#encoder_generic: #crate_name::io::BorrowRead<#decoder_lif> + #crate_name::io::Seek>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
+                    #body
+                }
+            }
+        )
     } else {
-        quote!(BorrowDecode)
-    };
-    let fn_name = if seek {
-        quote!(seek_borrow_decode)
-    } else {
-        quote!(borrow_decode)
-    };
-
-    // Seek trait bound
-    let maybe_seek = seek.then_some(quote!(+ #crate_name::io::Seek));
-
-    quote!(
-		#[automatically_derived]
-		impl #impl_generics #crate_name::#trait_name<#decoder_lif> for #item_name #ty_generics #where_clause {
-			fn #fn_name<#encoder_generic: #crate_name::io::BorrowRead<#decoder_lif> #maybe_seek>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
-				#body
-			}
-		}
-	).into()
+        quote!(
+            #[automatically_derived]
+            impl #impl_generics #crate_name::BorrowDecode<#decoder_lif> for #item_name #ty_generics #where_clause {
+                fn borrow_decode<#encoder_generic: #crate_name::io::BorrowRead<#decoder_lif>>(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
+                    #body
+                }
+                
+                #crate_name::empty_seek!(borrow_decode(#decoder_lif));
+            }
+        )
+    }.into()
 }
