@@ -560,8 +560,8 @@ mod serde;
 
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
 /// with the given context.
-pub fn encode_with<T: Write, V: Encode>(
-    writer: T,
+pub fn encode_with<W: Write, V: Encode<W>>(
+    writer: W,
     context: Context,
     value: V,
 ) -> EncodingResult<()> {
@@ -571,50 +571,19 @@ pub fn encode_with<T: Write, V: Encode>(
 
 /// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
 /// with the given context.
-pub fn decode_with<T: Read, V: Decode>(reader: T, context: Context) -> EncodingResult<V> {
+pub fn decode_with<R: Read, V: Decode<R>>(reader: R, context: Context) -> EncodingResult<V> {
     let mut decoder = Encoder::new(reader, context);
     V::decode(&mut decoder)
 }
 
 /// Borrow-Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
 /// with the given context.
-pub fn borrow_decode_with<'data, T: BorrowRead<'data>, V: BorrowDecode<'data>>(
-    reader: T,
+pub fn borrow_decode_with<'data, R: BorrowRead<'data>, V: BorrowDecode<'data, R>>(
+    reader: R,
     context: Context,
 ) -> EncodingResult<V> {
     let mut decoder = Encoder::new(reader, context);
     V::borrow_decode(&mut decoder)
-}
-
-/// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
-/// with the given context.
-pub fn seek_encode_with<T: Write + Seek, V: Encode>(
-    writer: T,
-    context: Context,
-    value: V,
-) -> EncodingResult<()> {
-    let mut encoder = Encoder::new(writer, context);
-    value.seek_encode(&mut encoder)
-}
-
-/// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
-/// with the given context.
-pub fn seek_decode_with<T: Read + Seek, V: Decode>(
-    reader: T,
-    context: Context,
-) -> EncodingResult<V> {
-    let mut decoder = Encoder::new(reader, context);
-    V::seek_decode(&mut decoder)
-}
-
-/// Borrow-Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
-/// with the given context.
-pub fn seek_borrow_decode_with<'data, T: BorrowRead<'data> + Seek, V: BorrowDecode<'data>>(
-    reader: T,
-    context: Context,
-) -> EncodingResult<V> {
-    let mut decoder = Encoder::new(reader, context);
-    V::seek_borrow_decode(&mut decoder)
 }
 
 /// Controls the endianness of a numerical value. Endianness is just
@@ -1103,7 +1072,7 @@ impl<T: Write> Encoder<'_, T> {
     ///
     /// This method is not magic - it is literally defined as `value.encode(self)`
     #[inline]
-    pub fn encode_value<V: Encode>(&mut self, value: V) -> EncodingResult<()> {
+    pub fn encode_value<V: Encode<T>>(&mut self, value: V) -> EncodingResult<()> {
         value.encode(self)
     }
 }
@@ -1115,7 +1084,7 @@ impl<T: Read> Encoder<'_, T> {
     ///
     /// This method is not magic - it is literally defined as `V::decode(self)`
     #[inline]
-    pub fn decode_value<V: Decode>(&mut self) -> EncodingResult<V> {
+    pub fn decode_value<V: Decode<T>>(&mut self) -> EncodingResult<V> {
         V::decode(self)
     }
 }
@@ -1144,19 +1113,18 @@ macro_rules! make_write_fns {
     ) => {
 	    fn $uleb128_encode(&mut self, value: $uty) -> EncodingResult<()> {
 		    let mut shifted = value;
-	        let mut byte = [u8::MAX; 1];
 	        let mut more = true;
 	        while more {
-		        byte[0] = shifted as u8 & 0b01111111;
+		        let mut byte: u8 = shifted as u8 & 0b01111111;
 		        shifted >>= 7;
 
 		        // Is the next shifted value worth writing?
 		        if shifted != 0 {
-			        byte[0] |= 0b10000000;
+			        byte |= 0b10000000;
 		        } else {
 			        more = false;
 		        }
-		        self.stream.write(&byte)?;
+		        self.write_byte(byte)?;
 			}
 		    Ok(())
 	    }
@@ -1187,20 +1155,19 @@ macro_rules! make_write_fns {
 
 	    fn $leb128_encode(&mut self, value: $ity) -> EncodingResult<()> {
 		        let mut shifted = value;
-		        let mut byte = [0u8; 1];
 		        let mut more = true;
 		        while more {
-			        byte[0] = shifted as u8 & 0b0111_1111;
+			        let mut byte = shifted as u8 & 0b0111_1111;
 			        shifted >>= 7;
 
 			        // Is the next shifted value worth writing?
-			        let neg = (byte[0] & 0b0100_0000) != 0;
+			        let neg = (byte & 0b0100_0000) != 0;
 			        if (neg && shifted != -1) || (!neg && shifted != 0) {
-				        byte[0] |= 0b1000_0000;
+				        byte |= 0b1000_0000;
 			        } else {
 				        more = false;
 			        }
-			        self.stream.write(&byte)?;
+			        self.write_byte(byte)?;
 				}
 		        Ok(())
 	        }
@@ -1573,18 +1540,17 @@ macro_rules! make_read_fns {
     ) => {
 	    fn $uleb128_decode(&mut self) -> EncodingResult<$uty> {
 			    let mut result: $uty = 0;
-		        let mut byte = [0u8; 1];
 		        let mut shift: u8 = 0;
 		        loop {
 			        if shift >= <$uty>::BITS as u8 {
 				        return Err(EncodingError::VarIntError);
 			        }
 
-		            self.stream.read(&mut byte)?;
-			        result |= (byte[0] & 0b0111_1111) as $uty << shift;
+		            let byte = self.read_byte()?;
+			        result |= (byte & 0b0111_1111) as $uty << shift;
 			        shift += 7;
 
-			        if (byte[0] & 0b1000_0000) == 0 {
+			        if (byte & 0b1000_0000) == 0 {
 				        break;
 			        }
 				}
@@ -1618,23 +1584,23 @@ macro_rules! make_read_fns {
 
 	     fn $leb128_decode(&mut self) -> EncodingResult<$ity> {
 			    let mut result: $ity = 0;
-		        let mut byte = [0u8; 1];
+		        let mut byte;
 		        let mut shift: u8 = 0;
 		        loop {
 			        if shift >= <$ity>::BITS as u8 {
 				        return Err(EncodingError::VarIntError);
 			        }
 
-		            self.stream.read(&mut byte)?;
-			        result |= (byte[0] & 0b0111_1111) as $ity << shift;
+		            byte = self.read_byte()?;
+			        result |= (byte & 0b0111_1111) as $ity << shift;
 			        shift += 7;
 
-			        if (byte[0] & 0b1000_0000) == 0 {
+			        if (byte & 0b1000_0000) == 0 {
 				        break;
 			        }
 				}
 
-		        if shift < <$ity>::BITS as u8 && (byte[0] & 0b0100_0000) != 0 {
+		        if shift < <$ity>::BITS as u8 && (byte & 0b0100_0000) != 0 {
 			        result |= (!0 << shift);
 		        }
 
@@ -2288,7 +2254,7 @@ impl<T: Seek> Encoder<'_, T> {
 }
 
 /// A binary data structure specification which can be **encoded** into its binary representation.
-pub trait Encode {
+pub trait Encode<W: Write> {
     /// Encodes `self` into its binary format.
     ///
     /// Implementations that **need** to seek, should implement [`seek_encode`][`Self::seek_encode`]
@@ -2303,36 +2269,12 @@ pub trait Encode {
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()>;
-
-    /// Encodes `self` into its binary format, but requires the writer to implement [`Seek`].
-    ///
-    /// Implementations that **don't need** to seek, should implement [`encode`][`Self::encode`]
-    /// instead, and define this method to simply call that.
-    /// (or use the [`empty_seek!`][`empty_seek`] macro to reduce boilerplate).<br>
-    /// If you're defining a collection/container type, then you should implement
-    /// this method but replace all calls to `encode` to
-    /// `seek_encode` for the contained elements.
-    /// 
-    /// 
-    /// Calling `seek_encode` multiple times on the same value without
-    /// changing the encoder settings or the value itself in-between calls should produce
-    /// the same output.
-    ///
-    /// If the result is Ok,
-    /// implementations should guarantee that the state of the encoder
-    /// is preserved. If the result is Err,
-    /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.
-    fn seek_encode<Writer: Write + Seek>(
-        &self,
-        encoder: &mut Encoder<Writer>,
-    ) -> EncodingResult<()>;
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()>;
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation
 /// into an owned type.
-pub trait Decode: Sized {
+pub trait Decode<R: Read>: Sized {
     /// Decodes an owned version of `Self` from its binary format.
     ///
     /// Implementations that **need** to seek, should implement [`seek_decode`][`Self::seek_decode`]
@@ -2347,33 +2289,12 @@ pub trait Decode: Sized {
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self>;
-
-    /// Decodes an owned version of `Self` from its binary format,
-    /// but requires the reader to implement [`Seek`].
-    ///
-    /// Implementations that **don't need** to seek, should implement [`encode`][`Self::encode`]
-    /// instead, and define this method to simply call that.
-    /// (or use the [`empty_seek!`][`empty_seek`] macro to reduce boilerplate).<br>
-    /// If you're defining a collection/container type, then you should implement
-    /// this method but replace all calls to `decode` to
-    /// `seek_decode` for the contained elements.
-    ///
-    /// Calling `seek_decode` multiple times without changing the
-    /// encoder settings or the underlying binary data in-between calls should produce
-    /// the same output.
-    ///
-    /// If the result is Ok,
-    /// implementations should guarantee that the state of the encoder
-    /// is preserved. If the result is Err,
-    /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self>;
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self>;
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation
 /// by borrowing the data.
-pub trait BorrowDecode<'data>: Sized {
+pub trait BorrowDecode<'data, R: BorrowRead<'data>>: Sized {
     /// Decodes a borrowed version of `Self` from its binary format.
     ///
     /// Implementations that **need** to seek, should implement [`seek_borrow_decode`][`Self::seek_borrow_decode`]
@@ -2388,30 +2309,7 @@ pub trait BorrowDecode<'data>: Sized {
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
-    ) -> EncodingResult<Self>;
-
-    /// Decodes a borrowed version of `Self` from its binary format,
-    /// but requires the reader to implement [`Seek`]
-    ///
-    /// Implementations that **don't need** to seek, should implement [`borrow_decode`][`Self::borrow_decode`]
-    /// instead, and define this method to simply call that.
-    /// (or use the [`empty_seek!`][`empty_seek`] macro to reduce boilerplate).<br>
-    /// If you're defining a collection/container type, then you should implement
-    /// this method but replace all calls to `borrow_decode` to
-    /// `borrow_seek_decode` for the contained elements.
-    /// 
-    /// Calling `seek_borrow_decode` multiple times without changing the
-    /// encoder settings or the underlying binary data in-between calls should produce
-    /// the same output.
-    ///
-    /// If the result is Ok,
-    /// implementations should guarantee that the state of the encoder
-    /// is preserved. If the result is Err,
-    /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.
-    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self>;
 }

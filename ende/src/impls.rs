@@ -8,82 +8,16 @@ use core::time::Duration;
 use crate::{BorrowDecode, BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding, StrEncoding, StringError};
 use crate::io::{BorrowRead, Read, Seek, Write};
 
-#[macro_export]
-macro_rules! empty_seek {
-    (encode) => {
-        #[inline]
-        fn seek_encode<__Writer: $crate::io::Write + $crate::io::Seek>(
-            &self,
-            encoder: &mut $crate::Encoder<__Writer>
-        ) -> $crate::EncodingResult<()>
-        {
-            <Self as $crate::Encode>::encode(self, encoder)
-        }
-    };
-    (decode) => {
-        #[inline]
-        fn seek_decode<__Reader: $crate::io::Read + $crate::io::Seek>(
-            decoder: &mut $crate::Encoder<__Reader>
-        ) -> $crate::EncodingResult<Self>
-        {
-            <Self as $crate::Decode>::decode(decoder)
-        }
-    };
-    (borrow_decode($lif:lifetime)) => {
-        #[inline]
-        fn seek_borrow_decode<__Reader: $crate::io::BorrowRead<$lif> + $crate::io::Seek>(
-            decoder: &mut $crate::Encoder<__Reader>
-        ) -> $crate::EncodingResult<Self>
-        {
-            <Self as $crate::BorrowDecode<$lif>>::borrow_decode(decoder)
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! requires_seek {
-    (encode) => {
-        #[inline]
-        fn encode<__Writer: $crate::io::Write>(
-            &self,
-            _encoder: &mut $crate::Encoder<__Writer>
-        ) -> $crate::EncodingResult<()>
-        {
-            return Err($crate::EncodingError::SeekError($crate::SeekError::SeekNecessary(::core::stringify!(Self))))
-        }
-    };
-    (decode) => {
-        #[inline]
-        fn decode<__Reader: $crate::io::Read>(
-            _encoder: &mut $crate::Encoder<__Reader>
-        ) -> $crate::EncodingResult<Self>
-        {
-            return Err($crate::EncodingError::SeekError($crate::SeekError::SeekNecessary(::core::stringify!(Self))))
-        }
-    };
-    (borrow_decode($lif:lifetime)) => {
-        #[inline]
-        fn borrow_decode<__Reader: $crate::io::BorrowRead<$lif>>(
-            _encoder: &mut $crate::Encoder<__Reader>
-        ) -> $crate::EncodingResult<Self>
-        {
-            return Err($crate::EncodingError::SeekError($crate::SeekError::SeekNecessary(::core::stringify!(Self))))
-        }
-    };
-}
-
 // Primitives
 
 macro_rules! impl_encode {
     ($($ty:ty => $write:ident);* $(;)? ) => {
 	    $(
-	    impl $crate::Encode for $ty {
+	    impl<W: $crate::io::Write> $crate::Encode<W> for $ty {
 		    #[inline]
-            fn encode<T: $crate::io::Write>(&self, encoder: &mut $crate::Encoder<T>) -> $crate::EncodingResult<()> {
+            fn encode(&self, encoder: &mut $crate::Encoder<W>) -> $crate::EncodingResult<()> {
 		        encoder.$write(*self)
 		    }
-            
-            empty_seek!(encode);
 	    }
 	    )*
     };
@@ -108,72 +42,43 @@ impl_encode! {
     isize => write_isize;
 }
 
-impl Encode for () {
+impl<W: Write + Seek> Encode<W> for () {
     #[inline]
-    fn encode<Writer: Write>(&self, _encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, _encoder: &mut Encoder<W>) -> EncodingResult<()> {
         Ok(())
     }
-
-    empty_seek!(encode);
 }
 
-impl<T: ?Sized + Encode> Encode for &T {
+impl<W: Write, T: ?Sized + Encode<W>> Encode<W> for &T {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::encode(self, encoder)
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::seek_encode(self, encoder)
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
+        <T as Encode<W>>::encode(self, encoder)
     }
 }
 
-impl<T: ?Sized + Encode> Encode for &mut T {
+impl<W: Write, T: ?Sized + Encode<W>> Encode<W> for &mut T {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::encode(self, encoder)
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::seek_encode(self, encoder)
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
+        <T as Encode<W>>::encode(self, encoder)
     }
 }
 
-impl<T: Encode> Encode for [T] {
+impl<W: Write, T: Encode<W>> Encode<W> for [T] {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for i in 0..self.len() {
             self[i].encode(encoder)?;
         }
         Ok(())
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for i in 0..self.len() {
-            self[i].seek_encode(encoder)?;
-        }
-        Ok(())
-    }
 }
 
-impl<T: Encode, const SIZE: usize> Encode for [T; SIZE] {
+impl<W: Write, T: Encode<W>, const SIZE: usize> Encode<W> for [T; SIZE] {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         for i in 0..SIZE {
             self[i].encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        for i in 0..SIZE {
-            self[i].seek_encode(encoder)?;
         }
         Ok(())
     }
@@ -182,23 +87,15 @@ impl<T: Encode, const SIZE: usize> Encode for [T; SIZE] {
 macro_rules! tuple_encode {
     ($($name:ident)+) => {
 	    #[allow(non_snake_case)]
-	    impl<$($name: $crate::Encode),+> $crate::Encode for ($($name),+) {
+	    impl<__W: $crate::io::Write, $($name: $crate::Encode<__W>),+> $crate::Encode<__W> for ($($name),+) {
 		    #[inline]
-            fn encode<__T: $crate::io::Write>(&self, encoder: &mut $crate::Encoder<__T>) -> $crate::EncodingResult<()> {
+            fn encode(&self, encoder: &mut $crate::Encoder<__W>) -> $crate::EncodingResult<()> {
 		        let ($($name),*) = self;
 			    $(
 			        $crate::Encode::encode($name, encoder)?;
 			    )+
 			    Ok(())
 		    }
-            
-            fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-                let ($($name),*) = self;
-			    $(
-			        $crate::Encode::seek_encode($name, encoder)?;
-			    )+
-			    Ok(())
-            }
 	    }
     };
 }
@@ -221,27 +118,23 @@ tuple_encode! { A B C D E F G H I J K L M N O P } // Up to 16
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl Encode for alloc::string::String {
+impl<W: Write> Encode<W> for alloc::string::String {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_str(self.chars())
     }
-    
-    empty_seek!(encode);
 }
 
-impl Encode for str {
+impl<W: Write> Encode<W> for str {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_str(self.chars())
     }
-
-    empty_seek!(encode);
 }
 
-impl<T: Encode> Encode for Option<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for Option<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self {
             None => encoder.write_bool(false),
             Some(value) => {
@@ -250,22 +143,11 @@ impl<T: Encode> Encode for Option<T> {
             }
         }
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        match self {
-            None => encoder.write_bool(false),
-            Some(value) => {
-                encoder.write_bool(true)?;
-                value.seek_encode(encoder)
-            }
-        }
-    }
 }
 
-impl<T: Encode, E: Encode> Encode for Result<T, E> {
+impl<W: Write, T: Encode<W>, E: Encode<W>> Encode<W> for Result<T, E> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self {
             Err(err) => {
                 encoder.write_bool(false)?;
@@ -278,123 +160,70 @@ impl<T: Encode, E: Encode> Encode for Result<T, E> {
         };
         Ok(())
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        match self {
-            Err(err) => {
-                encoder.write_bool(false)?;
-                err.seek_encode(encoder)?;
-            }
-            Ok(ok) => {
-                encoder.write_bool(true)?;
-                ok.seek_encode(encoder)?;
-            }
-        };
-        Ok(())
-    }
 }
 
-impl<T> Encode for PhantomData<T> {
+impl<W: Write, T> Encode<W> for PhantomData<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, _encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, _encoder: &mut Encoder<W>) -> EncodingResult<()> {
         Ok(())
-    }
-    
-    empty_seek!(encode);
-}
-
-#[cfg(feature = "alloc")]
-#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Encode> Encode for alloc::boxed::Box<T> {
-    #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::encode(self.deref(), encoder)
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::seek_encode(self.deref(), encoder)
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Encode> Encode for alloc::rc::Rc<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for alloc::boxed::Box<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::encode(self.deref(), encoder)
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
+        <T as Encode<W>>::encode(self.deref(), encoder)
     }
+}
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
+impl<W: Write, T: Encode<W>> Encode<W> for alloc::rc::Rc<T> {
     #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::seek_encode(self.deref(), encoder)
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
+        <T as Encode<W>>::encode(self.deref(), encoder)
     }
 }
 
 #[cfg(all(feature = "alloc"))]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Encode> Encode for alloc::sync::Arc<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for alloc::sync::Arc<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::encode(self.deref(), encoder)
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        <T as Encode>::seek_encode(self.deref(), encoder)
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
+        <T as Encode<W>>::encode(self.deref(), encoder)
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<'a, T: ?Sized + alloc::borrow::ToOwned> Encode for alloc::borrow::Cow<'a, T>
+impl<'a, W: Write, T: ?Sized + alloc::borrow::ToOwned> Encode<W> for alloc::borrow::Cow<'a, T>
 where
-    T: Encode,
-    <T as alloc::borrow::ToOwned>::Owned: Encode,
+    T: Encode<W>,
+    <T as alloc::borrow::ToOwned>::Owned: Encode<W>,
 {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self {
             Self::Borrowed(x) => x.encode(encoder),
             Self::Owned(x) => x.encode(encoder),
         }
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        match self {
-            Self::Borrowed(x) => x.seek_encode(encoder),
-            Self::Owned(x) => x.seek_encode(encoder),
-        }
-    }
 }
 
-impl<T: Encode + Copy> Encode for Cell<T> {
+impl<W: Write, T: Encode<W> + Copy> Encode<W> for Cell<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.get().encode(encoder)
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        self.get().seek_encode(encoder)
-    }
 }
 
-impl<T: Encode> Encode for RefCell<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for RefCell<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self.try_borrow() {
-            Ok(ok) => <T as Encode>::encode(ok.deref(), encoder),
-            Err(_) => Err(EncodingError::LockError),
-        }
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        match self.try_borrow() {
-            Ok(ok) => <T as Encode>::seek_encode(ok.deref(), encoder),
+            Ok(ok) => <T as Encode<W>>::encode(ok.deref(), encoder),
             Err(_) => Err(EncodingError::LockError),
         }
     }
@@ -402,19 +231,11 @@ impl<T: Encode> Encode for RefCell<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<T: Encode> Encode for std::sync::Mutex<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for std::sync::Mutex<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self.lock() {
-            Ok(ok) => <T as Encode>::encode(ok.deref(), encoder),
-            Err(_) => Err(EncodingError::LockError),
-        }
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        match self.lock() {
-            Ok(ok) => <T as Encode>::seek_encode(ok.deref(), encoder),
+            Ok(ok) => <T as Encode<W>>::encode(ok.deref(), encoder),
             Err(_) => Err(EncodingError::LockError),
         }
     }
@@ -422,19 +243,11 @@ impl<T: Encode> Encode for std::sync::Mutex<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<T: Encode> Encode for std::sync::RwLock<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for std::sync::RwLock<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self.read() {
-            Ok(ok) => <T as Encode>::encode(ok.deref(), encoder),
-            Err(_) => Err(EncodingError::LockError),
-        }
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        match self.read() {
-            Ok(ok) => <T as Encode>::seek_encode(ok.deref(), encoder),
+            Ok(ok) => <T as Encode<W>>::encode(ok.deref(), encoder),
             Err(_) => Err(EncodingError::LockError),
         }
     }
@@ -442,9 +255,9 @@ impl<T: Encode> Encode for std::sync::RwLock<T> {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<K: Encode, V: Encode> Encode for alloc::collections::BTreeMap<K, V> {
+impl<W: Write, K: Encode<W>, V: Encode<W>> Encode<W> for alloc::collections::BTreeMap<K, V> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for (k, v) in self.iter() {
             k.encode(encoder)?;
@@ -452,35 +265,16 @@ impl<K: Encode, V: Encode> Encode for alloc::collections::BTreeMap<K, V> {
         }
         Ok(())
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for (k, v) in self.iter() {
-            k.seek_encode(encoder)?;
-            v.seek_encode(encoder)?;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<K: Encode> Encode for alloc::collections::BTreeSet<K> {
+impl<W: Write, K: Encode<W>> Encode<W> for alloc::collections::BTreeSet<K> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for k in self.iter() {
             k.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for k in self.iter() {
-            k.seek_encode(encoder)?;
         }
         Ok(())
     }
@@ -488,23 +282,13 @@ impl<K: Encode> Encode for alloc::collections::BTreeSet<K> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<K: Encode, V: Encode> Encode for std::collections::hash_map::HashMap<K, V> {
+impl<W: Write, K: Encode<W>, V: Encode<W>> Encode<W> for std::collections::hash_map::HashMap<K, V> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for (k, v) in self.iter() {
             k.encode(encoder)?;
             v.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for (k, v) in self.iter() {
-            k.seek_encode(encoder)?;
-            v.seek_encode(encoder)?;
         }
         Ok(())
     }
@@ -512,21 +296,25 @@ impl<K: Encode, V: Encode> Encode for std::collections::hash_map::HashMap<K, V> 
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<K: Encode> Encode for std::collections::hash_set::HashSet<K> {
+impl<W: Write, K: Encode<W>> Encode<W> for std::collections::hash_set::HashSet<K> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for k in self.iter() {
             k.encode(encoder)?;
         }
         Ok(())
     }
+}
 
+#[cfg(feature = "alloc")]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
+impl<W: Write, T: Encode<W>> Encode<W> for alloc::collections::BinaryHeap<T> {
     #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
-        for k in self.iter() {
-            k.seek_encode(encoder)?;
+        for v in self.iter() {
+            v.encode(encoder)?;
         }
         Ok(())
     }
@@ -534,21 +322,12 @@ impl<K: Encode> Encode for std::collections::hash_set::HashSet<K> {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Encode> Encode for alloc::collections::BinaryHeap<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for alloc::collections::LinkedList<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for v in self.iter() {
             v.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for v in self.iter() {
-            v.seek_encode(encoder)?;
         }
         Ok(())
     }
@@ -556,21 +335,12 @@ impl<T: Encode> Encode for alloc::collections::BinaryHeap<T> {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Encode> Encode for alloc::collections::LinkedList<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for alloc::vec::Vec<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for v in self.iter() {
             v.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for v in self.iter() {
-            v.seek_encode(encoder)?;
         }
         Ok(())
     }
@@ -578,215 +348,142 @@ impl<T: Encode> Encode for alloc::collections::LinkedList<T> {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Encode> Encode for alloc::vec::Vec<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for alloc::collections::VecDeque<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for v in self.iter() {
             v.encode(encoder)?;
         }
         Ok(())
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for v in self.iter() {
-            v.seek_encode(encoder)?;
-        }
-        Ok(())
-    }
 }
 
-#[cfg(feature = "alloc")]
-#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Encode> Encode for alloc::collections::VecDeque<T> {
+impl<W: Write> Encode<W> for CStr {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for v in self.iter() {
-            v.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        encoder.write_usize(self.len())?;
-        for v in self.iter() {
-            v.seek_encode(encoder)?;
-        }
-        Ok(())
-    }
-}
-
-impl Encode for CStr {
-    #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.to_str()
             .map_err(|_| StringError::ConversionError)?
             .encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl Encode for alloc::ffi::CString {
+impl<W: Write> Encode<W> for alloc::ffi::CString {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.to_str()
             .map_err(|_| StringError::ConversionError)?
             .encode(encoder)
     }
-    
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::ffi::OsStr {
+impl<W: Write> Encode<W> for std::ffi::OsStr {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.to_str()
             .ok_or(StringError::ConversionError)?
             .encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::ffi::OsString {
+impl<W: Write> Encode<W> for std::ffi::OsString {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.to_str()
             .ok_or(StringError::ConversionError)?
             .encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
-impl Encode for Duration {
+impl<W: Write> Encode<W> for Duration {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_u64(self.as_secs())?;
         encoder.write_u32(self.subsec_nanos())
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::time::SystemTime {
+impl<W: Write> Encode<W> for std::time::SystemTime {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         let since_epoch = self
             .duration_since(Self::UNIX_EPOCH)
             .unwrap_or(Duration::ZERO);
         since_epoch.encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::path::Path {
+impl<W: Write> Encode<W> for std::path::Path {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.as_os_str().encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::path::PathBuf {
+impl<W: Write> Encode<W> for std::path::PathBuf {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.as_os_str().encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
-impl<T: Encode> Encode for Range<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for Range<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.start.encode(encoder)?;
         self.end.encode(encoder)
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        self.start.seek_encode(encoder)?;
-        self.end.seek_encode(encoder)
-    }
 }
 
-impl<T: Encode> Encode for RangeInclusive<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for RangeInclusive<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.start().encode(encoder)?;
         self.end().encode(encoder)
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        self.start().seek_encode(encoder)?;
-        self.end().seek_encode(encoder)
-    }
 }
 
-impl<T: Encode> Encode for RangeFrom<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for RangeFrom<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.start.encode(encoder)
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        self.start.seek_encode(encoder)
-    }
 }
 
-impl<T: Encode> Encode for RangeTo<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for RangeTo<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.end.encode(encoder)
     }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        self.end.seek_encode(encoder)
-    }
 }
 
-impl Encode for RangeFull {
+impl<W: Write> Encode<W> for RangeFull {
     #[inline]
-    fn encode<Writer: Write>(&self, _encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, _encoder: &mut Encoder<W>) -> EncodingResult<()> {
         Ok(())
     }
-    
-    empty_seek!(encode);
 }
 
 macro_rules! impl_nz_encode {
     ($($ty:ident => $write:ident);* $(;)? ) => {
 	    $(
-	    impl $crate::Encode for core::num::$ty {
+	    impl<W: $crate::io::Write> $crate::Encode<W> for core::num::$ty {
 		    #[inline]
-            fn encode<T: $crate::io::Write>(&self, encoder: &mut $crate::Encoder<T>) -> $crate::EncodingResult<()> {
+            fn encode(&self, encoder: &mut $crate::Encoder<W>) -> $crate::EncodingResult<()> {
 		        encoder.$write(self.get())
 		    }
-            
-            empty_seek!(encode);
 	    }
 	    )*
     };
@@ -807,9 +504,9 @@ impl_nz_encode! {
     NonZeroIsize => write_isize;
 }
 
-impl<T: Encode> Encode for Bound<T> {
+impl<W: Write, T: Encode<W>> Encode<W> for Bound<T> {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self {
             Bound::Included(x) => {
                 encoder.write_uvariant(0u8)?;
@@ -818,21 +515,6 @@ impl<T: Encode> Encode for Bound<T> {
             Bound::Excluded(x) => {
                 encoder.write_uvariant(1u8)?;
                 x.encode(encoder)
-            }
-            Bound::Unbounded => encoder.write_uvariant(2u8),
-        }
-    }
-
-    #[inline]
-    fn seek_encode<Writer: Write + Seek>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        match self {
-            Bound::Included(x) => {
-                encoder.write_uvariant(0u8)?;
-                x.seek_encode(encoder)
-            }
-            Bound::Excluded(x) => {
-                encoder.write_uvariant(1u8)?;
-                x.seek_encode(encoder)
             }
             Bound::Unbounded => encoder.write_uvariant(2u8),
         }
@@ -841,18 +523,13 @@ impl<T: Encode> Encode for Bound<T> {
 
 #[cfg(feature = "unstable")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "unstable")))]
-impl Encode for ! {
-    #[inline]
-    fn encode<Writer: Write>(&self, _encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
-        loop { /* :) */ }
-    }
-
+impl<W: Write> Encode<W> for ! {
     #[inline]
     #[allow(unreachable_code, unused_variables)]
-    fn seek_encode<Writer: Write + Seek>(&self, _encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, _encoder: &mut Encoder<W>) -> EncodingResult<()> {
         enum Never {}
         fn never(never: &!) -> Never { *never }
-        
+
         let never = never(self);
         match never {} // :O
     }
@@ -860,9 +537,9 @@ impl Encode for ! {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::net::IpAddr {
+impl<W: Write> Encode<W> for std::net::IpAddr {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self {
             Self::V4(x) => {
                 encoder.write_uvariant(0u8)?;
@@ -874,37 +551,31 @@ impl Encode for std::net::IpAddr {
             }
         }
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::net::Ipv4Addr {
+impl<W: Write> Encode<W> for std::net::Ipv4Addr {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.octets().encode(encoder)
     }
-    
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::net::Ipv6Addr {
+impl<W: Write> Encode<W> for std::net::Ipv6Addr {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         self.octets().encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::net::SocketAddr {
+impl<W: Write> Encode<W> for std::net::SocketAddr {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         match self {
             Self::V4(x) => {
                 encoder.write_uvariant(0u8)?;
@@ -916,42 +587,34 @@ impl Encode for std::net::SocketAddr {
             }
         }
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::net::SocketAddrV4 {
+impl<W: Write> Encode<W> for std::net::SocketAddrV4 {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         (self.ip(), self.port()).encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Encode for std::net::SocketAddrV6 {
+impl<W: Write> Encode<W> for std::net::SocketAddrV6 {
     #[inline]
-    fn encode<Writer: Write>(&self, encoder: &mut Encoder<Writer>) -> EncodingResult<()> {
+    fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         (self.ip(), self.port(), self.flowinfo(), self.scope_id()).encode(encoder)
     }
-
-    empty_seek!(encode);
 }
 
 macro_rules! impl_decode {
     ($($ty:ty => $read:ident);* $(;)? ) => {
 	    $(
-	    impl $crate::Decode for $ty {
+	    impl<R: $crate::io::Read> $crate::Decode<R> for $ty {
 		    #[inline]
-            fn decode<T: $crate::io::Read>(decoder: &mut $crate::Encoder<T>) -> $crate::EncodingResult<Self> where Self: Sized {
+            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self> where Self: Sized {
 		        decoder.$read()
 		    }
-            
-            empty_seek!(decode);
 	    }
 	    )*
     };
@@ -976,24 +639,17 @@ impl_decode! {
     isize => read_isize;
 }
 
-impl Decode for () {
+impl<R: Read> Decode<R> for () {
     #[inline]
-    fn decode<Reader: Read>(_decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(())
     }
-
-    empty_seek!(decode);
 }
 
-impl<T: Decode, const SIZE: usize> Decode for [T; SIZE] {
+impl<R: Read, T: Decode<R>, const SIZE: usize> Decode<R> for [T; SIZE] {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         array_init::try_array_init(|_| T::decode(decoder))
-    }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        array_init::try_array_init(|_| T::seek_decode(decoder))
     }
 }
 
@@ -1006,18 +662,11 @@ macro_rules! consume {
 macro_rules! tuple_decode {
     ($($name:ident)+) => {
 	    #[allow(non_snake_case)]
-	    impl<$($name: $crate::Decode),+> $crate::Decode for ($($name),+) {
+	    impl<R: $crate::io::Read, $($name: $crate::Decode<R>),+> $crate::Decode<R> for ($($name),+) {
 		    #[inline]
-            fn decode<__T: $crate::io::Read>(decoder: &mut $crate::Encoder<__T>) -> $crate::EncodingResult<Self>{
+            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self>{
 			    Ok(($(
 		            consume!($name, $crate::Decode::decode(decoder)?),
-		        )+))
-		    }
-            
-            #[inline]
-            fn seek_decode<__T: $crate::io::Read + $crate::io::Seek>(decoder: &mut $crate::Encoder<__T>) -> $crate::EncodingResult<Self>{
-			    Ok(($(
-		            consume!($name, $crate::Decode::seek_decode(decoder)?),
 		        )+))
 		    }
 	    }
@@ -1044,16 +693,14 @@ macro_rules! slice_borrow {
     ($($ty:ty => $borrow:ident);* $(;)?) => {
 	    $(
 	    #[allow(non_snake_case)]
-	    impl<'data: 'a, 'a> $crate::BorrowDecode<'data> for &'a [$ty] {
+	    impl<'data: 'a, 'a, R: BorrowRead<'data>> $crate::BorrowDecode<'data, R> for &'a [$ty] {
 		    #[inline]
-            fn borrow_decode<Reader: $crate::io::BorrowRead<'data>>(decoder: &mut $crate::Encoder<Reader>) -> $crate::EncodingResult<Self>{
+            fn borrow_decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self>{
 			    let len = decoder.read_usize()?;
 			    let endianness = decoder.ctxt.settings.num_repr.endianness;
 			    let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
 			    decoder.$borrow(len, num_encoding, endianness)
 		    }
-            
-            empty_seek!(borrow_decode('data));
 	    }
 	    )*
     };
@@ -1072,36 +719,32 @@ slice_borrow! {
     f64 => borrow_f64_slice;
 }
 
-impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [u8] {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [u8] {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
         decoder.borrow_u8_slice(len, num_encoding)
     }
-    
-    empty_seek!(borrow_decode('data));
 }
 
-impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [i8] {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [i8] {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
         decoder.borrow_i8_slice(len, num_encoding)
     }
-
-    empty_seek!(borrow_decode('data));
 }
 
-impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [usize] {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [usize] {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.size_repr.num_encoding;
@@ -1110,14 +753,12 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [usize] {
 
         decoder.borrow_usize_slice(len, num_encoding, endianness, bit_width)
     }
-
-    empty_seek!(borrow_decode('data));
 }
 
-impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [isize] {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [isize] {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.size_repr.num_encoding;
@@ -1126,37 +767,31 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a [isize] {
 
         decoder.borrow_isize_slice(len, num_encoding, endianness, bit_width)
     }
-
-    empty_seek!(borrow_decode('data));
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl Decode for alloc::string::String {
+impl<R: Read> Decode<R> for alloc::string::String {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         decoder.read_str()
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl Decode for alloc::boxed::Box<str> {
+impl<R: Read> Decode<R> for alloc::boxed::Box<str> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let string = alloc::string::String::decode(decoder)?;
         Ok(string.into_boxed_str())
     }
-
-    empty_seek!(decode);
 }
 
-impl<'data: 'a, 'a> BorrowDecode<'data> for &'a str {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a str {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         // Can only be borrowed when the string encoding is utf-8
         // else the user might get some surprises if we just assume it to be utf-8
@@ -1173,82 +808,55 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a str {
         let bytes = decoder.borrow_u8_slice(len, NumEncoding::Fixed)?;
         Ok(core::str::from_utf8(bytes).map_err(|_| StringError::InvalidUtf8)?)
     }
-
-    empty_seek!(borrow_decode('data));
 }
 
-impl<T: Decode> Decode for Option<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for Option<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(match decoder.read_bool()? {
             true => Some(T::decode(decoder)?),
             false => None,
         })
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(match decoder.read_bool()? {
-            true => Some(T::seek_decode(decoder)?),
-            false => None,
-        })
-    }
 }
 
-impl<T: Decode, E: Decode> Decode for Result<T, E> {
+impl<R: Read, T: Decode<R>, E: Decode<R>> Decode<R> for Result<T, E> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(match decoder.read_bool()? {
             true => Ok(T::decode(decoder)?),
             false => Err(E::decode(decoder)?),
         })
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(match decoder.read_bool()? {
-            true => Ok(T::seek_decode(decoder)?),
-            false => Err(E::seek_decode(decoder)?),
-        })
-    }
 }
 
-impl<T: ?Sized> Decode for PhantomData<T> {
+impl<R: Read, T: ?Sized> Decode<R> for PhantomData<T> {
     #[inline]
-    fn decode<Reader: Read>(_decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self)
     }
-    
-    empty_seek!(decode);
 }
 
-impl<'data, T: ?Sized> BorrowDecode<'data> for PhantomData<T> {
-    fn borrow_decode<Reader: BorrowRead<'data>>(_decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+impl<'data, T: ?Sized, R: BorrowRead<'data>> BorrowDecode<'data, R> for PhantomData<T> {
+    fn borrow_decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self)
-    }
-    
-    empty_seek!(borrow_decode('data));
-}
-
-#[cfg(feature = "alloc")]
-#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Decode> Decode for alloc::boxed::Box<T> {
-    #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(alloc::boxed::Box::new(<T as Decode>::decode(decoder)?))
-    }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(alloc::boxed::Box::new(<T as Decode>::seek_decode(decoder)?))
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Decode> Decode for alloc::boxed::Box<[T]> {
+impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+        Ok(alloc::boxed::Box::new(<T as Decode<R>>::decode(decoder)?))
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
+impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<[T]> {
+    #[inline]
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut vec = alloc::vec::Vec::new();
         vec.reserve_exact(len);
@@ -1259,147 +867,92 @@ impl<T: Decode> Decode for alloc::boxed::Box<[T]> {
 
         Ok(vec.into_boxed_slice())
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut vec = alloc::vec::Vec::new();
-        vec.reserve_exact(len);
-
-        for _ in 0..len {
-            vec.push(T::seek_decode(decoder)?);
-        }
-
-        Ok(vec.into_boxed_slice())
-    }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<'a, T: ?Sized + alloc::borrow::ToOwned> Decode for alloc::borrow::Cow<'a, T>
+impl<'a, R: Read, T: ?Sized + alloc::borrow::ToOwned> Decode<R> for alloc::borrow::Cow<'a, T>
 where
-    <T as alloc::borrow::ToOwned>::Owned: Decode,
+    <T as alloc::borrow::ToOwned>::Owned: Decode<R>,
 {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::Owned(
-            <<T as alloc::borrow::ToOwned>::Owned as Decode>::decode(decoder)?,
-        ))
-    }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self::Owned(
-            <<T as alloc::borrow::ToOwned>::Owned as Decode>::seek_decode(decoder)?,
+            <<T as alloc::borrow::ToOwned>::Owned as Decode<R>>::decode(decoder)?,
         ))
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<'data: 'a, 'a, T: ?Sized + alloc::borrow::ToOwned> BorrowDecode<'data>
+impl<'data: 'a, 'a, R: BorrowRead<'data>, T: ?Sized + alloc::borrow::ToOwned> BorrowDecode<'data, R>
     for alloc::borrow::Cow<'a, T>
 where
-    &'a T: BorrowDecode<'data>,
+    &'a T: BorrowDecode<'data, R>,
 {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         Ok(Self::Borrowed(<&T>::borrow_decode(decoder)?))
     }
-
-    #[inline]
-    fn seek_borrow_decode<Reader: BorrowRead<'data> + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self::Borrowed(<&T>::seek_borrow_decode(decoder)?))
-    }
 }
 
-impl<T: Copy + Decode> Decode for Cell<T> {
+impl<R: Read, T: Copy + Decode<R>> Decode<R> for Cell<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Cell::new(T::decode(decoder)?))
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Cell::new(T::seek_decode(decoder)?))
-    }
 }
 
-impl<T: Decode> Decode for RefCell<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for RefCell<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(RefCell::new(T::decode(decoder)?))
     }
+}
 
+#[cfg(feature = "std")]
+#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
+impl<R: Read, T: Decode<R>> Decode<R> for std::sync::Mutex<T> {
     #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(RefCell::new(T::seek_decode(decoder)?))
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+        Ok(Self::new(T::decode(decoder)?))
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<T: Decode> Decode for std::sync::Mutex<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for std::sync::RwLock<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(T::decode(decoder)?))
-    }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self::new(T::seek_decode(decoder)?))
-    }
-}
-
-#[cfg(feature = "std")]
-#[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<T: Decode> Decode for std::sync::RwLock<T> {
-    #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self::new(T::decode(decoder)?))
-    }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self::new(T::seek_decode(decoder)?))
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Decode> Decode for alloc::rc::Rc<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for alloc::rc::Rc<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(T::decode(decoder)?))
-    }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self::new(T::seek_decode(decoder)?))
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Decode> Decode for alloc::sync::Arc<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for alloc::sync::Arc<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(T::decode(decoder)?))
-    }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self::new(T::seek_decode(decoder)?))
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<K: Ord + Decode, V: Decode> Decode for alloc::collections::BTreeMap<K, V> {
+impl<R: Read, K: Ord + Decode<R>, V: Decode<R>> Decode<R> for alloc::collections::BTreeMap<K, V> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut map = Self::new();
 
@@ -1409,25 +962,13 @@ impl<K: Ord + Decode, V: Decode> Decode for alloc::collections::BTreeMap<K, V> {
 
         Ok(map)
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut map = Self::new();
-
-        for _ in 0..len {
-            map.insert(K::seek_decode(decoder)?, V::seek_decode(decoder)?);
-        }
-
-        Ok(map)
-    }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<K: Ord + Decode> Decode for alloc::collections::BTreeSet<K> {
+impl<R: Read, K: Ord + Decode<R>> Decode<R> for alloc::collections::BTreeSet<K> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut set = Self::new();
 
@@ -1437,25 +978,13 @@ impl<K: Ord + Decode> Decode for alloc::collections::BTreeSet<K> {
 
         Ok(set)
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut set = Self::new();
-
-        for _ in 0..len {
-            set.insert(K::seek_decode(decoder)?);
-        }
-
-        Ok(set)
-    }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Ord + Decode> Decode for alloc::collections::BinaryHeap<T> {
+impl<R: Read, T: Ord + Decode<R>> Decode<R> for alloc::collections::BinaryHeap<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut heap = Self::with_capacity(len);
 
@@ -1465,27 +994,15 @@ impl<T: Ord + Decode> Decode for alloc::collections::BinaryHeap<T> {
 
         Ok(heap)
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut heap = Self::with_capacity(len);
-
-        for _ in 0..len {
-            heap.push(T::seek_decode(decoder)?);
-        }
-
-        Ok(heap)
-    }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<K: core::hash::Hash + Eq + Decode, V: Decode> Decode
+impl<R: Read, K: core::hash::Hash + Eq + Decode<R>, V: Decode<R>> Decode<R>
     for std::collections::hash_map::HashMap<K, V>
 {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut map = Self::with_capacity(len);
 
@@ -1495,25 +1012,13 @@ impl<K: core::hash::Hash + Eq + Decode, V: Decode> Decode
 
         Ok(map)
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut map = Self::with_capacity(len);
-
-        for _ in 0..len {
-            map.insert(K::seek_decode(decoder)?, V::seek_decode(decoder)?);
-        }
-
-        Ok(map)
-    }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<K: core::hash::Hash + Eq + Decode> Decode for std::collections::hash_set::HashSet<K> {
+impl<R: Read, K: core::hash::Hash + Eq + Decode<R>> Decode<R> for std::collections::hash_set::HashSet<K> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut map = Self::with_capacity(len);
 
@@ -1523,25 +1028,13 @@ impl<K: core::hash::Hash + Eq + Decode> Decode for std::collections::hash_set::H
 
         Ok(map)
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut map = Self::with_capacity(len);
-
-        for _ in 0..len {
-            map.insert(K::seek_decode(decoder)?);
-        }
-
-        Ok(map)
-    }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Decode> Decode for alloc::collections::LinkedList<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::LinkedList<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut list = Self::new();
 
@@ -1551,25 +1044,13 @@ impl<T: Decode> Decode for alloc::collections::LinkedList<T> {
 
         Ok(list)
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut list = Self::new();
-
-        for _ in 0..len {
-            list.push_back(T::seek_decode(decoder)?)
-        }
-
-        Ok(list)
-    }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Decode> Decode for alloc::collections::VecDeque<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::VecDeque<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut deque = Self::with_capacity(len);
 
@@ -1579,25 +1060,13 @@ impl<T: Decode> Decode for alloc::collections::VecDeque<T> {
 
         Ok(deque)
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut deque = Self::with_capacity(len);
-
-        for _ in 0..len {
-            deque.push_back(T::seek_decode(decoder)?)
-        }
-
-        Ok(deque)
-    }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<T: Decode> Decode for alloc::vec::Vec<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for alloc::vec::Vec<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let mut vec = Self::with_capacity(len);
 
@@ -1607,25 +1076,13 @@ impl<T: Decode> Decode for alloc::vec::Vec<T> {
 
         Ok(vec)
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        let len = decoder.read_usize()?;
-        let mut vec = Self::with_capacity(len);
-
-        for _ in 0..len {
-            vec.push(T::seek_decode(decoder)?);
-        }
-
-        Ok(vec)
-    }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl Decode for alloc::ffi::CString {
+impl<R: Read> Decode<R> for alloc::ffi::CString {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let mut data = alloc::vec::Vec::new();
         loop {
             let val = decoder.read_byte()?;
@@ -1640,25 +1097,21 @@ impl Decode for alloc::ffi::CString {
         // It is safe to unwrap
         Ok(alloc::ffi::CString::from_vec_with_nul(data).unwrap())
     }
-    
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl Decode for alloc::boxed::Box<CStr> {
+impl<R: Read> Decode<R> for alloc::boxed::Box<CStr> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(alloc::ffi::CString::decode(decoder)?.into_boxed_c_str())
     }
-
-    empty_seek!(decode);
 }
 
-impl<'data: 'a, 'a> BorrowDecode<'data> for &'a CStr {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a CStr {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         let mut len = 1;
         loop {
@@ -1675,15 +1128,13 @@ impl<'data: 'a, 'a> BorrowDecode<'data> for &'a CStr {
         // It is safe to unwrap
         Ok(CStr::from_bytes_with_nul(decoder.borrow_u8_slice(len, NumEncoding::Fixed)?).unwrap())
     }
-
-    empty_seek!(borrow_decode('data));
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::ffi::OsString {
+impl<R: Read> Decode<R> for std::ffi::OsString {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         use core::str::FromStr;
         let string = String::decode(decoder)?;
 
@@ -1691,180 +1142,125 @@ impl Decode for std::ffi::OsString {
         // The error is of type `Infallible`
         Ok(std::ffi::OsString::from_str(&string).unwrap())
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for alloc::boxed::Box<std::ffi::OsStr> {
+impl<R: Read> Decode<R> for alloc::boxed::Box<std::ffi::OsStr> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(std::ffi::OsString::decode(decoder)?.into_boxed_os_str())
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<'data: 'a, 'a> BorrowDecode<'data> for &'a std::ffi::OsStr {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a std::ffi::OsStr {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         let string = <&str>::borrow_decode(decoder)?;
         Ok(std::ffi::OsStr::new(string))
     }
-
-    empty_seek!(borrow_decode('data));
 }
 
-impl Decode for Duration {
+impl<R: Read> Decode<R> for Duration {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(decoder.read_u64()?, decoder.read_u32()?))
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::time::SystemTime {
+impl<R: Read> Decode<R> for std::time::SystemTime {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let duration = Duration::decode(decoder)?;
         Ok(Self::UNIX_EPOCH + duration)
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::path::PathBuf {
+impl<R: Read> Decode<R> for std::path::PathBuf {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::from(std::ffi::OsString::decode(decoder)?))
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for alloc::boxed::Box<std::path::Path> {
+impl<R: Read> Decode<R> for alloc::boxed::Box<std::path::Path> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(std::path::PathBuf::decode(decoder)?.into_boxed_path())
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<'data: 'a, 'a> BorrowDecode<'data> for &'a std::path::Path {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a std::path::Path {
     #[inline]
-    fn borrow_decode<Reader: BorrowRead<'data>>(
-        decoder: &mut Encoder<Reader>,
+    fn borrow_decode(
+        decoder: &mut Encoder<R>,
     ) -> EncodingResult<Self> {
         Ok(std::path::Path::new(<&std::ffi::OsStr>::borrow_decode(
             decoder,
         )?))
     }
-
-    empty_seek!(borrow_decode('data));
 }
 
-impl<T: Decode> Decode for Range<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for Range<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self {
             start: T::decode(decoder)?,
             end: T::decode(decoder)?,
         })
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self {
-            start: T::seek_decode(decoder)?,
-            end: T::seek_decode(decoder)?,
-        })
-    }
 }
 
-impl<T: Decode> Decode for RangeInclusive<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for RangeInclusive<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(T::decode(decoder)?, T::decode(decoder)?))
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self::new(T::seek_decode(decoder)?, T::seek_decode(decoder)?))
-    }
 }
 
-impl<T: Decode> Decode for RangeTo<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for RangeTo<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self {
             end: T::decode(decoder)?,
         })
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self {
-            end: T::seek_decode(decoder)?,
-        })
-    }
 }
 
-impl<T: Decode> Decode for RangeFrom<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for RangeFrom<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self {
             start: T::decode(decoder)?,
         })
     }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(Self {
-            start: T::seek_decode(decoder)?,
-        })
-    }
 }
 
-impl Decode for RangeFull {
+impl<R: Read> Decode<R> for RangeFull {
     #[inline]
-    fn decode<Reader: Read>(_decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self)
     }
-    
-    empty_seek!(decode);
 }
 
-impl<T: Decode> Decode for Bound<T> {
+impl<R: Read, T: Decode<R>> Decode<R> for Bound<T> {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::Included(T::decode(decoder)?),
             1 => Self::Excluded(T::decode(decoder)?),
-            2 => Self::Unbounded,
-            x => return Err(EncodingError::invalid_variant(x)),
-        })
-    }
-
-    #[inline]
-    fn seek_decode<Reader: Read + Seek>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
-        Ok(match decoder.read_uvariant::<u8>()? {
-            0 => Self::Included(T::seek_decode(decoder)?),
-            1 => Self::Excluded(T::seek_decode(decoder)?),
             2 => Self::Unbounded,
             x => return Err(EncodingError::invalid_variant(x)),
         })
@@ -1874,16 +1270,14 @@ impl<T: Decode> Decode for Bound<T> {
 macro_rules! impl_nz_decode {
     ($($ty:ident => $read:ident);* $(;)? ) => {
 	    $(
-	    impl $crate::Decode for core::num::$ty {
+	    impl<R: $crate::io::Read> $crate::Decode<R> for core::num::$ty {
 		    #[inline]
-            fn decode<T: $crate::io::Read>(decoder: &mut $crate::Encoder<T>) -> $crate::EncodingResult<Self> {
+            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self> {
 		        Ok(
 			        Self::new(decoder.$read()?)
-			        .ok_or($crate::EncodingError::validation_error(format_args!(concat!("Found a value of 0 while decoding a ", stringify!($ty)))))?
+			        .ok_or($crate::val_error!(concat!("Found a value of 0 while decoding a ", stringify!($ty))))?
 		        )
 		    }
-            
-            empty_seek!(decode);
 	    }
 	    )*
     };
@@ -1906,86 +1300,74 @@ impl_nz_decode! {
 
 #[cfg(feature = "unstable")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "unstable")))]
-impl Decode for ! {
+impl<R: Read> Decode<R> for ! {
     #[inline]
-    fn decode<Reader: Read>(_decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         return Err(EncodingError::invalid_variant(0usize));
     }
-    
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::net::IpAddr {
+impl<R: Read> Decode<R> for std::net::IpAddr {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::V4(decoder.decode_value()?),
             1 => Self::V6(decoder.decode_value()?),
             x => return Err(EncodingError::invalid_variant(x)),
         })
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::net::Ipv4Addr {
+impl<R: Read> Decode<R> for std::net::Ipv4Addr {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(<Self as From<[u8; 4]>>::from(decoder.decode_value()?))
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::net::Ipv6Addr {
+impl<R: Read> Decode<R> for std::net::Ipv6Addr {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(<Self as From<[u8; 16]>>::from(decoder.decode_value()?))
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::net::SocketAddr {
+impl<R: Read> Decode<R> for std::net::SocketAddr {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::V4(decoder.decode_value()?),
             1 => Self::V6(decoder.decode_value()?),
             x => return Err(EncodingError::invalid_variant(x)),
         })
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::net::SocketAddrV4 {
+impl<R: Read> Decode<R> for std::net::SocketAddrV4 {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(
             std::net::Ipv4Addr::decode(decoder)?,
             u16::decode(decoder)?,
         ))
     }
-
-    empty_seek!(decode);
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Decode for std::net::SocketAddrV6 {
+impl<R: Read> Decode<R> for std::net::SocketAddrV6 {
     #[inline]
-    fn decode<Reader: Read>(decoder: &mut Encoder<Reader>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(
             std::net::Ipv6Addr::decode(decoder)?,
             u16::decode(decoder)?,
@@ -1993,6 +1375,4 @@ impl Decode for std::net::SocketAddrV6 {
             u32::decode(decoder)?,
         ))
     }
-
-    empty_seek!(decode);
 }

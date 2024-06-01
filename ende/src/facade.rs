@@ -9,7 +9,7 @@ pub mod fake {
 
         use crate::{Decode, Encode, Encoder, EncodingResult};
 
-        pub fn encode<V: Encode, T: Write>(
+        pub fn encode<V: Encode<T>, T: Write>(
             _value: V,
             _encoder: &mut Encoder<T>,
             _public_key: &[u8],
@@ -19,7 +19,7 @@ pub mod fake {
             unimplemented!()
         }
 
-        pub fn decode<V: Decode, T: Read>(
+        pub fn decode<V: Decode<T>, T: Read>(
             _decoder: &mut Encoder<T>,
             _public_key: &[u8],
             _private_key: &[u8],

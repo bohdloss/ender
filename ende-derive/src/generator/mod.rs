@@ -104,14 +104,11 @@ impl Function {
         ty: &Type,
     ) -> syn::Result<TokenStream2> {
         let ref crate_name = ctxt.flags.crate_name;
+        let ref encoder_generic = ctxt.encoder_generic;
         let ref encoder = ctxt.encoder;
         Ok(match self {
             Function::Default => {
-                if ctxt.requires_seeking_impl() {
-                    quote!(<#ty as #crate_name::Encode>::seek_encode(#input, #encoder)?)
-                } else {
-                    quote!(<#ty as #crate_name::Encode>::encode(#input, #encoder)?)
-                }
+                quote!(<#ty as #crate_name::Encode<#encoder_generic>>::encode(#input, #encoder)?)
             }
             Function::Serde(serde_crate) => {
                 quote!(<#ty as #serde_crate::Serialize>::serialize(#input, &mut * #encoder)?)
@@ -131,21 +128,14 @@ impl Function {
         field: &Field,
     ) -> syn::Result<TokenStream2> {
         let ref crate_name = ctxt.flags.crate_name;
+        let ref encoder_generic = ctxt.encoder_generic;
         let ref encoder = ctxt.encoder;
         Ok(match self {
             Function::Default => {
-                if ctxt.requires_seeking_impl() {
-                    if field.flags.borrow.is_some() {
-                        quote!(<#ty as #crate_name::BorrowDecode>::seek_borrow_decode(#encoder)?)
-                    } else {
-                        quote!(<#ty as #crate_name::Decode>::seek_decode(#encoder)?)
-                    }
+                if field.flags.borrow.is_some() {
+                    quote!(<#ty as #crate_name::BorrowDecode<#encoder_generic>>::borrow_decode(#encoder)?)
                 } else {
-                    if field.flags.borrow.is_some() {
-                        quote!(<#ty as #crate_name::BorrowDecode>::borrow_decode(#encoder)?)
-                    } else {
-                        quote!(<#ty as #crate_name::Decode>::decode(#encoder)?)
-                    }
+                    quote!(<#ty as #crate_name::Decode<#encoder_generic>>::decode(#encoder)?)
                 }
             }
             Function::Serde(serde_crate) => {
@@ -414,7 +404,7 @@ impl AllModifiers {
                 let __size_flatten = #encoder.ctxt.size_flatten;
             ));
             set.push(quote!(
-                #encoder.ctxt.size_flatten = Some(#flatten);
+                #encoder.ctxt.size_flatten = Some(#crate_name::Opaque::from(#flatten).try_into()?);
             ));
             restore.push(quote!(
                 #encoder.ctxt.size_flatten = __size_flatten;

@@ -96,9 +96,6 @@ pub enum EncodingError {
 
 #[macro_export]
 macro_rules! val_error {
-    (Err: $($tt:tt)*) => {{
-        Err($crate::EncodingError::validation_error(::core::format_args!($($tt)*)))
-    }};
     ($($tt:tt)*) => {{
         $crate::EncodingError::validation_error(::core::format_args!($($tt)*))
     }};

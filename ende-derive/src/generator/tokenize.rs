@@ -73,6 +73,6 @@ impl CtxtToTokens for SeekParam {
         };
 
         let ref seek = self.seek;
-        quote!(#crate_name::io::SeekFrom::#variant(#seek))
+        quote!(#crate_name::io::SeekFrom::#variant(#crate_name::Opaque::from(#seek).try_into()?))
     }
 }
