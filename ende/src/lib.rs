@@ -2219,15 +2219,23 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
 }
 
 impl<T: Seek> Encoder<'_, T> {
+    /// Returns the current stream position as a byte offset from the start.
+    #[inline]
     pub fn stream_position(&mut self) -> EncodingResult<usize> {
         self.stream.seek(SeekFrom::POSITION)
     }
 
+    /// Performs a seek operation on the underlying stream using the given `seek`
+    /// argument.
+    #[inline]
     pub fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
         self.stream.seek(seek)
     }
 
+    /// Performs a seek operation on the underlying stream using the given `seek`
+    /// argument, calls the closure, then seeks back to the original position.
     // Notice the `StreamModifier` signature
+    #[inline]
     pub fn with_seek<F, R>(&mut self, f: F, seek: SeekFrom) -> EncodingResult<R>
     where
         F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>,
