@@ -259,8 +259,6 @@ impl_error!(BorrowError);
 #[derive(Debug, Display)]
 #[non_exhaustive]
 pub enum SeekError {
-    #[display("[{0}] Cannot encode/decode this structure without seeking!")]
-    SeekNecessary(&'static str),
     #[display("Tried to seek to a negative offset: {0}")]
     BeforeBeginning(isize),
     #[display("Tried to seek to an offset beyond the end: {0}")]

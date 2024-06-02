@@ -28,13 +28,6 @@ fn dollar_crate(name: &str) -> Ident {
     )
 }
 
-fn is_type_param(param: &GenericParam) -> bool {
-    match param {
-        GenericParam::Type(_) => true,
-        _ => false,
-    }
-}
-
 #[proc_macro_derive(Encode, attributes(ende))]
 pub fn encode(input: TokenStream1) -> TokenStream1 {
     let input = parse_macro_input!(input as DeriveInput);
@@ -53,8 +46,7 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
 
     // Inject the decoder's generic parameter in the `impl` generics
     let mut generics = ctxt.generics.clone();
-    let idx = generics.params.iter().position(is_type_param).unwrap_or(0);
-    generics.params.insert(idx, GenericParam::Type(type_param));
+    generics.params.push(GenericParam::Type(type_param));
 
     // Impl generics use injected generics
     let (impl_generics, _, _) = generics.split_for_impl();
@@ -96,8 +88,7 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
     
     // Inject the decoder's generic parameter in the `impl` generics
     let mut generics = ctxt.generics.clone();
-    let idx = generics.params.iter().position(is_type_param).unwrap_or(0);
-    generics.params.insert(idx, GenericParam::Type(type_param));
+    generics.params.push(GenericParam::Type(type_param));
 
     // Impl generics use injected generics
     let (impl_generics, _, _) = generics.split_for_impl();
@@ -156,8 +147,7 @@ pub fn borrow_decode(input: TokenStream1) -> TokenStream1 {
     // Inject the decoder's lifetime parameter and type parameter in the `impl` generics
     let mut generics = ctxt.generics.clone();
     generics.params.insert(0, GenericParam::Lifetime(lif));
-    let idx = generics.params.iter().position(is_type_param).unwrap_or(0);
-    generics.params.insert(idx, GenericParam::Type(type_param));
+    generics.params.push(GenericParam::Type(type_param));
 
     // Impl generics use injected lifetime and type
     let (impl_generics, _, _) = generics.split_for_impl();

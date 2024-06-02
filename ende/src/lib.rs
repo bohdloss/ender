@@ -2243,10 +2243,10 @@ impl<T: Seek> Encoder<'_, T> {
         // let cur = self.stream.seek(seek)? as isize;
         // // Find the difference
         // let diff = prev - cur;
-        // 
+        //
         // // Magic fn!
         // let ret = f(self);
-        // 
+        //
         // // Now we can seek even on streams that don't support seeking from the Start or End
         // self.stream.seek(SeekFrom::Current(diff))?;
         // ret

@@ -293,7 +293,7 @@ impl<'data> BorrowRead<'data> for Slice<'data> {
 impl Seek for Slice<'_> {
     #[inline]
     fn seek(&mut self, seek: SeekFrom) -> EncodingResult<usize> {
-        let offset = seek.as_buf_offset(self.pos as _, self.slice.len() as _)?;
+        let offset = seek.as_buf_offset(self.pos, self.slice.len())?;
         self.pos = offset;
         Ok(offset)
     }
@@ -666,6 +666,7 @@ impl SeekFrom {
     ///
     /// Returns the offset, or a [`SeekError`] if the resulting offset would
     /// be outside of bounds.
+    #[inline]
     pub const fn as_buf_offset(&self, pos: usize, len: usize) -> Result<usize, SeekError> {
         assert!(pos <= isize::MAX as _);
         assert!(len <= isize::MAX as _);
