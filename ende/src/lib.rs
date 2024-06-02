@@ -2232,24 +2232,20 @@ impl<T: Seek> Encoder<'_, T> {
     where
         F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>,
     {
-        let cur = self.stream_position()?;
-        self.seek(seek)?;
+        // Track the current position
+        let prev = self.stream_position()? as isize;
+
+        // Magic fn!
         let ret = f(self);
-        self.seek(SeekFrom::Start(cur))?;
+
+        // Seek to the desired location, and track the location now
+        let cur = self.stream.seek(seek)? as isize;
+        // Find the difference
+        let diff = prev - cur;
+        
+        // Now we can seek even on streams that don't support seeking from the Start or End
+        self.stream.seek(SeekFrom::Current(diff))?;
         ret
-        // // Track the current position
-        // let prev = self.stream_position()? as isize;
-        // // Seek to the desired location, and track the location now
-        // let cur = self.stream.seek(seek)? as isize;
-        // // Find the difference
-        // let diff = prev - cur;
-        //
-        // // Magic fn!
-        // let ret = f(self);
-        //
-        // // Now we can seek even on streams that don't support seeking from the Start or End
-        // self.stream.seek(SeekFrom::Current(diff))?;
-        // ret
     }
 }
 
