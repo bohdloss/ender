@@ -68,7 +68,7 @@ impl<W: Write, T: Encode<W>> Encode<W> for [T] {
     fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
         for i in 0..self.len() {
-            self[i].encode(encoder)?;
+            encoder.with_index(|encoder | self[i].encode(encoder), i)?;
         }
         Ok(())
     }
@@ -78,7 +78,7 @@ impl<W: Write, T: Encode<W>, const SIZE: usize> Encode<W> for [T; SIZE] {
     #[inline]
     fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         for i in 0..SIZE {
-            self[i].encode(encoder)?;
+            encoder.with_index(|encoder | self[i].encode(encoder), i)?;
         }
         Ok(())
     }
@@ -326,8 +326,8 @@ impl<W: Write, T: Encode<W>> Encode<W> for alloc::collections::LinkedList<T> {
     #[inline]
     fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
-        for v in self.iter() {
-            v.encode(encoder)?;
+        for (i, v) in self.iter().enumerate() {
+            encoder.with_index(|encoder | v.encode(encoder), i)?;
         }
         Ok(())
     }
@@ -339,8 +339,8 @@ impl<W: Write, T: Encode<W>> Encode<W> for alloc::vec::Vec<T> {
     #[inline]
     fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
-        for v in self.iter() {
-            v.encode(encoder)?;
+        for (i, v) in self.iter().enumerate() {
+            encoder.with_index(|encoder | v.encode(encoder), i)?;
         }
         Ok(())
     }
@@ -352,8 +352,8 @@ impl<W: Write, T: Encode<W>> Encode<W> for alloc::collections::VecDeque<T> {
     #[inline]
     fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
         encoder.write_usize(self.len())?;
-        for v in self.iter() {
-            v.encode(encoder)?;
+        for (i, v) in self.iter().enumerate() {
+            encoder.with_index(|encoder | v.encode(encoder), i)?;
         }
         Ok(())
     }
@@ -649,7 +649,7 @@ impl<R: Read> Decode<R> for () {
 impl<R: Read, T: Decode<R>, const SIZE: usize> Decode<R> for [T; SIZE] {
     #[inline]
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
-        array_init::try_array_init(|_| T::decode(decoder))
+        array_init::try_array_init(|i| decoder.with_index(|decoder| T::decode(decoder), i))
     }
 }
 
@@ -861,8 +861,8 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<[T]> {
         let mut vec = alloc::vec::Vec::new();
         vec.reserve_exact(len);
 
-        for _ in 0..len {
-            vec.push(T::decode(decoder)?);
+        for i in 0..len {
+            vec.push(decoder.with_index(|decoder| T::decode(decoder), i)?);
         }
 
         Ok(vec.into_boxed_slice())
@@ -1038,8 +1038,8 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::LinkedList<T> {
         let len = decoder.read_usize()?;
         let mut list = Self::new();
 
-        for _ in 0..len {
-            list.push_back(T::decode(decoder)?)
+        for i in 0..len {
+            list.push_back(decoder.with_index(|decoder| T::decode(decoder), i)?)
         }
 
         Ok(list)
@@ -1054,8 +1054,8 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::VecDeque<T> {
         let len = decoder.read_usize()?;
         let mut deque = Self::with_capacity(len);
 
-        for _ in 0..len {
-            deque.push_back(T::decode(decoder)?)
+        for i in 0..len {
+            deque.push_back(decoder.with_index(|decoder| T::decode(decoder), i)?)
         }
 
         Ok(deque)
@@ -1070,8 +1070,8 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::vec::Vec<T> {
         let len = decoder.read_usize()?;
         let mut vec = Self::with_capacity(len);
 
-        for _ in 0..len {
-            vec.push(T::decode(decoder)?);
+        for i in 0..len {
+            vec.push(decoder.with_index(|decoder| T::decode(decoder), i)?);
         }
 
         Ok(vec)

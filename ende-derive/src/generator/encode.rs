@@ -2,16 +2,19 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens, TokenStreamExt};
 
 use crate::ctxt::{Ctxt, Field, Flavor, ItemType, Struct, Variant};
+use crate::flags::FlagTarget;
 use crate::generator::{ConstCode, RefCode};
 
 impl Ctxt {
     pub(super) fn derive_encode(&self) -> syn::Result<TokenStream2> {
         let ref crate_name = self.flags.crate_name;
+        let ref item_name = self.item_name;
+        
         match self.item_type {
             ItemType::Struct => {
                 let (pre, post) = self.flags.mods.derive(self)?;
                 let body = self.struct_data.derive_encode(self)?;
-                let modified = self.flags.derive_stream_modifiers(self, body)?;
+                let modified = self.flags.derive_stream_modifiers(self, body, FlagTarget::Item, item_name.to_string())?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
@@ -46,7 +49,7 @@ impl Ctxt {
                         #variant_code
                     }
                 );
-                let modified = self.flags.derive_stream_modifiers(self, body)?;
+                let modified = self.flags.derive_stream_modifiers(self, body, FlagTarget::Item, item_name.to_string())?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
@@ -66,9 +69,11 @@ impl Ctxt {
 }
 impl Variant {
     /// Generates the match arm for this variant
-    fn encode_match(&self, _ctxt: &Ctxt, body: TokenStream2) -> syn::Result<TokenStream2> {
+    fn encode_match(&self, ctxt: &Ctxt, body: TokenStream2) -> syn::Result<TokenStream2> {
         let ref name = self.name;
         let fields = self.fields.iter().map(|x| &x.name);
+        let body = self.flags.derive_stream_modifiers(ctxt, body, FlagTarget::Variant, name.to_string())?;
+        
         Ok(match self.flavor {
             Flavor::Unit => {
                 quote!(
@@ -143,12 +148,14 @@ impl Field {
     pub fn derive_encode(&self, ctxt: &Ctxt, ref_code: &mut RefCode) -> syn::Result<TokenStream2> {
         ref_code.append(self);
         let ref field_name = self.name;
+        let ref field_accessor = self.accessor;
         let ref field_ty = self.ty;
 
         let (pre, post) = self.flags.mods.derive(ctxt)?;
         let validate = self.flags.derive_validation(ctxt, Some(&ref_code))?;
         let seek = self.flags.derive_seek(ctxt)?;
         let pos_tracker = self.flags.derive_pos_tracker(ctxt)?;
+        
         let encode = if let Some(converter) = &self.flags.ty_mods {
             self.flags.function.derive_encode(
                 ctxt,
@@ -160,6 +167,9 @@ impl Field {
                 .function
                 .derive_encode(ctxt, field_name.to_token_stream(), field_ty)?
         };
+
+        let modified = self.flags.derive_stream_modifiers(ctxt, encode, FlagTarget::Field, field_accessor.to_string())?;
+        
         let encode = if self.flags.skip {
             quote!(
                 #validate
@@ -171,7 +181,7 @@ impl Field {
                 if #condition {
                     #pre
                     #seek
-                    #encode;
+                    #modified;
                     #post
                 }
             )
@@ -181,13 +191,11 @@ impl Field {
                 #pos_tracker
                 #pre
                 #seek
-                #encode;
+                #modified;
                 #post
             )
         };
 
-        let modified = self.flags.derive_stream_modifiers(ctxt, encode)?;
-
-        Ok(quote!(#modified ; ))
+        Ok(quote!(#encode ; ))
     }
 }

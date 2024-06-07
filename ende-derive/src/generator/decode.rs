@@ -2,15 +2,17 @@ use crate::ctxt::{Ctxt, Field, Flavor, ItemType, Struct, Variant};
 use crate::generator::{ConstCode, RefCode};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, TokenStreamExt};
+use crate::flags::FlagTarget;
 
 impl Ctxt {
     pub(super) fn derive_decode(&self) -> syn::Result<TokenStream2> {
         let ref crate_name = self.flags.crate_name;
+        let ref item_name = self.item_name;
         match self.item_type {
             ItemType::Struct => {
                 let (pre, post) = self.flags.mods.derive(self)?;
                 let body = self.struct_data.derive_decode(self)?;
-                let modified = self.flags.derive_stream_modifiers(self, body)?;
+                let modified = self.flags.derive_stream_modifiers(self, body, FlagTarget::Item, item_name.to_string())?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
@@ -59,7 +61,7 @@ impl Ctxt {
                         __unknown_variant => #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant(#crate_name::Opaque::from(__unknown_variant))),
                     }?
                 );
-                let modified = self.flags.derive_stream_modifiers(self, body)?;
+                let modified = self.flags.derive_stream_modifiers(self, body, FlagTarget::Item, item_name.to_string())?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
@@ -80,8 +82,11 @@ impl Ctxt {
 
 impl Variant {
     /// Generates the match arm for this variant
-    fn decode_match(&self, _ctxt: &Ctxt, body: TokenStream2) -> syn::Result<TokenStream2> {
+    fn decode_match(&self, ctxt: &Ctxt, body: TokenStream2) -> syn::Result<TokenStream2> {
         let ref index = self.index.ident;
+        let ref name = self.name;
+        let body = self.flags.derive_stream_modifiers(ctxt, body, FlagTarget::Variant, name.to_string())?;
+        
         Ok(quote!(
             #index => { #body },
         ))
@@ -180,6 +185,7 @@ impl Struct {
 impl Field {
     pub fn derive_decode(&self, ctxt: &Ctxt, ref_code: &mut RefCode) -> syn::Result<TokenStream2> {
         let ref field_name = self.name;
+        let ref field_accessor = self.accessor;
         let ref field_ty = self.ty;
         let ref default = self.flags.default;
 
@@ -194,7 +200,7 @@ impl Field {
         } else {
             self.flags.function.derive_decode(ctxt, field_ty, &self)?
         };
-        let modified = self.flags.derive_stream_modifiers(ctxt, decode)?;
+        let modified = self.flags.derive_stream_modifiers(ctxt, decode, FlagTarget::Field, field_accessor.to_string())?;
         let seek = self.flags.derive_seek(ctxt)?;
         let pos_tracker = self.flags.derive_pos_tracker(ctxt)?;
 

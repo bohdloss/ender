@@ -1,7 +1,9 @@
 use crate::{BitWidth, Endianness, NumEncoding, Opaque, StrEncoding};
 use core::fmt;
+use core::fmt::Formatter;
 use embedded_io::{Error, ErrorKind, ReadExactError};
 use parse_display::Display;
+use crate::source::{Stack};
 
 macro_rules! impl_error {
     ($name:ident) => {
@@ -268,6 +270,54 @@ pub enum SeekError {
 }
 
 impl_error!(SeekError);
+
+/// An [`EncodingError`] which also displays all the error stack.
+/// This is useful for debugging, because the entire structure tree is displayed.
+#[derive(Debug)]
+pub struct TaggedError {
+    err: EncodingError,
+    stack: Stack,
+}
+
+impl core::fmt::Display for TaggedError {
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        #[cfg(feature = "alloc")]
+        {
+            if self.stack.frames.is_empty() {
+                return write!(f, "{}", self.err);
+            }
+
+            write!(f, "[{}] {}", self.stack, self.err)?;
+        }
+        #[cfg(not(feature = "alloc"))]
+        {
+            if let crate::source::Frame::Item(x) = self.stack.last_frame {
+                if x == "" {
+                    return write!(f, "{}", self.err);
+                }
+            }
+            
+            write!(f, "[{}] {}", self.stack, self.err)?;
+        }
+        Ok(())
+    }
+}
+
+impl TaggedError {
+    /// Constructs a new [`TaggedError`] from an encoding error and an
+    /// error metadata stack.
+    /// 
+    /// If the `debug` feature is enabled, you can obtain an instance of [`Stack`]
+    /// from an [`Encoder`] right after an error occurred (`encoder.stack`).
+    #[inline]
+    pub const fn from_stack(err: EncodingError, stack: Stack) -> Self {
+        Self {
+            err,
+            stack
+        }
+    }
+}
 
 /// A convenience alias to `Result<T, EncodingError>`
 pub type EncodingResult<T> = Result<T, EncodingError>;

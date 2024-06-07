@@ -103,6 +103,7 @@ pub struct Variant {
     pub index: VariantIndex,
     pub flavor: Flavor,
     pub fields: Vec<Field>,
+    pub flags: Flags,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -322,6 +323,7 @@ impl Ctxt {
                         index: variant_index.clone(),
                         flavor,
                         fields,
+                        flags: Flags::new(FlagTarget::Variant),
                     });
 
                     // Increment the variant after each iteration

@@ -35,6 +35,11 @@ semver = { version = "1.0.22", features = ["serde"] }
 [features]
 default = ["std"]
 
+# Keeps track of the various structures being encoded/decoded to provide better information
+# when debugging a binary format. This probably prevents some optimizations on release mode,
+# so use this ONLY in executables, NEVER in libraries.
+debug = ["ende-derive/debug"]
+
 # Enables all features. Includes serde support, encryption and compression, and the derive macros.
 # The unstable feature still has to be enabled separately.
 all = ["alloc", "std", "derive", "serde"]

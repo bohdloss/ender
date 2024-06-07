@@ -12,6 +12,7 @@ use crate::{dollar_crate, ENDE};
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FlagTarget {
     Item,
+    Variant,
     Field,
 }
 

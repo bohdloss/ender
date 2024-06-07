@@ -1,9 +1,9 @@
-use proc_macro2::{TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, TokenStreamExt, ToTokens};
-use syn::{Expr, LitStr, parse_quote, Type};
+use syn::{Expr, parse_quote, Type};
 
 use crate::ctxt::{Ctxt, Field, ItemType, Scope, Target, Variant};
-use crate::flags::{AllModifiers, Flags, Function, ModifierGroup, StreamModifier, TypeModifier};
+use crate::flags::{AllModifiers, Flags, FlagTarget, Function, ModifierGroup, StreamModifier, TypeModifier};
 use crate::generator::tokenize::CtxtToTokens;
 use crate::parse::Formatting;
 
@@ -201,22 +201,12 @@ impl Flags {
     pub fn derive_validation(&self, ctxt: &Ctxt, ref_code: Option<&RefCode>) -> syn::Result<TokenStream2> {
         Ok(if let Some((validate, fmt)) = &self.validate {
             let ref crate_name = ctxt.flags.crate_name;
-            let ref item_name = ctxt.item_name;
 
             let format = if let Some(fmt) = fmt.as_ref() {
-                let mut fmt = fmt.clone();
-                let span = fmt.format.span();
-                
-                // CAUTION! This is the formatting of a formatting!
-                // item_name is fine, because it is an ident.
-                // then we append the original formatting, which is also ok and behaves predictably.
-                let string = format!("[{}] {}", item_name, fmt.format.value());
-                fmt.format = LitStr::new(&string, span);
-                
                 quote!(::core::format_args!(#fmt))
             } else {
-                let format = format!("[{}] Assertion failed `{}`", item_name, validate.to_token_stream());
-                quote!(::core::format_args!(#format))
+                let source_code = validate.to_token_stream().to_string();
+                quote!(::core::format_args!("Assertion failed `{}`", #source_code))
             };
 
             quote!(
@@ -428,11 +418,37 @@ impl Flags {
         &self,
         ctxt: &Ctxt,
         mut input: TokenStream2,
+        target: FlagTarget,
+        string: String,
     ) -> syn::Result<TokenStream2> {
         for stream_modifier in self.stream_modifiers.iter() {
             input = stream_modifier.derive(ctxt, input)?;
         }
-        Ok(input)
+
+        #[cfg(feature = "debug")]
+        {
+            let ref crate_name = ctxt.flags.crate_name;
+            let ref encoder = ctxt.encoder;
+
+            let method_name = match target {
+                FlagTarget::Item => quote!(with_item),
+                FlagTarget::Variant => quote!(with_variant),
+                FlagTarget::Field => quote!(with_field),
+            };
+
+
+            let input = quote!(
+                #crate_name::Encoder::#method_name(&mut * #encoder, |#encoder| { Ok({ #input }) }, #string)?
+            );
+            Ok(input)
+        }
+        
+        #[cfg(not(feature = "debug"))]
+        {
+            let _ = target;
+            let _ = string;
+            Ok(input)
+        }
     }
 }
 

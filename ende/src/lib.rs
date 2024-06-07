@@ -557,6 +557,7 @@ pub mod io;
 mod opaque;
 #[cfg(feature = "serde")]
 mod serde;
+mod source;
 
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
 /// with the given context.
@@ -1039,13 +1040,49 @@ pub struct Encoder<'a, T> {
     pub stream: T,
     /// The state
     pub ctxt: Context<'a>,
+    /// The stack
+    #[cfg(feature = "debug")]
+    pub stack: source::Stack,
+}
+
+macro_rules! debug_fn {
+    ($fn_name:ident, $variant_name:ident ( $ty:ty )) => {
+        #[inline]
+        pub fn $fn_name<F, R>(&mut self, f: F, s: $ty) -> EncodingResult<R>
+            where F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>
+        {
+            #[cfg(feature = "debug")]
+            {
+                #[cfg(feature = "alloc")]
+                {
+                    self.stack.frames.push(source::Frame::$variant_name(s));
+                    let r = f(self)?;
+                    self.stack.frames.pop();
+                    Ok(r)
+                }
+                #[cfg(not(feature = "alloc"))]
+                {
+                    let last_frame = self.stack.last_frame;
+                    self.stack.last_frame = source::Frame::$variant_name(s);
+                    let r = f(self)?;
+                    self.stack.last_frame = last_frame;
+                    Ok(r)
+                }
+            }
+            #[cfg(not(feature = "debug"))]
+            {
+                let _ = s;
+                f(self)
+            }
+        }
+    }
 }
 
 impl<'a, T> Encoder<'a, T> {
     /// Wraps the given stream and state.
     #[inline]
     pub fn new(stream: T, ctxt: Context<'a>) -> Self {
-        Self { stream, ctxt }
+        Self { stream, ctxt, #[cfg(feature = "debug")] stack: source::Stack::new() }
     }
 
     /// Replaces the underlying stream with the new one, returning the previous value
@@ -1063,6 +1100,11 @@ impl<'a, T> Encoder<'a, T> {
             .and_then(|x| x.downcast_ref()
                 .ok_or(val_error!("User-data doesnt match the requested concrete type of {}", stringify!(U))))
     }
+    
+    debug_fn!(with_item, Item(&'static str));
+    debug_fn!(with_variant, Variant(&'static str));
+    debug_fn!(with_field, Field(&'static str));
+    debug_fn!(with_index, Index(usize));
 }
 
 impl<T: Write> Encoder<'_, T> {

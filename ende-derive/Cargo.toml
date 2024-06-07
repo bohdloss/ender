@@ -14,3 +14,4 @@ proc-macro2 = "1.0.79"
 [features]
 default = []
 unstable = []
+debug = []
