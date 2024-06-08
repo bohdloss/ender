@@ -394,7 +394,7 @@ impl AllModifiers {
                 let __size_flatten = #encoder.ctxt.size_flatten;
             ));
             set.push(quote!(
-                #encoder.ctxt.size_flatten = Some(#crate_name::Opaque::from(#flatten).try_into()?);
+                #encoder.ctxt.size_flatten = Some(#flatten);
             ));
             restore.push(quote!(
                 #encoder.ctxt.size_flatten = __size_flatten;
