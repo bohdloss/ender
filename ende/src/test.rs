@@ -112,7 +112,7 @@
 // }
 
 use std::hash::{DefaultHasher, Hasher};
-use crate::{BinSettings, BitWidth, Context, Decode, Encode, Encoder, Endianness, NumEncoding, NumRepr, SizeRepr, StrEncoding, StringRepr, VariantRepr};
+use crate::{BinSettings, BitWidth, Context, Decode, Encode, Encoder, Endianness, NumEncoding, NumRepr, SizeRepr, StrEncoding, StringRepr, StrLen, VariantRepr};
 use crate::io::{Slice, SliceMut, VecStream};
 
 const SETTINGS: BinSettings = BinSettings {
@@ -132,8 +132,9 @@ const SETTINGS: BinSettings = BinSettings {
 		width: BitWidth::Bit32,
 	},
 	string_repr: StringRepr {
-		str_encoding: StrEncoding::Utf8,
+		encoding: StrEncoding::Utf8,
 		endianness: Endianness::LittleEndian,
+		len: StrLen::LengthPrefixed,
 	},
 };
 

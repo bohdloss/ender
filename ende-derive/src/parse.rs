@@ -72,6 +72,9 @@ pub mod kw {
     custom_keyword!(utf8);
     custom_keyword!(utf16);
     custom_keyword!(utf32);
+    // String length encoding
+    custom_keyword!(null_term);
+    custom_keyword!(len_prefix);
 }
 
 /// The `#[repr($ty)]` attribute
@@ -143,6 +146,13 @@ pub enum Modifier {
     },
     Utf32 {
         kw: kw::utf32,
+    },
+    LenPrefix {
+        kw: kw::len_prefix,
+    },
+    NullTerm {
+        kw: kw::null_term,
+        max: Option<(Paren, Expr)>,
     },
 }
 
@@ -502,6 +512,18 @@ impl Parse for Modifier {
             Ok(Self::Utf16 { kw: input.parse()? })
         } else if input.peek(kw::utf32) {
             Ok(Self::Utf32 { kw: input.parse()? })
+        } else if input.peek(kw::len_prefix) {
+            Ok(Self::LenPrefix { kw: input.parse()? })
+        } else if input.peek(kw::null_term) {
+            Ok(Self::NullTerm {
+                kw: input.parse()?,
+                max: if input.peek(Paren) {
+                    let inside;
+                    Some((parenthesized!(inside in input), inside.parse()?))
+                } else {
+                    None 
+                },
+            })
         } else {
             Err(Error::new(input.span(), MODIFIER_USAGE))
         }

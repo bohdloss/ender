@@ -319,13 +319,27 @@ impl ModifierGroup {
             let str_encoding = str_encoding.ctxt_tokens(ctxt);
             let save_state = format_ident!("__{}_str_encoding", target.to_string());
             save.push(quote!(
-                let #save_state = #encoder.ctxt.settings.#target.str_encoding;
+                let #save_state = #encoder.ctxt.settings.#target.encoding;
             ));
             set.push(quote!(
-                #encoder.ctxt.settings.#target.str_encoding = #str_encoding;
+                #encoder.ctxt.settings.#target.encoding = #str_encoding;
             ));
             restore.push(quote!(
-                #encoder.ctxt.settings.#target.str_encoding = #save_state;
+                #encoder.ctxt.settings.#target.encoding = #save_state;
+            ));
+        }
+
+        if let Some(ref str_len) = self.str_len {
+            let str_encoding = str_len.ctxt_tokens(ctxt);
+            let save_state = format_ident!("__{}_str_len_encoding", target.to_string());
+            save.push(quote!(
+                let #save_state = #encoder.ctxt.settings.#target.len;
+            ));
+            set.push(quote!(
+                #encoder.ctxt.settings.#target.len = #str_encoding;
+            ));
+            restore.push(quote!(
+                #encoder.ctxt.settings.#target.len = #save_state;
             ));
         }
 

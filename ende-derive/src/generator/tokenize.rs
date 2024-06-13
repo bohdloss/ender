@@ -2,7 +2,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens, TokenStreamExt};
 
 use crate::ctxt::Ctxt;
-use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding};
+use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding, StrLen};
 use crate::flags::SeekParam;
 use crate::parse::{FlattenParam, ModTarget, SeekTarget};
 
@@ -32,6 +32,20 @@ impl CtxtToTokens for StrEncoding {
         let ref crate_name = ctxt.flags.crate_name;
         let val: TokenStream2 = self.to_string().parse().unwrap();
         quote!(#crate_name::StrEncoding::#val)
+    }
+}
+
+impl CtxtToTokens for StrLen {
+    fn ctxt_tokens(&self, ctxt: &Ctxt) -> TokenStream2 {
+        let ref crate_name = ctxt.flags.crate_name;
+
+        let variant = match self {
+            StrLen::LengthPrefixed => quote!(LengthPrefixed),
+            StrLen::NullTerminated => quote!(NullTerminated),
+            StrLen::NullTerminatedOrMax(max) => quote!(NullTerminatedOrMax(#max)),
+        };
+        
+        quote!(#crate_name::StrLen::#variant)
     }
 }
 

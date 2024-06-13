@@ -795,7 +795,7 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a str {
     ) -> EncodingResult<Self> {
         // Can only be borrowed when the string encoding is utf-8
         // else the user might get some surprises if we just assume it to be utf-8
-        let str_encoding = decoder.ctxt.settings.string_repr.str_encoding;
+        let str_encoding = decoder.ctxt.settings.string_repr.encoding;
         if str_encoding != StrEncoding::Utf8 {
             return Err(BorrowError::StrEncodingMismatch {
                 found: str_encoding,
@@ -806,7 +806,7 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a str {
 
         let len = decoder.read_usize()?;
         let bytes = decoder.borrow_u8_slice(len, NumEncoding::Fixed)?;
-        Ok(core::str::from_utf8(bytes).map_err(|_| StringError::InvalidUtf8)?)
+        Ok(core::str::from_utf8(bytes).map_err(|_| StringError::InvalidChar)?)
     }
 }
 

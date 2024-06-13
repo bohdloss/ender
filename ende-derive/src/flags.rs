@@ -5,7 +5,7 @@ use syn::spanned::Spanned;
 use syn::{parse_quote, Error, Expr, Lifetime, Path, Type};
 
 use crate::ctxt::Scope;
-use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding};
+use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding, StrLen};
 use crate::parse::{Flag, FlattenTarget, Formatting, ModTarget, Modifier, SeekTarget};
 use crate::{dollar_crate, ENDE};
 
@@ -81,6 +81,7 @@ pub struct ModifierGroup {
     pub max: Option<Expr>,
     pub bit_width: Option<BitWidth>,
     pub str_encoding: Option<StrEncoding>,
+    pub str_len: Option<StrLen>,
 }
 
 impl ModifierGroup {
@@ -92,6 +93,7 @@ impl ModifierGroup {
             max: None,
             bit_width: None,
             str_encoding: None,
+            str_len: None,
         }
     }
 
@@ -110,6 +112,8 @@ impl ModifierGroup {
         const REPEATED_BIT_WIDTH: &str = "Bit width modifier declared twice for the same target";
         const REPEATED_STR_ENCODING: &str =
             "String encoding modifier declared twice for the same target";
+        const REPEATED_STR_LEN: &str = 
+            "String length encoding modifier declared twice for the same target";
 
         const NOT_STRING: &str = r#"This modifier can't be applied to the "string" target"#;
         const ONLY_STRING: &str = r#"This modifier can only be applied to the "string" target"#;
@@ -221,6 +225,30 @@ impl ModifierGroup {
                 }
 
                 self.str_encoding = Some(StrEncoding::Utf32);
+            }
+            Modifier::NullTerm { kw, max } => {
+                if !self.target.string() {
+                    return Err(Error::new(kw.span(), ONLY_STRING));
+                }
+                if self.str_len.is_some() {
+                    return Err(Error::new(kw.span(), REPEATED_STR_LEN));
+                }
+                
+                if let Some((_, max)) = max {
+                    self.str_len = Some(StrLen::NullTerminatedOrMax(max));
+                } else {
+                    self.str_len = Some(StrLen::NullTerminated);
+                }
+            }
+            Modifier::LenPrefix { kw, .. } => {
+                if !self.target.string() {
+                    return Err(Error::new(kw.span(), ONLY_STRING));
+                }
+                if self.str_len.is_some() {
+                    return Err(Error::new(kw.span(), REPEATED_STR_LEN));
+                }
+                
+                self.str_len = Some(StrLen::LengthPrefixed);
             }
         }
         Ok(())

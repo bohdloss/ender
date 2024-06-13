@@ -1,6 +1,5 @@
 #![cfg_attr(feature = "unstable", feature(doc_cfg))]
 #![cfg_attr(feature = "unstable", feature(never_type))]
-#![cfg_attr(feature = "unstable", feature(error_in_core))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 //! A rust **EN**coding and **DE**coding library for writing custom protocols and file formats.
@@ -196,6 +195,9 @@ use parse_display::Display;
 /// - String encoding modifier: `utf8`, `utf16`, `utf32`
 ///   - Available targets:
 ///     - `string`
+/// - String length encoding modifier: `len_prefix`, `null_term`, `null_term($max:expr)`
+///   - Available targets:
+///     - `string`
 ///     <br>
 /// ### Example:
 /// ```rust
@@ -211,12 +213,16 @@ use parse_display::Display;
 ///         /// fixed numerical encoding and 16-bit width, with a max length of 100
 ///         #[ende(size: big_endian, fixed, bit16, max = 100)]
 ///         field: String,
-///         /// Encode this String with utf16 big endian
-///         #[ende(string: utf16, big_endian)]
+///         /// Encode this String with utf16 big endian, and prefix it with its length
+///         #[ende(string: utf16, big_endian, len_prefix)]
 ///         utf_16: String,
-///         /// Encode this String as an utf8 string
-///         #[ende(string: utf8)]
+///         /// Encode this String as an utf8 null-terminated string
+///         #[ende(string: utf8, null_term)]
 ///         utf_8: String,
+///         /// Encode this String as an utf8 null-terminated string with a maximum length of `15`
+///         /// After having read `15` bytes, no more are read.
+///         #[ende(string: utf8, null_term(15))]
+///         max_15: String,
 ///     },
 ///     VariantB {
 ///         /// This number will be encoded using little endian ordering, and the
@@ -745,6 +751,22 @@ impl BitWidth {
     }
 }
 
+/// The encoding method use for the length of a string.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Display)]
+pub enum StrLen {
+    /// The length of the string is stored before its contents as an `usize`.
+    #[default]
+    LengthPrefixed,
+    /// The length of the string is obtained by finding the first occurrence of `n`
+    /// number of null bytes, where `n` is the length in bytes of one code unit for
+    /// the given string encoding (see [`StrEncoding::bytes`]).
+    NullTerminated,
+    /// Like [`StrLen::NullTerminated`], but if no end is found before the specified
+    /// amount of bytes `n`, then the length will be `n`.
+    #[display("NullTerminatedOrMax({0})")]
+    NullTerminatedOrMax(usize),
+}
+
 /// The encoding method used for strings and chars.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Display)]
 #[non_exhaustive]
@@ -869,10 +891,11 @@ impl Default for VariantRepr {
 /// null characters, and the end of the string is encoded as a sequence of nulls of the appropriate
 /// length (1 byte for UTF-8 and ASCII, 2 bytes for UTF-16, 4 bytes for UTF-32)
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
-#[display("str_encoding = {str_encoding}, endianness = {endianness}")]
+#[display("encoding = {encoding}, endianness = {endianness}, len = {len}")]
 pub struct StringRepr {
-    pub str_encoding: StrEncoding,
+    pub encoding: StrEncoding,
     pub endianness: Endianness,
+    pub len: StrLen,
 }
 
 impl StringRepr {
@@ -880,8 +903,9 @@ impl StringRepr {
     #[inline]
     pub const fn new() -> Self {
         Self {
-            str_encoding: StrEncoding::Utf8,
+            encoding: StrEncoding::Utf8,
             endianness: Endianness::LittleEndian,
+            len: StrLen::LengthPrefixed,
         }
     }
 }
@@ -1174,6 +1198,7 @@ macro_rules! make_write_fns {
 	    #[doc = "Encodes a `"]
 	    #[doc = stringify!($uty)]
 	    #[doc = "` to the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
+        #[inline]
 	    pub fn $u_write(&mut self, value: $uty) -> EncodingResult<()> {
 		    self.$u_write_direct(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
@@ -1217,6 +1242,7 @@ macro_rules! make_write_fns {
 	    #[doc = "Encodes a `"]
 	    #[doc = stringify!($ity)]
 	    #[doc = "` to the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
+        #[inline]
 	    pub fn $i_write(&mut self, value: $ity) -> EncodingResult<()> {
 		    self.$i_write_direct(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
@@ -1319,6 +1345,7 @@ impl<T: Write> Encoder<'_, T> {
     /// to the underlying stream according to the endianness, numerical
     /// encoding and bit-width in the encoder's state, with an additional
     /// check that the value does not exceed the max size.
+    #[inline]
     pub fn write_usize(&mut self, value: usize) -> EncodingResult<()> {
         if let Some(size) = self.ctxt.size_flatten() {
             if size != value {
@@ -1353,6 +1380,7 @@ impl<T: Write> Encoder<'_, T> {
 
     /// Encodes a `isize` to the underlying stream, according to the endianness,
     /// numerical encoding and bit-width in the encoder's state.
+    #[inline]
     pub fn write_isize(&mut self, value: isize) -> EncodingResult<()> {
         let encoding = self.ctxt.settings.size_repr.num_encoding;
         let endianness = self.ctxt.settings.size_repr.endianness;
@@ -1454,6 +1482,7 @@ impl<T: Write> Encoder<'_, T> {
     /// this function checks that the value matches but then returns
     /// immediately without writing, otherwise it will encode the given `bool`
     /// as described above.
+    #[inline]
     pub fn write_bool(&mut self, value: bool) -> EncodingResult<()> {
         if let Some(boolean) = self.ctxt.bool_flatten() {
             if boolean != value {
@@ -1468,34 +1497,49 @@ impl<T: Write> Encoder<'_, T> {
             self.write_byte(if value { 1 } else { 0 })
         }
     }
-
+    
     /// Encodes a `char` to the underlying stream, according to the endianness and string encoding
     /// in the encoder's state.
+    #[inline]
     pub fn write_char(&mut self, value: char) -> EncodingResult<()> {
-        let endianness = self.ctxt.settings.string_repr.endianness;
-        match self.ctxt.settings.string_repr.str_encoding {
-            StrEncoding::Utf8 => {
-                let mut buf = [0u8; 4];
-                let len = value.encode_utf8(&mut buf).len();
+        self.write_char_or_null(Some(value))
+    }
 
-                self.write_bytes(&buf[..len])
-            }
-            StrEncoding::Utf16 => {
-                let mut buf = [0u16; 2];
-                let len = value.encode_utf16(&mut buf).len();
+    #[inline]
+    fn write_char_or_null(&mut self, value: Option<char>) -> EncodingResult<()> {
+        if let Some(value) = value {
+            let endianness = self.ctxt.settings.string_repr.endianness;
+            match self.ctxt.settings.string_repr.encoding {
+                StrEncoding::Utf8 => {
+                    let mut buf = [0u8; 4];
+                    let len = value.encode_utf8(&mut buf).len();
 
-                for block in buf[..len].iter() {
-                    self.write_u16_with(*block, NumEncoding::Fixed, endianness)?;
+                    self.write_bytes(&buf[..len])?;
                 }
-                Ok(())
+                StrEncoding::Utf16 => {
+                    let mut buf = [0u16; 2];
+                    let len = value.encode_utf16(&mut buf).len();
+
+                    for block in buf[..len].iter() {
+                        self.write_u16_with(*block, NumEncoding::Fixed, endianness)?;
+                    }
+                }
+                StrEncoding::Utf32 => {
+                    self.write_u32_with(value as u32, NumEncoding::Fixed, endianness)?;
+                },
             }
-            StrEncoding::Utf32 => self.write_u32_with(value as u32, NumEncoding::Fixed, endianness),
+        } else {
+            for _ in 0..self.ctxt.settings.string_repr.encoding.bytes() {
+                self.write_byte(0)?;
+            }
         }
+        Ok(())
     }
 
     /// Encodes a `f32` to the underlying stream, ignoring the numeric encoding but respecting
     /// the endianness. Equivalent of `Self::write_u32(value.to_bits())` with the numeric
     /// encoding set to Fixed
+    #[inline]
     pub fn write_f32(&mut self, value: f32) -> EncodingResult<()> {
         self.write_u32_with(
             value.to_bits(),
@@ -1507,6 +1551,7 @@ impl<T: Write> Encoder<'_, T> {
     /// Encodes a `f64` to the underlying stream, ignoring the numeric encoding but respecting
     /// the endianness. Equivalent of `Self::write_u64(value.to_bits())` with the numeric
     /// encoding set to Fixed
+    #[inline]
     pub fn write_f64(&mut self, value: f64) -> EncodingResult<()> {
         self.write_u64_with(
             value.to_bits(),
@@ -1528,26 +1573,50 @@ impl<T: Write> Encoder<'_, T> {
     /// let mut encoder = Encoder::new(Zero, Context::new());
     /// encoder.write_str("Hello, world!".chars()).unwrap();
     /// ```
-    pub fn write_str<S, I>(&mut self, string: S) -> EncodingResult<()>
+    #[inline]
+    pub fn write_str<S>(&mut self, string: S) -> EncodingResult<()>
     where
-        S: IntoIterator<Item = char, IntoIter = I>,
-        I: Iterator<Item = char> + Clone,
+        S: IntoIterator<Item = char, IntoIter: Clone>,
     {
         let chars = string.into_iter();
-        // We don't know the length of the string in advance
 
-        // Create a fake encoder that simply keeps track of the length
-        let mut sz_encoder = Encoder::new(SizeTrack::new(Zero), self.ctxt);
-        for ch in chars.clone() {
-            sz_encoder.write_char(ch)?;
-        }
-        let size = sz_encoder.finish().0.size_written();
+        match self.ctxt.settings.string_repr.len {
+            StrLen::LengthPrefixed => {
+                // We don't know the length of the string in advance
 
-        // Now encode the length and the string data
-        self.write_usize(size)?;
-        for ch in chars {
-            self.write_char(ch)?;
+                // Create a fake encoder that simply keeps track of the length
+                let mut sz_encoder = Encoder::new(SizeTrack::new(Zero), self.ctxt);
+                for ch in chars.clone() {
+                    sz_encoder.write_char(ch)?;
+                }
+                let size = sz_encoder.finish().0.size_written();
+
+                // Now encode the length and the string data
+                self.write_usize(size)?;
+                for ch in chars {
+                    self.write_char(ch)?;
+                }
+            }
+            StrLen::NullTerminated => {
+                for ch in chars {
+                    self.write_char(ch)?;
+                }
+                self.write_char_or_null(None)?;
+            }
+            StrLen::NullTerminatedOrMax(max) => {
+                let mut capped = Encoder::new(SizeLimit::new(&mut self.stream, max, 0), self.ctxt);
+                for ch in chars {
+                    capped.write_char(ch)?;
+                }
+
+                // At least one more byte = Try writing the null char
+                if capped.stream.remaining_writable() != 0 {
+                    capped.write_char_or_null(None)?;
+                }
+                // No more space = Omit writing the null char (the decoder can figure this out)
+            }
         }
+        
         Ok(())
     }
 
@@ -1602,6 +1671,7 @@ macro_rules! make_read_fns {
 	    #[doc = "Decodes a `"]
 	    #[doc = stringify!($uty)]
 	    #[doc = "` from the underlying stream, according to the endianness and numerical encoding in the encoder's state"]
+        #[inline]
 	    pub fn $u_read(&mut self) -> EncodingResult<$uty> {
 		    self.$u_read_direct(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
@@ -1652,6 +1722,7 @@ macro_rules! make_read_fns {
 	    #[doc = "Decodes a `"]
 	    #[doc = stringify!($ity)]
 	    #[doc = "` from the underlying stream, according to the endianness and numerical encoding in the encoder's context"]
+        #[inline]
 	    pub fn $i_read(&mut self) -> EncodingResult<$ity> {
 		    self.$i_read_direct(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
@@ -1760,6 +1831,7 @@ impl<T: Read> Encoder<'_, T> {
     /// from the underlying stream, according to the endianness, numerical encoding
     /// and bit-width in the encoder's state, with an additional check that the size
     /// does not exceed the max size.
+    #[inline]
     pub fn read_usize(&mut self) -> EncodingResult<usize> {
         if let Some(size) = self.ctxt.size_flatten() {
             Ok(size)
@@ -1787,6 +1859,7 @@ impl<T: Read> Encoder<'_, T> {
 
     /// Decodes a `isize` from the underlying stream, according to the endianness,
     /// numerical encoding and bit-width in the encoder's state
+    #[inline]
     pub fn read_isize(&mut self) -> EncodingResult<isize> {
         let encoding = self.ctxt.settings.size_repr.num_encoding;
         let endianness = self.ctxt.settings.size_repr.endianness;
@@ -1872,6 +1945,7 @@ impl<T: Read> Encoder<'_, T> {
     /// If the `bool` flatten variable is set to `Some`,
     /// then its value is returned without reading,
     /// otherwise the boolean is decoded as described above.
+    #[inline]
     pub fn read_bool(&mut self) -> EncodingResult<bool> {
         if let Some(boolean) = self.ctxt.bool_flatten() {
             Ok(boolean)
@@ -1886,12 +1960,21 @@ impl<T: Read> Encoder<'_, T> {
 
     /// Decodes a `char` from the underlying stream, according to the endianness and string encoding
     /// in the encoder's state.
+    #[inline]
     pub fn read_char(&mut self) -> EncodingResult<char> {
+        self.read_char_or_null()?.ok_or(EncodingError::StringError(StringError::InvalidChar))
+    }
+
+    #[inline]
+    fn read_char_or_null(&mut self) -> EncodingResult<Option<char>> {
         let endianness = self.ctxt.settings.string_repr.endianness;
-        match self.ctxt.settings.string_repr.str_encoding {
+        match self.ctxt.settings.string_repr.encoding {
             StrEncoding::Utf8 => {
                 // See https://en.wikipedia.org/wiki/UTF-8#Encoding
                 let mut buf = self.read_byte()?;
+                if buf == 0 {
+                    return Ok(None);
+                }
                 let (add, rshift) = if buf.leading_ones() == 0 {
                     (0usize, 1u32)
                 } else {
@@ -1899,7 +1982,7 @@ impl<T: Read> Encoder<'_, T> {
                     if leading == 1 || leading > 4 {
                         // The first byte was either a continuation byte
                         // or forward declared more than 3 continuation bytes
-                        return Err(StringError::InvalidUtf8.into());
+                        return Err(StringError::InvalidChar.into());
                     }
                     (leading as usize - 1, leading + 1)
                 };
@@ -1912,18 +1995,21 @@ impl<T: Read> Encoder<'_, T> {
 
                     if buf.leading_ones() != 1 {
                         // This byte was not a continuation byte, but we expected it to be
-                        return Err(StringError::InvalidUtf8.into());
+                        return Err(StringError::InvalidChar.into());
                     }
 
                     shift += 6;
                     ch = (ch << shift) | ((buf & 0b0011_1111) as u32);
                 }
 
-                char::from_u32(ch).ok_or(StringError::InvalidUtf8.into())
+                Ok(Some(char::from_u32(ch).ok_or(EncodingError::StringError(StringError::InvalidChar))?))
             }
             StrEncoding::Utf16 => {
                 // See https://en.wikipedia.org/wiki/UTF-16#Code_points_from_U+010000_to_U+10FFFF
                 let buf = self.read_u16_with(NumEncoding::Fixed, endianness)?;
+                if buf == 0 {
+                    return Ok(None);
+                }
                 let ch;
 
                 // This is a high surrogate
@@ -1934,7 +2020,7 @@ impl<T: Read> Encoder<'_, T> {
                     if !(0xDC00 <= low_surrogate && low_surrogate <= 0xDFFF) {
                         // First character was in the high surrogate range,
                         // but the second character wasn't in the low surrogate range
-                        return Err(StringError::InvalidUtf16.into());
+                        return Err(StringError::InvalidChar.into());
                     }
 
                     const LOW_TEN_BITS: u16 = 0b0000_0011_1111_1111;
@@ -1945,16 +2031,20 @@ impl<T: Read> Encoder<'_, T> {
                     ch = (high_bits << 10) | low_bits;
                 } else if 0xDC00 <= buf && buf <= 0xDFFF {
                     // First character was in the low surrogate range
-                    return Err(StringError::InvalidUtf16.into());
+                    return Err(StringError::InvalidChar.into());
                 } else {
                     ch = buf as u32;
                 }
 
-                char::from_u32(ch).ok_or(StringError::InvalidUtf16.into())
+                Ok(Some(char::from_u32(ch).ok_or(EncodingError::StringError(StringError::InvalidChar))?))
             }
             StrEncoding::Utf32 => {
                 let ch = self.read_u32_with(NumEncoding::Fixed, endianness)?;
-                char::from_u32(ch).ok_or(StringError::InvalidUtf32.into())
+                if ch == 0 {
+                    return Ok(None);
+                }
+                
+                Ok(Some(char::from_u32(ch).ok_or(EncodingError::StringError(StringError::InvalidChar))?))
             }
         }
     }
@@ -1962,6 +2052,7 @@ impl<T: Read> Encoder<'_, T> {
     /// Decodes a `f32` from the underlying stream, ignoring the numeric encoding but respecting
     /// the endianness. Equivalent of `f32::from_bits(self.read_u32())` with the numeric
     /// encoding set to [`NumEncoding::Fixed`].
+    #[inline]
     pub fn read_f32(&mut self) -> EncodingResult<f32> {
         Ok(f32::from_bits(self.read_u32_with(
             NumEncoding::Fixed,
@@ -1972,50 +2063,113 @@ impl<T: Read> Encoder<'_, T> {
     /// Decodes a `f64` from the underlying stream, ignoring the numeric encoding but respecting
     /// the endianness. Equivalent of `f64::from_bits(self.read_u64())` with the numeric
     /// encoding set to [`NumEncoding::Fixed`].
+    #[inline]
     pub fn read_f64(&mut self) -> EncodingResult<f64> {
         Ok(f64::from_bits(self.read_u64_with(
             NumEncoding::Fixed,
             self.ctxt.settings.num_repr.endianness,
         )?))
     }
-
+    
     /// Decodes a String from the underlying stream, according to the endianness,
     /// and string encoding in the encoder's state.
+    #[inline]
     pub fn read_str<S>(&mut self) -> EncodingResult<S>
     where
         S: FromIterator<char>,
     {
-        let length = self.read_usize()?;
-
-        struct CharIter<'iter, 'user, T: Read> {
+        struct LenPrefixCharIter<'iter, 'user, T: Read> {
             encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
         }
 
-        impl<'iter, 'user, T: Read> Iterator for CharIter<'iter, 'user, T> {
+        impl<'iter, 'user, T: Read> Iterator for LenPrefixCharIter<'iter, 'user, T> {
             type Item = EncodingResult<char>;
             fn next(&mut self) -> Option<Self::Item> {
+                if self.encoder.stream.remaining_readable() == 0 {
+                    // We expect 0 more bytes
+                    // This means we can end the iterator by returning None
+                    return None;
+                };
                 match self.encoder.read_char() {
-                    err @ Err(EncodingError::UnexpectedEnd) => {
-                        if self.encoder.stream.remaining_readable() != 0 {
-                            // We reached the limit, but we were expecting more data
-                            // This is a hard error
-                            Some(err)
-                        } else {
-                            // We reached the limit, but we expected 0 more bytes
-                            // this means we can end the iterator by returning None
-                            None
-                        }
-                    }
+                    // Possible error covered:
+                    // We reached the limit, but we were expecting more data
+                    // This is a hard error
+                    // 
+                    // Any other error behaves the same
                     any => Some(any),
                 }
             }
         }
 
-        let iter = CharIter {
-            encoder: Encoder::new(SizeLimit::new(&mut self.stream, 0, length), self.ctxt),
-        };
+        struct NullTermCharIter<'iter, 'user, T: Read> {
+            encoder: &'iter mut Encoder<'user, T>,
+        }
 
-        iter.collect()
+        impl<T: Read> Iterator for NullTermCharIter<'_, '_, T> {
+            type Item = EncodingResult<char>;
+            fn next(&mut self) -> Option<Self::Item> {
+                match self.encoder.read_char_or_null() {
+                    Ok(None) => { // Null character found
+                        None // => STOP!
+                    }
+                    Ok(Some(x)) => { // Just a char
+                        Some(Ok(x)) // ==> Continue
+                    },
+                    Err(x) => { // An unrelated error occurred
+                        Some(Err(x)) // ==> "Continue" but actually early return an error
+                    }
+                }
+            }
+        }
+
+        struct NullTermWithMaxCharIter<'iter, 'user, T: Read> {
+            encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
+        }
+
+        impl<T: Read> Iterator for NullTermWithMaxCharIter<'_, '_, T> {
+            type Item = EncodingResult<char>;
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.encoder.stream.remaining_readable() == 0 {
+                    // We reached the maximum amount of bytes we can read
+                    // Simply end the iterator
+                    return None;
+                }
+                match self.encoder.read_char_or_null() {
+                    Ok(None) => { // Null character found
+                        None // => STOP!
+                    }
+                    Ok(Some(x)) => { // Just a char
+                        Some(Ok(x)) // ==> Continue
+                    },
+                    Err(x) => { // An unrelated error occurred
+                        Some(Err(x)) // ==> "Continue" but actually early return an error
+                    }
+                }
+            }
+        }
+
+        match self.ctxt.settings.string_repr.len {
+            StrLen::LengthPrefixed => {
+                let length = self.read_usize()?;
+                let iter = LenPrefixCharIter {
+                    encoder: Encoder::new(SizeLimit::new(&mut self.stream, 0, length), self.ctxt),
+                };
+
+                iter.collect()
+            }
+            StrLen::NullTerminated => {
+                let iter = NullTermCharIter {
+                    encoder: self
+                };
+                iter.collect()
+            }
+            StrLen::NullTerminatedOrMax(max) => {
+                let iter = NullTermWithMaxCharIter {
+                    encoder: Encoder::new(SizeLimit::new(&mut self.stream, 0, max), self.ctxt),
+                };
+                iter.collect()
+            }
+        }
     }
 
     /// Reads a single byte from the stream.

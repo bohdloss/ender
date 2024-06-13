@@ -204,15 +204,9 @@ pub enum StringError {
     /// A generic conversion error. E.G. converting an `OsStr` to `str` and back
     #[display("String conversion error")]
     ConversionError,
-    /// A string couldn't be converted to-from utf8 (necessary step for the rust string type)
-    #[display("Invalid UTF-8 characters in string data")]
-    InvalidUtf8,
-    /// A string contained invalid UTF-16 data
-    #[display("Invalid UTF-16 characters in string data")]
-    InvalidUtf16,
-    /// A string contained invalid UTF-32 data
-    #[display("Invalid UTF-32 characters in string data")]
-    InvalidUtf32,
+    /// A string contained invalid data
+    #[display("Invalid characters in string data")]
+    InvalidChar,
 }
 
 impl_error!(StringError);

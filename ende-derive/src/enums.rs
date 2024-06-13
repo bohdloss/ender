@@ -3,6 +3,7 @@
 //! must be ALWAYS reflected here.
 
 use std::fmt::Display;
+use syn::Expr;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Endianness {
@@ -82,4 +83,11 @@ impl Display for StrEncoding {
         .to_owned();
         write!(f, "{}", str)
     }
+}
+
+#[derive(Clone)]
+pub enum StrLen {
+    LengthPrefixed,
+    NullTerminated,
+    NullTerminatedOrMax(Expr),
 }
