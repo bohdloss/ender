@@ -69,9 +69,11 @@ pub mod kw {
     // Max size
     custom_keyword!(max);
     // String encoding
+    custom_keyword!(ascii);
     custom_keyword!(utf8);
     custom_keyword!(utf16);
     custom_keyword!(utf32);
+    custom_keyword!(windows1252);
     // String length encoding
     custom_keyword!(null_term);
     custom_keyword!(len_prefix);
@@ -138,6 +140,9 @@ pub enum Modifier {
         span: Span,
         width: BitWidth,
     },
+    Ascii {
+        kw: kw::ascii,
+    },
     Utf8 {
         kw: kw::utf8,
     },
@@ -146,6 +151,9 @@ pub enum Modifier {
     },
     Utf32 {
         kw: kw::utf32,
+    },
+    Windows1252 {
+        kw: kw::windows1252,
     },
     LenPrefix {
         kw: kw::len_prefix,
@@ -357,9 +365,7 @@ pub enum Flag {
         var: Ident,
     },
     /// Forces a `Seek*` implementation
-    Seek {
-        kw: kw::seeking,
-    }
+    Seek { kw: kw::seeking },
 }
 
 impl Flag {
@@ -506,12 +512,16 @@ impl Parse for Modifier {
                 span,
                 width: BitWidth::Bit128,
             })
+        } else if input.peek(kw::ascii) {
+            Ok(Self::Ascii { kw: input.parse()? })
         } else if input.peek(kw::utf8) {
             Ok(Self::Utf8 { kw: input.parse()? })
         } else if input.peek(kw::utf16) {
             Ok(Self::Utf16 { kw: input.parse()? })
         } else if input.peek(kw::utf32) {
             Ok(Self::Utf32 { kw: input.parse()? })
+        } else if input.peek(kw::windows1252) {
+            Ok(Self::Windows1252 { kw: input.parse()? })
         } else if input.peek(kw::len_prefix) {
             Ok(Self::LenPrefix { kw: input.parse()? })
         } else if input.peek(kw::null_term) {
@@ -521,7 +531,7 @@ impl Parse for Modifier {
                     let inside;
                     Some((parenthesized!(inside in input), inside.parse()?))
                 } else {
-                    None 
+                    None
                 },
             })
         } else {
@@ -697,9 +707,7 @@ impl Parse for Flag {
                 var: input.parse()?,
             })
         } else if input.peek(kw::seeking) {
-            Ok(Self::Seek {
-                kw: input.parse()?,
-            })
+            Ok(Self::Seek { kw: input.parse()? })
         } else {
             Err(Error::new(input.span(), FLAGS_USAGE))
         }

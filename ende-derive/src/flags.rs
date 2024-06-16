@@ -112,7 +112,7 @@ impl ModifierGroup {
         const REPEATED_BIT_WIDTH: &str = "Bit width modifier declared twice for the same target";
         const REPEATED_STR_ENCODING: &str =
             "String encoding modifier declared twice for the same target";
-        const REPEATED_STR_LEN: &str = 
+        const REPEATED_STR_LEN: &str =
             "String length encoding modifier declared twice for the same target";
 
         const NOT_STRING: &str = r#"This modifier can't be applied to the "string" target"#;
@@ -196,6 +196,16 @@ impl ModifierGroup {
 
                 self.bit_width = Some(width);
             }
+            Modifier::Ascii { kw, .. } => {
+                if !self.target.string() {
+                    return Err(Error::new(kw.span(), ONLY_STRING));
+                }
+                if self.str_encoding.is_some() {
+                    return Err(Error::new(kw.span(), REPEATED_STR_ENCODING));
+                }
+
+                self.str_encoding = Some(StrEncoding::Ascii);
+            }
             Modifier::Utf8 { kw, .. } => {
                 if !self.target.string() {
                     return Err(Error::new(kw.span(), ONLY_STRING));
@@ -226,6 +236,16 @@ impl ModifierGroup {
 
                 self.str_encoding = Some(StrEncoding::Utf32);
             }
+            Modifier::Windows1252 { kw, .. } => {
+                if !self.target.string() {
+                    return Err(Error::new(kw.span(), ONLY_STRING));
+                }
+                if self.str_encoding.is_some() {
+                    return Err(Error::new(kw.span(), REPEATED_STR_ENCODING));
+                }
+
+                self.str_encoding = Some(StrEncoding::Windows1252);
+            }
             Modifier::NullTerm { kw, max } => {
                 if !self.target.string() {
                     return Err(Error::new(kw.span(), ONLY_STRING));
@@ -233,7 +253,7 @@ impl ModifierGroup {
                 if self.str_len.is_some() {
                     return Err(Error::new(kw.span(), REPEATED_STR_LEN));
                 }
-                
+
                 if let Some((_, max)) = max {
                     self.str_len = Some(StrLen::NullTerminatedOrMax(max));
                 } else {
@@ -247,7 +267,7 @@ impl ModifierGroup {
                 if self.str_len.is_some() {
                     return Err(Error::new(kw.span(), REPEATED_STR_LEN));
                 }
-                
+
                 self.str_len = Some(StrLen::LengthPrefixed);
             }
         }
@@ -383,7 +403,7 @@ pub struct Flags {
     pub seek: Option<SeekParam>,
     /// Keeps track of the position at this point, before the field it's applied on is encoded/decoded
     /// and stores it in a variable of the given name.
-    /// 
+    ///
     /// Can only be applied to fields
     pub pos_tracker: Option<Ident>,
     /// Forces a `Seek*` implementation
@@ -411,10 +431,10 @@ impl Flags {
     }
 
     pub fn requires_seeking_impl(&self) -> bool {
-        self.force_seek ||
-        self.seek.is_some() ||
-            self.pos_tracker.is_some() ||
-            self.stream_modifiers.iter().any(StreamModifier::is_ptr)
+        self.force_seek
+            || self.seek.is_some()
+            || self.pos_tracker.is_some()
+            || self.stream_modifiers.iter().any(StreamModifier::is_ptr)
     }
 
     pub fn skip_compatible(&self) -> bool {
@@ -618,9 +638,12 @@ impl Flags {
             }
             Flag::PosTracker { var, .. } => {
                 if self.pos_tracker.is_some() {
-                    return Err(Error::new(span, r#""pos_tracker" flag declared more than once"#));
+                    return Err(Error::new(
+                        span,
+                        r#""pos_tracker" flag declared more than once"#,
+                    ));
                 }
-                
+
                 self.pos_tracker = Some(var);
             }
             Flag::Seek { .. } => {
@@ -628,9 +651,12 @@ impl Flags {
                     return Err(Error::new(span, r#""seek" flag declared more than once"#));
                 }
                 if self.target != FlagTarget::Item {
-                    return Err(Error::new(span, r#""seek" flag can only be declared on items"#));
+                    return Err(Error::new(
+                        span,
+                        r#""seek" flag can only be declared on items"#,
+                    ));
                 }
-                
+
                 self.force_seek = true;
             }
         }

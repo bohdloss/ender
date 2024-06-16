@@ -68,17 +68,21 @@ impl Display for BitWidth {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum StrEncoding {
+    Ascii,
     Utf8,
     Utf16,
     Utf32,
+    Windows1252,
 }
 
 impl Display for StrEncoding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = match self {
+            StrEncoding::Ascii => "Ascii",
             StrEncoding::Utf8 => "Utf8",
             StrEncoding::Utf16 => "Utf16",
             StrEncoding::Utf32 => "Utf32",
+            StrEncoding::Windows1252 => "Windows1252",
         }
         .to_owned();
         write!(f, "{}", str)

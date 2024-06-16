@@ -1,9 +1,11 @@
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote, TokenStreamExt, ToTokens};
-use syn::{Expr, parse_quote, Type};
+use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use syn::{parse_quote, Expr, Type};
 
 use crate::ctxt::{Ctxt, Field, ItemType, Scope, Target, Variant};
-use crate::flags::{AllModifiers, Flags, FlagTarget, Function, ModifierGroup, StreamModifier, TypeModifier};
+use crate::flags::{
+    AllModifiers, FlagTarget, Flags, Function, ModifierGroup, StreamModifier, TypeModifier,
+};
 use crate::generator::tokenize::CtxtToTokens;
 use crate::parse::Formatting;
 
@@ -198,7 +200,11 @@ impl ToTokens for Formatting {
 
 impl Flags {
     /// Derives validation code for a field about to be encoded or which has just been decoded
-    pub fn derive_validation(&self, ctxt: &Ctxt, ref_code: Option<&RefCode>) -> syn::Result<TokenStream2> {
+    pub fn derive_validation(
+        &self,
+        ctxt: &Ctxt,
+        ref_code: Option<&RefCode>,
+    ) -> syn::Result<TokenStream2> {
         Ok(if let Some((validate, fmt)) = &self.validate {
             let ref crate_name = ctxt.flags.crate_name;
 
@@ -330,13 +336,13 @@ impl ModifierGroup {
         }
 
         if let Some(ref str_len) = self.str_len {
-            let str_encoding = str_len.ctxt_tokens(ctxt);
+            let str_len = str_len.ctxt_tokens(ctxt);
             let save_state = format_ident!("__{}_str_len_encoding", target.to_string());
             save.push(quote!(
                 let #save_state = #encoder.ctxt.settings.#target.len;
             ));
             set.push(quote!(
-                #encoder.ctxt.settings.#target.len = #str_encoding;
+                #encoder.ctxt.settings.#target.len = #str_len;
             ));
             restore.push(quote!(
                 #encoder.ctxt.settings.#target.len = #save_state;
@@ -450,13 +456,12 @@ impl Flags {
                 FlagTarget::Field => quote!(with_field),
             };
 
-
             let input = quote!(
                 #crate_name::Encoder::#method_name(&mut * #encoder, |#encoder| { Ok({ #input }) }, #string)?
             );
             Ok(input)
         }
-        
+
         #[cfg(not(feature = "debug"))]
         {
             let _ = target;

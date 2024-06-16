@@ -44,7 +44,7 @@ impl CtxtToTokens for StrLen {
             StrLen::NullTerminated => quote!(NullTerminated),
             StrLen::NullTerminatedOrMax(max) => quote!(NullTerminatedOrMax(#max)),
         };
-        
+
         quote!(#crate_name::StrLen::#variant)
     }
 }

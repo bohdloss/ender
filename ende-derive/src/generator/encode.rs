@@ -9,12 +9,17 @@ impl Ctxt {
     pub(super) fn derive_encode(&self) -> syn::Result<TokenStream2> {
         let ref crate_name = self.flags.crate_name;
         let ref item_name = self.item_name;
-        
+
         match self.item_type {
             ItemType::Struct => {
                 let (pre, post) = self.flags.mods.derive(self)?;
                 let body = self.struct_data.derive_encode(self)?;
-                let modified = self.flags.derive_stream_modifiers(self, body, FlagTarget::Item, item_name.to_string())?;
+                let modified = self.flags.derive_stream_modifiers(
+                    self,
+                    body,
+                    FlagTarget::Item,
+                    item_name.to_string(),
+                )?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
@@ -49,7 +54,12 @@ impl Ctxt {
                         #variant_code
                     }
                 );
-                let modified = self.flags.derive_stream_modifiers(self, body, FlagTarget::Item, item_name.to_string())?;
+                let modified = self.flags.derive_stream_modifiers(
+                    self,
+                    body,
+                    FlagTarget::Item,
+                    item_name.to_string(),
+                )?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
 
@@ -72,8 +82,13 @@ impl Variant {
     fn encode_match(&self, ctxt: &Ctxt, body: TokenStream2) -> syn::Result<TokenStream2> {
         let ref name = self.name;
         let fields = self.fields.iter().map(|x| &x.name);
-        let body = self.flags.derive_stream_modifiers(ctxt, body, FlagTarget::Variant, name.to_string())?;
-        
+        let body = self.flags.derive_stream_modifiers(
+            ctxt,
+            body,
+            FlagTarget::Variant,
+            name.to_string(),
+        )?;
+
         Ok(match self.flavor {
             Flavor::Unit => {
                 quote!(
@@ -155,7 +170,7 @@ impl Field {
         let validate = self.flags.derive_validation(ctxt, Some(&ref_code))?;
         let seek = self.flags.derive_seek(ctxt)?;
         let pos_tracker = self.flags.derive_pos_tracker(ctxt)?;
-        
+
         let encode = if let Some(converter) = &self.flags.ty_mods {
             self.flags.function.derive_encode(
                 ctxt,
@@ -168,8 +183,13 @@ impl Field {
                 .derive_encode(ctxt, field_name.to_token_stream(), field_ty)?
         };
 
-        let modified = self.flags.derive_stream_modifiers(ctxt, encode, FlagTarget::Field, field_accessor.to_string())?;
-        
+        let modified = self.flags.derive_stream_modifiers(
+            ctxt,
+            encode,
+            FlagTarget::Field,
+            field_accessor.to_string(),
+        )?;
+
         let encode = if self.flags.skip {
             quote!(
                 #validate

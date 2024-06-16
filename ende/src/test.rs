@@ -6,7 +6,7 @@
 //     #[ende(borrow)]
 //     data: &'b [u8],
 // }
-// 
+//
 // #[derive(Encode, Decode)]
 // #[ende(num: little_endian)]
 // #[allow(unused)]
@@ -23,7 +23,7 @@
 //     #[ende(with: rsa(&[], &[]))]
 //     secret: Vec<u8>,
 // }
-// 
+//
 // #[derive(Encode, Decode)]
 // struct MyStruct {
 //     secret_key: Vec<u8>,
@@ -42,17 +42,17 @@
 //     /// in the binary representation.
 //     other_data: i32,
 // }
-// 
+//
 // #[derive(Encode, Decode)]
 // pub struct TupleStruct(
 //     u64,
 //     #[ende(num: leb128, big_endian; size: max = 15, bit16, little_endian, fixed; variant: bit128, fixed, big_endian)]
 //      f64,
 // );
-// 
+//
 // #[derive(Encode, Decode)]
 // pub struct UnitStruct;
-// 
+//
 // #[derive(Encode, Decode)]
 // #[repr(isize)]
 // #[ende(size: bit64; variant: bit64, leb128)]
@@ -65,23 +65,23 @@
 //     TupleVariant(u64, #[ende(if: *m0 >= 154)] f64) = u16::MAX as isize,
 //     UnitVariant,
 // }
-// 
+//
 // #[derive(Encode, Decode)]
 // pub struct EmptyStructStruct {}
-// 
+//
 // #[derive(Encode, Decode)]
 // pub struct EmptyTupleStruct();
-// 
+//
 // #[derive(Encode, Decode)]
 // #[ende(variant: little_endian)]
 // pub enum EmptyVariantEnum {
 //     StructVariant {},
 //     TupleVariant(),
 // }
-// 
+//
 // #[derive(Encode, Decode)]
 // pub enum EmptyEnum {}
-// 
+//
 // // #[derive(Encode, Decode)]
 // // pub union Union {
 // // 	value1: u64,
@@ -101,7 +101,7 @@
 // //    |
 // // 42 | pub union Union {
 // //    |     ^^^^^
-// 
+//
 // #[derive(Encode, Decode)]
 // #[ende(with: aes)]
 // #[cfg(feature = "std")]
@@ -111,85 +111,135 @@
 //     name: String,
 // }
 
-use std::hash::{DefaultHasher, Hasher};
-use crate::{BinSettings, BitWidth, Context, Decode, Encode, Encoder, Endianness, NumEncoding, NumRepr, SizeRepr, StrEncoding, StringRepr, StrLen, VariantRepr};
 use crate::io::{Slice, SliceMut, VecStream};
+use crate::{
+    BinSettings, BitWidth, Context, Decode, Encode, Encoder, Endianness, NumEncoding, NumRepr,
+    SizeRepr, StrEncoding, StrLen, StringRepr, VariantRepr,
+};
+use std::hash::{DefaultHasher, Hasher};
 
 const SETTINGS: BinSettings = BinSettings {
-	num_repr: NumRepr {
-		endianness: Endianness::LittleEndian,
-		num_encoding: NumEncoding::Fixed
-	},
-	size_repr: SizeRepr {
-		endianness: Endianness::LittleEndian,
-		num_encoding: NumEncoding::Fixed,
-		width: BitWidth::Bit64,
-		max_size: isize::MAX as usize,
-	},
-	variant_repr: VariantRepr {
-		endianness: Endianness::LittleEndian,
-		num_encoding: NumEncoding::Fixed,
-		width: BitWidth::Bit32,
-	},
-	string_repr: StringRepr {
-		encoding: StrEncoding::Utf8,
-		endianness: Endianness::LittleEndian,
-		len: StrLen::LengthPrefixed,
-	},
+    num_repr: NumRepr {
+        endianness: Endianness::LittleEndian,
+        num_encoding: NumEncoding::Fixed,
+    },
+    size_repr: SizeRepr {
+        endianness: Endianness::LittleEndian,
+        num_encoding: NumEncoding::Fixed,
+        width: BitWidth::Bit64,
+        max_size: isize::MAX as usize,
+    },
+    variant_repr: VariantRepr {
+        endianness: Endianness::LittleEndian,
+        num_encoding: NumEncoding::Fixed,
+        width: BitWidth::Bit32,
+    },
+    string_repr: StringRepr {
+        encoding: StrEncoding::Utf8,
+        endianness: Endianness::LittleEndian,
+        len: StrLen::LengthPrefixed,
+    },
 };
 
-macro_rules! test_encoding {
+macro_rules! test_num_encoding {
     ($fn_name:ident, $encoding_name:ident) => {
-	    #[test]
-		pub fn $fn_name() {
-		    #[derive(PartialEq, Eq, Debug, Encode, Decode)]
-		    #[ende(variant: bit8)]
-		    enum MaybeSigned {
-			    Signed(i64),
-			    Unsigned(u64),
-		    }
-		    
-		    let mut settings = SETTINGS;
-		    settings.num_repr.num_encoding = NumEncoding::$encoding_name;
-		    settings.size_repr.num_encoding = NumEncoding::$encoding_name;
-		    settings.variant_repr.num_encoding = NumEncoding::$encoding_name;
-		    
-			let mut data = vec![0u8; 1000000];
-			let mut encoder = Encoder::new(SliceMut::new(&mut data), Context::with_settings(settings));
-			
-			let mut orig = Vec::new();
-			
-			let mut hash = DefaultHasher::new();
-			for x in 0..4196 {
-				hash.write_i32(x);
-				let val = hash.finish();
-				let val = if (val % 2) == 0 {
-					MaybeSigned::Unsigned(val)
-				} else {
-					MaybeSigned::Signed(-(val as i64))
-				};
-				
-				orig.push(val);
-			}
-		    orig.push(MaybeSigned::Unsigned(u64::MAX));
-		    orig.push(MaybeSigned::Signed(i64::MAX));
-		    orig.push(MaybeSigned::Signed(i64::MIN));
-			
-			orig.encode(&mut encoder).unwrap();
-			
-			let mut decoder = Encoder::new(Slice::new(&data), Context::with_settings(settings));
-			
-			let other: Vec<MaybeSigned> = Vec::decode(&mut decoder).unwrap();
-		    
-			assert_eq!(orig, other);
-		}
+        #[test]
+        pub fn $fn_name() {
+            #[derive(PartialEq, Eq, Debug, Encode, Decode)]
+            #[ende(variant: bit8)]
+            enum MaybeSigned {
+                Signed(i64),
+                Unsigned(u64),
+            }
+
+            let mut settings = SETTINGS;
+            settings.num_repr.num_encoding = NumEncoding::$encoding_name;
+            settings.size_repr.num_encoding = NumEncoding::$encoding_name;
+            settings.variant_repr.num_encoding = NumEncoding::$encoding_name;
+
+            let mut data = vec![0u8; 1000000];
+            let mut encoder =
+                Encoder::new(SliceMut::new(&mut data), Context::with_settings(settings));
+
+            let mut orig = Vec::new();
+
+            let mut hash = DefaultHasher::new();
+            for x in 0..4196 {
+                hash.write_i32(x);
+                let val = hash.finish();
+                let val = if (val % 2) == 0 {
+                    MaybeSigned::Unsigned(val)
+                } else {
+                    MaybeSigned::Signed(-(val as i64))
+                };
+
+                orig.push(val);
+            }
+            orig.push(MaybeSigned::Unsigned(u64::MAX));
+            orig.push(MaybeSigned::Signed(i64::MAX));
+            orig.push(MaybeSigned::Signed(i64::MIN));
+
+            orig.encode(&mut encoder).unwrap();
+
+            let mut decoder = Encoder::new(Slice::new(&data), Context::with_settings(settings));
+
+            let other: Vec<MaybeSigned> = Vec::decode(&mut decoder).unwrap();
+
+            assert_eq!(orig, other);
+        }
     };
 }
 
-test_encoding!(fixed_encoding, Fixed);
-test_encoding!(leb128, Leb128);
-test_encoding!(protobuf_wasteful, ProtobufWasteful);
-test_encoding!(protobuf_zz, ProtobufZigzag);
+test_num_encoding!(fixed_encoding, Fixed);
+test_num_encoding!(leb128, Leb128);
+test_num_encoding!(protobuf_wasteful, ProtobufWasteful);
+test_num_encoding!(protobuf_zz, ProtobufZigzag);
+
+macro_rules! test_str_encoding {
+    (fn $fn_name:ident($settings:ident, max: $lit:literal) { $($tt:tt)* }) => {
+	    #[test]
+	    pub fn $fn_name() {
+		    fn internal_test(mut settings: BinSettings) {
+			    fn super_internal_test($settings: BinSettings) {
+				    $($tt)*
+			    }
+
+			    settings.string_repr.len = StrLen::LengthPrefixed;
+			    super_internal_test(settings);
+			    settings.string_repr.len = StrLen::NullTerminated;
+			    super_internal_test(settings);
+			    settings.string_repr.len = StrLen::NullTerminatedOrMax($lit);
+			    super_internal_test(settings);
+
+		    }
+
+		    // Test it for every string encoding
+		    let mut settings = SETTINGS;
+		    settings.string_repr.encoding = StrEncoding::Utf8;
+		    internal_test(settings);
+		    settings.string_repr.encoding = StrEncoding::Utf16;
+		    internal_test(settings);
+		    settings.string_repr.encoding = StrEncoding::Utf32;
+		    internal_test(settings);
+	    }
+    };
+}
+
+test_str_encoding! {
+    fn simple(settings, max: 200) {
+        let mut data = vec![0u8; 1000000];
+        let mut encoder = Encoder::new(SliceMut::new(&mut data), Context::with_settings(settings));
+
+        const STRING: &str = "Hello, world!";
+
+        encoder.write_str(STRING.chars()).unwrap();
+
+        let mut decoder = Encoder::new(Slice::new(&data), Context::with_settings(settings));
+
+        let string: String = decoder.read_str().unwrap();
+        assert_eq!(&string as &str, STRING);
+    }
+}
 
 #[test]
 pub fn test() {

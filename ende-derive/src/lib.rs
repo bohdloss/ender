@@ -1,8 +1,8 @@
 use proc_macro::TokenStream as TokenStream1;
 
 use proc_macro2::{Ident, Span};
-use quote::{quote};
-use syn::{DeriveInput, GenericParam, LifetimeParam, parse_macro_input, parse_quote};
+use quote::quote;
+use syn::{parse_macro_input, parse_quote, DeriveInput, GenericParam, LifetimeParam};
 
 use crate::ctxt::{Ctxt, Target};
 
@@ -59,7 +59,7 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
         Ok(ctxt) => ctxt,
         Err(err) => return TokenStream1::from(err.to_compile_error()),
     };
-    
+
     quote!(
         #[automatically_derived]
         impl #impl_generics #crate_name::Encode<#encoder_generic> for #item_name #ty_generics #where_clause {
@@ -85,7 +85,7 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
     } else {
         parse_quote!(#encoder_generic: #crate_name::io::Read)
     };
-    
+
     // Inject the decoder's generic parameter in the `impl` generics
     let mut generics = ctxt.generics.clone();
     generics.params.push(GenericParam::Type(type_param));

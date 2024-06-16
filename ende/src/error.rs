@@ -1,9 +1,9 @@
+use crate::source::Stack;
 use crate::{BitWidth, Endianness, NumEncoding, Opaque, StrEncoding};
 use core::fmt;
 use core::fmt::Formatter;
 use embedded_io::{Error, ErrorKind, ReadExactError};
 use parse_display::Display;
-use crate::source::{Stack};
 
 macro_rules! impl_error {
     ($name:ident) => {
@@ -120,9 +120,10 @@ impl EncodingError {
             }
         }
     }
-    
+
     pub fn invalid_variant<V>(v: V) -> Self
-    where Opaque: From<V>
+    where
+        Opaque: From<V>,
     {
         Self::InvalidVariant(Opaque::from(v))
     }
@@ -207,6 +208,13 @@ pub enum StringError {
     /// A string contained invalid data
     #[display("Invalid characters in string data")]
     InvalidChar,
+    /// A string (encoded using [`StrLen::NullTerminatedOrMax`]) exceeded the maximum length
+    #[display("String is longer than expected")]
+    TooLong,
+    /// A string (encoded using [`StrLen::NullTerminatedOrMax`]) contained a null byte followed
+    /// by an unexpected non-null byte before the end of the string data.
+    #[display("Null byte expected")]
+    MissingNull,
 }
 
 impl_error!(StringError);
@@ -291,7 +299,7 @@ impl core::fmt::Display for TaggedError {
                     return write!(f, "{}", self.err);
                 }
             }
-            
+
             write!(f, "[{}] {}", self.stack, self.err)?;
         }
         Ok(())
@@ -301,15 +309,12 @@ impl core::fmt::Display for TaggedError {
 impl TaggedError {
     /// Constructs a new [`TaggedError`] from an encoding error and an
     /// error metadata stack.
-    /// 
+    ///
     /// If the `debug` feature is enabled, you can obtain an instance of [`Stack`]
     /// from an [`Encoder`] right after an error occurred (`encoder.stack`).
     #[inline]
     pub const fn from_stack(err: EncodingError, stack: Stack) -> Self {
-        Self {
-            err,
-            stack
-        }
+        Self { err, stack }
     }
 }
 

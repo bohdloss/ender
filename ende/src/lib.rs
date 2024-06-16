@@ -84,11 +84,13 @@
 //! - Protobuf - both its zigzag and "wasteful" variants
 //!
 //! ### String formats
-//! As for strings, they are currently length-prefixed, but support for null
-//! terminated strings will be added.
+//! As for strings, currently length-prefixed, null-terminated (with and without
+//! a maximum length) strings are supported, as well as the following encoding formats.
+//! - Ascii
 //! - Utf8
 //! - Utf16
 //! - Utf32
+//! - Windows1252
 //!
 //! If you need a new var-int encoding or string encoding added, feel free
 //! to open a PR!
@@ -166,7 +168,7 @@ use parse_display::Display;
 /// than their non-seek variants.
 /// When a flag is said to be a `seek` flag, it means that when used anywhere it will switch the
 /// impl to a seeking impl.
-/// 
+///
 /// The flags currently implemented are split into 5 groups:
 /// # 1. Setting Modifiers
 /// Setting-Modifier flags temporarily change certain settings of the encoder and can be applied
@@ -192,7 +194,7 @@ use parse_display::Display;
 /// - Max-size modifier: `max = $expr`
 ///   - Available targets:
 ///     - `size`
-/// - String encoding modifier: `utf8`, `utf16`, `utf32`
+/// - String encoding modifier: `ascii`, `utf8`, `utf16`, `utf32`, `windows1252`
 ///   - Available targets:
 ///     - `string`
 /// - String length encoding modifier: `len_prefix`, `null_term`, `null_term($max:expr)`
@@ -519,7 +521,7 @@ use parse_display::Display;
 /// }
 /// ```
 /// # Relationship between seek flags
-/// 
+///
 /// ```
 /// # use ende_derive::{Decode, Encode};
 /// #[derive(Encode, Decode)]
@@ -531,7 +533,7 @@ use parse_display::Display;
 ///     data: /* ... */
 /// #   (),
 /// }
-/// 
+///
 /// #[derive(Encode, Decode)]
 /// # #[ende(crate: ende)]
 /// /// As this!
@@ -564,6 +566,7 @@ mod opaque;
 #[cfg(feature = "serde")]
 mod serde;
 mod source;
+mod windows1252;
 
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
 /// with the given context.
@@ -761,8 +764,9 @@ pub enum StrLen {
     /// number of null bytes, where `n` is the length in bytes of one code unit for
     /// the given string encoding (see [`StrEncoding::bytes`]).
     NullTerminated,
-    /// Like [`StrLen::NullTerminated`], but if no end is found before the specified
-    /// amount of bytes `n`, then the length will be `n`.
+    /// Like [`StrLen::NullTerminated`], but the string always occupies `n` bytes,
+    /// where the last bytes are filled with null-bytes if the length of the string after
+    /// being encoded is less than `n` bytes.
     #[display("NullTerminatedOrMax({0})")]
     NullTerminatedOrMax(usize),
 }
@@ -771,6 +775,7 @@ pub enum StrLen {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Display)]
 #[non_exhaustive]
 pub enum StrEncoding {
+    Ascii,
     /// See [UTF-8](https://en.wikipedia.org/wiki/UTF-8)
     #[default]
     Utf8,
@@ -778,6 +783,7 @@ pub enum StrEncoding {
     Utf16,
     /// See [UTF-32](https://en.wikipedia.org/wiki/UTF-32)
     Utf32,
+    Windows1252,
 }
 
 impl StrEncoding {
@@ -785,9 +791,11 @@ impl StrEncoding {
     #[inline]
     pub const fn bytes(&self) -> usize {
         match self {
+            StrEncoding::Ascii => 1,
             StrEncoding::Utf8 => 1,
             StrEncoding::Utf16 => 2,
             StrEncoding::Utf32 => 4,
+            StrEncoding::Windows1252 => 1,
         }
     }
 }
@@ -1073,7 +1081,8 @@ macro_rules! debug_fn {
     ($fn_name:ident, $variant_name:ident ( $ty:ty )) => {
         #[inline]
         pub fn $fn_name<F, R>(&mut self, f: F, s: $ty) -> EncodingResult<R>
-            where F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>
+        where
+            F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>,
         {
             #[cfg(feature = "debug")]
             {
@@ -1099,14 +1108,19 @@ macro_rules! debug_fn {
                 f(self)
             }
         }
-    }
+    };
 }
 
 impl<'a, T> Encoder<'a, T> {
     /// Wraps the given stream and state.
     #[inline]
     pub fn new(stream: T, ctxt: Context<'a>) -> Self {
-        Self { stream, ctxt, #[cfg(feature = "debug")] stack: source::Stack::new() }
+        Self {
+            stream,
+            ctxt,
+            #[cfg(feature = "debug")]
+            stack: source::Stack::new(),
+        }
     }
 
     /// Replaces the underlying stream with the new one, returning the previous value
@@ -1114,17 +1128,22 @@ impl<'a, T> Encoder<'a, T> {
     pub fn swap_stream(&mut self, new: T) -> T {
         replace(&mut self.stream, new)
     }
-    
+
     /// Retrieves the user data and attempts to cast it to the given concrete type,
     /// returning a validation error in case the types don't match or no user data is stored.
     #[inline]
     pub fn user_data<U: Any>(&self) -> EncodingResult<&U> {
-        self.ctxt.user
+        self.ctxt
+            .user
             .ok_or(val_error!("User-data requested, but none is present"))
-            .and_then(|x| x.downcast_ref()
-                .ok_or(val_error!("User-data doesnt match the requested concrete type of {}", stringify!(U))))
+            .and_then(|x| {
+                x.downcast_ref().ok_or(val_error!(
+                    "User-data doesnt match the requested concrete type of {}",
+                    stringify!(U)
+                ))
+            })
     }
-    
+
     debug_fn!(with_item, Item(&'static str));
     debug_fn!(with_variant, Variant(&'static str));
     debug_fn!(with_field, Field(&'static str));
@@ -1497,19 +1516,31 @@ impl<T: Write> Encoder<'_, T> {
             self.write_byte(if value { 1 } else { 0 })
         }
     }
-    
+
     /// Encodes a `char` to the underlying stream, according to the endianness and string encoding
     /// in the encoder's state.
     #[inline]
     pub fn write_char(&mut self, value: char) -> EncodingResult<()> {
-        self.write_char_or_null(Some(value))
+        if value == '\0' {
+            self.write_char_or_null(None)
+        } else {
+            self.write_char_or_null(Some(value))
+        }
     }
 
+    /// You MUST guarantee that char is never '\0'
     #[inline]
     fn write_char_or_null(&mut self, value: Option<char>) -> EncodingResult<()> {
         if let Some(value) = value {
             let endianness = self.ctxt.settings.string_repr.endianness;
             match self.ctxt.settings.string_repr.encoding {
+                StrEncoding::Ascii => {
+                    if value.is_ascii() {
+                        return Err(StringError::InvalidChar.into());
+                    }
+
+                    self.write_byte(value as u8)?;
+                }
                 StrEncoding::Utf8 => {
                     let mut buf = [0u8; 4];
                     let len = value.encode_utf8(&mut buf).len();
@@ -1526,7 +1557,15 @@ impl<T: Write> Encoder<'_, T> {
                 }
                 StrEncoding::Utf32 => {
                     self.write_u32_with(value as u32, NumEncoding::Fixed, endianness)?;
-                },
+                }
+                StrEncoding::Windows1252 => {
+                    let encoded = windows1252::dec_to_enc(value);
+                    if let Some(encoded) = encoded {
+                        self.write_byte(encoded)?;
+                    } else {
+                        return Err(StringError::InvalidChar.into());
+                    }
+                }
             }
         } else {
             for _ in 0..self.ctxt.settings.string_repr.encoding.bytes() {
@@ -1606,17 +1645,21 @@ impl<T: Write> Encoder<'_, T> {
             StrLen::NullTerminatedOrMax(max) => {
                 let mut capped = Encoder::new(SizeLimit::new(&mut self.stream, max, 0), self.ctxt);
                 for ch in chars {
-                    capped.write_char(ch)?;
+                    match capped.write_char(ch) {
+                        Err(EncodingError::UnexpectedEnd) => {
+                            Err(EncodingError::StringError(StringError::TooLong))
+                        }
+                        any => any,
+                    }?;
                 }
 
-                // At least one more byte = Try writing the null char
-                if capped.stream.remaining_writable() != 0 {
-                    capped.write_char_or_null(None)?;
+                // Fill the rest with zeroes
+                for _ in 0..capped.stream.remaining_writable() {
+                    self.write_byte(0)?;
                 }
-                // No more space = Omit writing the null char (the decoder can figure this out)
             }
         }
-        
+
         Ok(())
     }
 
@@ -1962,13 +2005,30 @@ impl<T: Read> Encoder<'_, T> {
     /// in the encoder's state.
     #[inline]
     pub fn read_char(&mut self) -> EncodingResult<char> {
-        self.read_char_or_null()?.ok_or(EncodingError::StringError(StringError::InvalidChar))
+        Ok(self.read_char_or_null()?.unwrap_or('\0'))
     }
 
     #[inline]
     fn read_char_or_null(&mut self) -> EncodingResult<Option<char>> {
         let endianness = self.ctxt.settings.string_repr.endianness;
         match self.ctxt.settings.string_repr.encoding {
+            StrEncoding::Ascii => {
+                let ch = self.read_byte()?;
+                if ch == 0 {
+                    return Ok(None);
+                }
+                if !ch.is_ascii() {
+                    return Err(StringError::InvalidChar.into());
+                }
+                let ch = char::from_u32(ch as u32);
+
+                // PANIC SAFETY
+                //
+                // We check that the character is ascii before converting it to a char
+                // and if it is, we return *BEFORE* converting it, so `ch` is ALWAYS
+                // Some at this point
+                Ok(Some(ch.unwrap()))
+            }
             StrEncoding::Utf8 => {
                 // See https://en.wikipedia.org/wiki/UTF-8#Encoding
                 let mut buf = self.read_byte()?;
@@ -2002,7 +2062,9 @@ impl<T: Read> Encoder<'_, T> {
                     ch = (ch << shift) | ((buf & 0b0011_1111) as u32);
                 }
 
-                Ok(Some(char::from_u32(ch).ok_or(EncodingError::StringError(StringError::InvalidChar))?))
+                Ok(Some(char::from_u32(ch).ok_or(
+                    EncodingError::StringError(StringError::InvalidChar),
+                )?))
             }
             StrEncoding::Utf16 => {
                 // See https://en.wikipedia.org/wiki/UTF-16#Code_points_from_U+010000_to_U+10FFFF
@@ -2036,15 +2098,31 @@ impl<T: Read> Encoder<'_, T> {
                     ch = buf as u32;
                 }
 
-                Ok(Some(char::from_u32(ch).ok_or(EncodingError::StringError(StringError::InvalidChar))?))
+                Ok(Some(char::from_u32(ch).ok_or(
+                    EncodingError::StringError(StringError::InvalidChar),
+                )?))
             }
             StrEncoding::Utf32 => {
-                let ch = self.read_u32_with(NumEncoding::Fixed, endianness)?;
-                if ch == 0 {
+                let buf = self.read_u32_with(NumEncoding::Fixed, endianness)?;
+                if buf == 0 {
                     return Ok(None);
                 }
-                
-                Ok(Some(char::from_u32(ch).ok_or(EncodingError::StringError(StringError::InvalidChar))?))
+
+                Ok(Some(char::from_u32(buf).ok_or(
+                    EncodingError::StringError(StringError::InvalidChar),
+                )?))
+            }
+            StrEncoding::Windows1252 => {
+                let buf = self.read_byte()?;
+                if buf == 0 {
+                    return Ok(None);
+                }
+
+                if let Some(ch) = windows1252::enc_to_dec(buf) {
+                    Ok(Some(ch))
+                } else {
+                    Err(EncodingError::StringError(StringError::InvalidChar))
+                }
             }
         }
     }
@@ -2070,7 +2148,7 @@ impl<T: Read> Encoder<'_, T> {
             self.ctxt.settings.num_repr.endianness,
         )?))
     }
-    
+
     /// Decodes a String from the underlying stream, according to the endianness,
     /// and string encoding in the encoder's state.
     #[inline]
@@ -2090,14 +2168,8 @@ impl<T: Read> Encoder<'_, T> {
                     // This means we can end the iterator by returning None
                     return None;
                 };
-                match self.encoder.read_char() {
-                    // Possible error covered:
-                    // We reached the limit, but we were expecting more data
-                    // This is a hard error
-                    // 
-                    // Any other error behaves the same
-                    any => Some(any),
-                }
+                
+                Some(self.encoder.read_char())
             }
         }
 
@@ -2109,13 +2181,16 @@ impl<T: Read> Encoder<'_, T> {
             type Item = EncodingResult<char>;
             fn next(&mut self) -> Option<Self::Item> {
                 match self.encoder.read_char_or_null() {
-                    Ok(None) => { // Null character found
+                    Ok(None) => {
+                        // Null character found
                         None // => STOP!
                     }
-                    Ok(Some(x)) => { // Just a char
+                    Ok(Some(x)) => {
+                        // Just a char
                         Some(Ok(x)) // ==> Continue
-                    },
-                    Err(x) => { // An unrelated error occurred
+                    }
+                    Err(x) => {
+                        // An unrelated error occurred
                         Some(Err(x)) // ==> "Continue" but actually early return an error
                     }
                 }
@@ -2135,13 +2210,29 @@ impl<T: Read> Encoder<'_, T> {
                     return None;
                 }
                 match self.encoder.read_char_or_null() {
-                    Ok(None) => { // Null character found
+                    Ok(None) => {
+                        // Null character found
+                        // Read all the remaining nulls
+                        for _ in 0..self.encoder.stream.remaining_readable() {
+                            let z = match self.encoder.read_byte() {
+                                Ok(z) => z,
+                                Err(err) => return Some(Err(err)),
+                            };
+                            if z != 0 {
+                                return Some(Err(EncodingError::StringError(
+                                    StringError::MissingNull,
+                                )));
+                            }
+                        }
+
                         None // => STOP!
                     }
-                    Ok(Some(x)) => { // Just a char
+                    Ok(Some(x)) => {
+                        // Just a char
                         Some(Ok(x)) // ==> Continue
-                    },
-                    Err(x) => { // An unrelated error occurred
+                    }
+                    Err(x) => {
+                        // An unrelated error occurred
                         Some(Err(x)) // ==> "Continue" but actually early return an error
                     }
                 }
@@ -2158,9 +2249,7 @@ impl<T: Read> Encoder<'_, T> {
                 iter.collect()
             }
             StrLen::NullTerminated => {
-                let iter = NullTermCharIter {
-                    encoder: self
-                };
+                let iter = NullTermCharIter { encoder: self };
                 iter.collect()
             }
             StrLen::NullTerminatedOrMax(max) => {
@@ -2194,6 +2283,7 @@ macro_rules! make_borrow_slice_fn {
         #[doc = "` slice of `length` length from the encoder, checking"]
         #[doc = "that the [`Endianness`] and alignment match those of the system"]
         #[doc = "and that the [`NumEncoding`] is [`borrowable`][`NumEncoding::borrowable`]"]
+        #[inline]
         pub fn $name(
             &mut self,
             length: usize,
@@ -2263,6 +2353,7 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
 
     /// Borrows a `u8` slice of length `length` from the encoder,
     /// checking that the [`NumEncoding`] is [`borrowable`][`NumEncoding::borrowable`].
+    #[inline]
     pub fn borrow_u8_slice(
         &mut self,
         len: usize,
@@ -2285,6 +2376,7 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
 
     /// Borrows a `u8` slice of length `length` from the encoder,
     /// checking that the [`NumEncoding`] is [`borrowable`][`NumEncoding::borrowable`].
+    #[inline]
     pub fn borrow_i8_slice(
         &mut self,
         len: usize,
@@ -2313,6 +2405,7 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
     ///
     /// Checks that the [`Endianness`] and [`BitWidth`] match those of the target system,
     /// and that the [`NumEncoding`] is [`borrowable`][`NumEncoding::borrowable`]
+    #[inline]
     pub fn borrow_usize_slice(
         &mut self,
         len: usize,
@@ -2371,6 +2464,7 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
     ///
     /// Checks that the [`Endianness`] and [`BitWidth`] match those of the target system,
     /// and that the [`NumEncoding`] is [`borrowable`][`NumEncoding::borrowable`]
+    #[inline]
     pub fn borrow_isize_slice(
         &mut self,
         len: usize,
@@ -2446,7 +2540,7 @@ impl<T: Seek> Encoder<'_, T> {
         let cur = self.stream.seek(seek)? as isize;
         // Find the difference
         let diff = prev - cur;
-        
+
         // Now we can seek even on streams that don't support seeking from the Start or End
         self.stream.seek(SeekFrom::Current(diff))?;
         ret
@@ -2459,7 +2553,7 @@ pub trait Encode<W: Write> {
     ///
     /// Implementations that **need** to seek, should implement [`seek_encode`][`Self::seek_encode`]
     /// instead, and define this method to return a [`SeekError::SeekNecessary`]
-    /// 
+    ///
     /// Calling `encode` multiple times on the same value without
     /// changing the encoder settings or the value itself in-between calls should produce
     /// the same output.
@@ -2479,7 +2573,7 @@ pub trait Decode<R: Read>: Sized {
     ///
     /// Implementations that **need** to seek, should implement [`seek_decode`][`Self::seek_decode`]
     /// instead, and define this method to return a [`SeekError::SeekNecessary`]
-    /// 
+    ///
     /// Calling `decode` multiple times without changing the
     /// encoder settings or the underlying binary data in-between calls should produce
     /// the same output.
@@ -2499,7 +2593,7 @@ pub trait BorrowDecode<'data, R: BorrowRead<'data>>: Sized {
     ///
     /// Implementations that **need** to seek, should implement [`seek_borrow_decode`][`Self::seek_borrow_decode`]
     /// instead, and define this method to return a [`SeekError::SeekNecessary`]
-    /// 
+    ///
     /// Calling `borrow_decode` multiple times without changing the
     /// encoder settings or the underlying binary data in-between calls should produce
     /// the same output.
@@ -2509,7 +2603,5 @@ pub trait BorrowDecode<'data, R: BorrowRead<'data>>: Sized {
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
-    fn borrow_decode(
-        decoder: &mut Encoder<R>,
-    ) -> EncodingResult<Self>;
+    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self>;
 }
