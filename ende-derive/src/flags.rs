@@ -255,7 +255,7 @@ impl ModifierGroup {
                 }
 
                 if let Some((_, max)) = max {
-                    self.str_len = Some(StrLen::NullTerminatedOrMax(max));
+                    self.str_len = Some(StrLen::NullTerminatedFixed(max));
                 } else {
                     self.str_len = Some(StrLen::NullTerminated);
                 }

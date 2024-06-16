@@ -42,7 +42,7 @@ impl CtxtToTokens for StrLen {
         let variant = match self {
             StrLen::LengthPrefixed => quote!(LengthPrefixed),
             StrLen::NullTerminated => quote!(NullTerminated),
-            StrLen::NullTerminatedOrMax(max) => quote!(NullTerminatedOrMax(#max)),
+            StrLen::NullTerminatedFixed(max) => quote!(NullTerminatedFixed(#max)),
         };
 
         quote!(#crate_name::StrLen::#variant)

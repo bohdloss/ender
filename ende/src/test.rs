@@ -208,7 +208,7 @@ macro_rules! test_str_encoding {
 			    super_internal_test(settings);
 			    settings.string_repr.len = StrLen::NullTerminated;
 			    super_internal_test(settings);
-			    settings.string_repr.len = StrLen::NullTerminatedOrMax($lit);
+			    settings.string_repr.len = StrLen::NullTerminatedFixed($lit);
 			    super_internal_test(settings);
 
 		    }

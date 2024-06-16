@@ -767,8 +767,8 @@ pub enum StrLen {
     /// Like [`StrLen::NullTerminated`], but the string always occupies `n` bytes,
     /// where the last bytes are filled with null-bytes if the length of the string after
     /// being encoded is less than `n` bytes.
-    #[display("NullTerminatedOrMax({0})")]
-    NullTerminatedOrMax(usize),
+    #[display("NullTerminatedFixed({0})")]
+    NullTerminatedFixed(usize),
 }
 
 /// The encoding method used for strings and chars.
@@ -1642,7 +1642,7 @@ impl<T: Write> Encoder<'_, T> {
                 }
                 self.write_char_or_null(None)?;
             }
-            StrLen::NullTerminatedOrMax(max) => {
+            StrLen::NullTerminatedFixed(max) => {
                 let mut capped = Encoder::new(SizeLimit::new(&mut self.stream, max, 0), self.ctxt);
                 for ch in chars {
                     match capped.write_char(ch) {
@@ -2252,7 +2252,7 @@ impl<T: Read> Encoder<'_, T> {
                 let iter = NullTermCharIter { encoder: self };
                 iter.collect()
             }
-            StrLen::NullTerminatedOrMax(max) => {
+            StrLen::NullTerminatedFixed(max) => {
                 let iter = NullTermWithMaxCharIter {
                     encoder: Encoder::new(SizeLimit::new(&mut self.stream, 0, max), self.ctxt),
                 };

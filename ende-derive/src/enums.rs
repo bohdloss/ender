@@ -93,5 +93,5 @@ impl Display for StrEncoding {
 pub enum StrLen {
     LengthPrefixed,
     NullTerminated,
-    NullTerminatedOrMax(Expr),
+    NullTerminatedFixed(Expr),
 }
