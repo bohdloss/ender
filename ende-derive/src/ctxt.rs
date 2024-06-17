@@ -110,7 +110,6 @@ pub struct Variant {
 pub enum Target {
     Encode,
     Decode,
-    BorrowDecode,
 }
 
 impl Display for Target {
@@ -118,7 +117,6 @@ impl Display for Target {
         let str = match self {
             Target::Encode => "Encode",
             Target::Decode => "Decode",
-            Target::BorrowDecode => "BorrowDecode",
         }
         .to_owned();
         write!(f, "{}", str)
@@ -136,7 +134,7 @@ impl Scope {
     fn matches(&self, target: Target) -> bool {
         match self {
             Scope::Encode => target == Target::Encode,
-            Scope::Decode => target == Target::Decode || target == Target::BorrowDecode,
+            Scope::Decode => target == Target::Decode,
             Scope::Both => true,
         }
     }
@@ -287,7 +285,7 @@ impl Ctxt {
             Data::Struct(data) => {
                 // Extract the fields
                 let (flavor, mut fields) = extract_fields_and_flavor(&data.fields, target)?;
-                process_field_lifetimes(target, &mut fields, &mut lifetimes)?;
+                process_field_lifetimes(&mut fields, &mut lifetimes)?;
 
                 struct_data = Struct { flavor, fields };
 
@@ -311,7 +309,7 @@ impl Ctxt {
                 for variant in data.variants.iter() {
                     // Extract the variant fields and flavor
                     let (flavor, mut fields) = extract_fields_and_flavor(&variant.fields, target)?;
-                    process_field_lifetimes(target, &mut fields, &mut lifetimes)?;
+                    process_field_lifetimes(&mut fields, &mut lifetimes)?;
 
                     if let Some((_, discriminant)) = &variant.discriminant {
                         variant_index.value(discriminant);
@@ -341,10 +339,8 @@ impl Ctxt {
         };
 
         // Deduplicate lifetime bounds
-        if target == Target::BorrowDecode {
-            lifetimes.sort();
-            lifetimes.dedup();
-        }
+        lifetimes.sort();
+        lifetimes.dedup();
 
         // Finally construct a context
         let mut ctxt = Ctxt {
@@ -352,7 +348,7 @@ impl Ctxt {
             target,
             encoder: match target {
                 Target::Encode => Ident::new("__encoder", Span::call_site()),
-                Target::Decode | Target::BorrowDecode => Ident::new("__decoder", Span::call_site()),
+                Target::Decode => Ident::new("__decoder", Span::call_site()),
             },
             encoder_generic: Ident::new("__T", Span::call_site()),
             generics: input.generics.clone(),
@@ -399,6 +395,22 @@ impl Ctxt {
                 .flat_map(|x| &x.fields)
                 .map(|x| &x.flags)
                 .any(Flags::requires_seeking_impl)
+    }
+
+    pub fn requires_borrowing_impl(&self) -> bool {
+        self.flags.requires_borrowing_impl()
+            || self
+            .struct_data
+            .fields
+            .iter()
+            .map(|x| &x.flags)
+            .any(Flags::requires_borrowing_impl)
+            || self
+            .variants
+            .iter()
+            .flat_map(|x| &x.fields)
+            .map(|x| &x.flags)
+            .any(Flags::requires_borrowing_impl)
     }
 }
 

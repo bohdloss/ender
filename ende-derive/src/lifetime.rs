@@ -2,37 +2,27 @@ use std::ops::Deref;
 
 use quote::ToTokens;
 use syn::{
-    GenericArgument, Lifetime, Path, PathArguments, Type, TypeParamBound, TypeReference, TypeSlice,
+    Lifetime, Type, TypeReference, TypeSlice,
 };
+use syn::visit::{Visit, visit_type};
 
-use crate::ctxt::{Field, Target};
+use crate::ctxt::Field;
 
 /// Searches through the fields to find all the lifetime bounds
 /// required by a `BorrowDecode` implementation.
 /// If the field has a type modifier, that type will be searched for lifetimes instead.
 /// If the target is `Decode`, this will discard all the borrow flags of the field.
 pub fn process_field_lifetimes(
-    target: Target,
     fields: &mut [Field],
     out_lifetimes: &mut Vec<Lifetime>,
 ) -> syn::Result<()> {
-    if target == Target::BorrowDecode {
-        let mut lifetimes = Vec::new();
+    for field in fields.iter_mut() {
+        let field_lifetimes = discover_field_lifetime_bounds(field)?;
+        out_lifetimes.append(&mut field_lifetimes.clone());
 
-        for field in fields.iter_mut() {
-            let field_lifetimes = discover_field_lifetime_bounds(field)?;
-            lifetimes.append(&mut field_lifetimes.clone());
-
-            if field_lifetimes.len() > 0 {
-                field.flags.borrow = Some(field_lifetimes);
-            } else {
-                field.flags.borrow = None;
-            }
-        }
-
-        out_lifetimes.append(&mut lifetimes);
-    } else {
-        for field in fields.iter_mut() {
+        if field_lifetimes.len() > 0 {
+            field.flags.borrow = Some(field_lifetimes);
+        } else {
             field.flags.borrow = None;
         }
     }
@@ -94,118 +84,16 @@ fn discover_field_lifetime_bounds(field: &Field) -> syn::Result<Vec<Lifetime>> {
     }
 }
 
-fn recursive_type_lifetime_discover(ty: &Type, vec: &mut Vec<Lifetime>) -> syn::Result<()> {
-    match ty {
-        Type::Array(array) => recursive_type_lifetime_discover(&array.elem, vec),
-        Type::BareFn(_) => Ok(()),
-        Type::Group(group) => recursive_type_lifetime_discover(&group.elem, vec),
-        Type::ImplTrait(_) | Type::Infer(_) => {
-            // Not allowed in structs
-            Ok(())
-        }
-        Type::Macro(_) => {
-            // We can't detect lifetimes in this case!
-            // When proc_macro_diagnostic is stabilized, provide a warning instead
-            Ok(())
-        }
-        Type::Never(_) => {
-            // No lifetimes here
-            Ok(())
-        }
-        Type::Paren(paren) => recursive_type_lifetime_discover(&paren.elem, vec),
-        Type::Path(path) => {
-            if let Some(qself) = &path.qself {
-                recursive_type_lifetime_discover(&qself.ty, vec)?;
-            }
-            recursive_path_lifetime_discover(&path.path, vec)
-        }
-        Type::Ptr(ptr) => recursive_type_lifetime_discover(&ptr.elem, vec),
-        Type::Reference(reference) => {
-            if let Some(lif) = &reference.lifetime {
-                vec.push(lif.clone());
-            }
-            recursive_type_lifetime_discover(&reference.elem, vec)
-        }
-        Type::Slice(slice) => recursive_type_lifetime_discover(&slice.elem, vec),
-        Type::TraitObject(trait_obj) => {
-            for bound in trait_obj.bounds.iter() {
-                recursive_type_param_bound_lifetime_discover(bound, vec)?;
-            }
-            Ok(())
-        }
-        Type::Tuple(tuple) => {
-            for ty in tuple.elems.iter() {
-                recursive_type_lifetime_discover(ty, vec)?;
-            }
-            Ok(())
-        }
-        Type::Verbatim(_) => Ok(()),
-        _ => Ok(()),
-    }
-}
-
-fn recursive_path_lifetime_discover(path: &Path, vec: &mut Vec<Lifetime>) -> syn::Result<()> {
-    for segment in path.segments.iter() {
-        match &segment.arguments {
-            PathArguments::AngleBracketed(angle_bracketed) => {
-                for arg in angle_bracketed.args.iter() {
-                    recursive_generics_lifetime_discover(arg, vec)?;
-                }
-            }
-            _ => {}
+fn recursive_type_lifetime_discover(ty: &Type, lifetimes: &mut Vec<Lifetime>) -> syn::Result<()> {
+    struct LifVisitor<'a>(&'a mut Vec<Lifetime>);
+    
+    impl Visit<'_> for LifVisitor<'_> {
+        fn visit_lifetime(&mut self, lif: &Lifetime) {
+            self.0.push(lif.clone());
         }
     }
-    Ok(())
-}
-
-fn recursive_type_param_bound_lifetime_discover(
-    bound: &TypeParamBound,
-    vec: &mut Vec<Lifetime>,
-) -> syn::Result<()> {
-    match bound {
-        TypeParamBound::Trait(trait_bound) => {
-            recursive_path_lifetime_discover(&trait_bound.path, vec)?;
-        }
-        TypeParamBound::Lifetime(lif) => vec.push(lif.clone()),
-        _ => {}
-    }
-    Ok(())
-}
-
-fn recursive_generics_lifetime_discover(
-    arg: &GenericArgument,
-    vec: &mut Vec<Lifetime>,
-) -> syn::Result<()> {
-    match arg {
-        GenericArgument::Lifetime(lif) => vec.push(lif.clone()),
-        GenericArgument::Type(ty) => recursive_type_lifetime_discover(ty, vec)?,
-        GenericArgument::Const(_) => {}
-        GenericArgument::AssocType(ty) => {
-            if let Some(generics) = &ty.generics {
-                for arg in generics.args.iter() {
-                    recursive_generics_lifetime_discover(arg, vec)?;
-                }
-            }
-            recursive_type_lifetime_discover(&ty.ty, vec)?;
-        }
-        GenericArgument::AssocConst(assoc_const) => {
-            if let Some(generics) = &assoc_const.generics {
-                for arg in generics.args.iter() {
-                    recursive_generics_lifetime_discover(arg, vec)?;
-                }
-            }
-        }
-        GenericArgument::Constraint(constraint) => {
-            if let Some(generics) = &constraint.generics {
-                for arg in generics.args.iter() {
-                    recursive_generics_lifetime_discover(arg, vec)?;
-                }
-            }
-            for bound in constraint.bounds.iter() {
-                recursive_type_param_bound_lifetime_discover(bound, vec)?;
-            }
-        }
-        _ => {}
-    }
+    
+    let mut visitor = LifVisitor(lifetimes);
+    visit_type(&mut visitor, ty);
     Ok(())
 }

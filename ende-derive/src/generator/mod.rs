@@ -17,7 +17,7 @@ impl Ctxt {
     pub fn derive(&self) -> syn::Result<TokenStream2> {
         match self.target {
             Target::Encode => self.derive_encode(),
-            Target::Decode | Target::BorrowDecode => self.derive_decode(),
+            Target::Decode => self.derive_decode(),
         }
     }
 }
@@ -49,7 +49,7 @@ impl<'a> RefCode<'a> {
                     ));
                 }
             }
-            Target::Decode | Target::BorrowDecode => {
+            Target::Decode => {
                 // Here the field already exists, but it is Owned, we need to create a Reference to it
                 let ref name = field.name;
                 self.code.append_all(quote!(
@@ -127,18 +127,14 @@ impl Function {
         &self,
         ctxt: &Ctxt,
         ty: &Type,
-        field: &Field,
+        _field: &Field,
     ) -> syn::Result<TokenStream2> {
         let ref crate_name = ctxt.flags.crate_name;
         let ref encoder_generic = ctxt.encoder_generic;
         let ref encoder = ctxt.encoder;
         Ok(match self {
             Function::Default => {
-                if field.flags.borrow.is_some() {
-                    quote!(<#ty as #crate_name::BorrowDecode<#encoder_generic>>::borrow_decode(#encoder)?)
-                } else {
-                    quote!(<#ty as #crate_name::Decode<#encoder_generic>>::decode(#encoder)?)
-                }
+                quote!(<#ty as #crate_name::Decode<#encoder_generic>>::decode(#encoder)?)
             }
             Function::Serde(serde_crate) => {
                 quote!(<#ty as #serde_crate::Deserialize>::deserialize(&mut * #encoder)?)
@@ -496,7 +492,7 @@ impl StreamModifier {
                             }
                         }
                     }
-                    Target::Decode | Target::BorrowDecode => {
+                    Target::Decode => {
                         // Expected signature:
                         // fn<Original, Transformed, Value, Fun>(&mut Encoder<Original>, Fun, ...) -> EncodingResult<Value, Original::Error>
                         // where Original: Write,

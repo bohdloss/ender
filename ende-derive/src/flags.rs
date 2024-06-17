@@ -436,6 +436,10 @@ impl Flags {
             || self.pos_tracker.is_some()
             || self.stream_modifiers.iter().any(StreamModifier::is_ptr)
     }
+    
+    pub fn requires_borrowing_impl(&self) -> bool {
+        self.borrow.is_some()
+    }
 
     pub fn skip_compatible(&self) -> bool {
         self.function.is_default()

@@ -144,7 +144,7 @@ use core::mem::replace;
 
 use parse_display::Display;
 
-/// Helper macros to derive [`Encode`], [`Decode`] and [`BorrowDecode`] for a `struct` or `enum`.<br>
+/// Helper macros to derive [`Encode`] and [`Decode`] for a `struct` or `enum`.<br>
 /// This macro supports a series of helper flags to aid customization.
 ///
 /// All flags follow the following format:
@@ -470,12 +470,12 @@ use parse_display::Display;
 ///
 /// ```rust
 /// # use std::borrow::Cow;
-/// # use ende::{Encode, Decode, BorrowDecode};
+/// # use ende::{Encode, Decode};
 /// # use uuid::Uuid;
 /// /// Hehe >:3
 /// extern crate ende as enderman;
 ///
-/// #[derive(Encode, Decode, BorrowDecode)]
+/// #[derive(Encode, Decode)]
 /// /// We specify the name of the re-exported ende crate.
 /// #[ende(crate: enderman)]
 /// /// We specify this should use a seeking impl
@@ -504,7 +504,7 @@ use parse_display::Display;
 ///   /// Go to the location in the specified file offset from this point onwards.
 ///   ///
 ///   /// This might be too long to clone from the decoder, so we borrow it instead.
-///   /// Decode impl -> Cow::Owned
+///   /// Decode impl -> Cow::Owned -- (NOT YET - WILL WORK WHEN SPECIALIZATION IS STABILIZED)
 ///   /// BorrowDecode impl -> Cow::Borrowed
 ///   /// The macro will infer the borrow lifetime to be `'record`.
 ///   #[ende(goto start: *pointer_to_data; borrow)]
@@ -549,7 +549,7 @@ use parse_display::Display;
 /// ```
 #[cfg(feature = "derive")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "derive")))]
-pub use ende_derive::{BorrowDecode, Decode, Encode};
+pub use ende_derive::{Decode, Encode};
 pub use error::*;
 pub use opaque::*;
 
@@ -584,16 +584,6 @@ pub fn encode_with<W: Write, V: Encode<W>>(
 pub fn decode_with<R: Read, V: Decode<R>>(reader: R, context: Context) -> EncodingResult<V> {
     let mut decoder = Encoder::new(reader, context);
     V::decode(&mut decoder)
-}
-
-/// Borrow-Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
-/// with the given context.
-pub fn borrow_decode_with<'data, R: BorrowRead<'data>, V: BorrowDecode<'data, R>>(
-    reader: R,
-    context: Context,
-) -> EncodingResult<V> {
-    let mut decoder = Encoder::new(reader, context);
-    V::borrow_decode(&mut decoder)
 }
 
 /// Controls the endianness of a numerical value. Endianness is just
@@ -2566,8 +2556,7 @@ pub trait Encode<W: Write> {
     fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()>;
 }
 
-/// A binary data structure specification which can be **decoded** from its binary representation
-/// into an owned type.
+/// A binary data structure specification which can be **decoded** from its binary representation.
 pub trait Decode<R: Read>: Sized {
     /// Decodes an owned version of `Self` from its binary format.
     ///
@@ -2584,24 +2573,4 @@ pub trait Decode<R: Read>: Sized {
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self>;
-}
-
-/// A binary data structure specification which can be **decoded** from its binary representation
-/// by borrowing the data.
-pub trait BorrowDecode<'data, R: BorrowRead<'data>>: Sized {
-    /// Decodes a borrowed version of `Self` from its binary format.
-    ///
-    /// Implementations that **need** to seek, should implement [`seek_borrow_decode`][`Self::seek_borrow_decode`]
-    /// instead, and define this method to return a [`SeekError::SeekNecessary`]
-    ///
-    /// Calling `borrow_decode` multiple times without changing the
-    /// encoder settings or the underlying binary data in-between calls should produce
-    /// the same output.
-    ///
-    /// If the result is Ok,
-    /// implementations should guarantee that the state of the encoder
-    /// is preserved. If the result is Err,
-    /// no guarantees are made about the state of the encoder,
-    /// and users should reset it before reuse.
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self>;
 }

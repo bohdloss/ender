@@ -7,7 +7,7 @@ use core::time::Duration;
 
 use crate::io::{BorrowRead, Read, Seek, Write};
 use crate::{
-    BorrowDecode, BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
+    BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
     StrEncoding, StringError,
 };
 
@@ -698,9 +698,9 @@ macro_rules! slice_borrow {
     ($($ty:ty => $borrow:ident);* $(;)?) => {
 	    $(
 	    #[allow(non_snake_case)]
-	    impl<'data: 'a, 'a, R: BorrowRead<'data>> $crate::BorrowDecode<'data, R> for &'a [$ty] {
+	    impl<'data: 'a, 'a, R: BorrowRead<'data>> $crate::Decode<R> for &'a [$ty] {
 		    #[inline]
-            fn borrow_decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self>{
+            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self>{
 			    let len = decoder.read_usize()?;
 			    let endianness = decoder.ctxt.settings.num_repr.endianness;
 			    let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
@@ -724,27 +724,27 @@ slice_borrow! {
     f64 => borrow_f64_slice;
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [u8] {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [u8] {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
         decoder.borrow_u8_slice(len, num_encoding)
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [i8] {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [i8] {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
         decoder.borrow_i8_slice(len, num_encoding)
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [usize] {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [usize] {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.size_repr.num_encoding;
         let endianness = decoder.ctxt.settings.size_repr.endianness;
@@ -754,9 +754,9 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [usize]
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a [isize] {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [isize] {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.size_repr.num_encoding;
         let endianness = decoder.ctxt.settings.size_repr.endianness;
@@ -785,9 +785,9 @@ impl<R: Read> Decode<R> for alloc::boxed::Box<str> {
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a str {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a str {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         // Can only be borrowed when the string encoding is utf-8
         // else the user might get some surprises if we just assume it to be utf-8
         let str_encoding = decoder.ctxt.settings.string_repr.encoding;
@@ -832,12 +832,6 @@ impl<R: Read, T: ?Sized> Decode<R> for PhantomData<T> {
     }
 }
 
-impl<'data, T: ?Sized, R: BorrowRead<'data>> BorrowDecode<'data, R> for PhantomData<T> {
-    fn borrow_decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
-        Ok(Self)
-    }
-}
-
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
 impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<T> {
@@ -864,30 +858,34 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<[T]> {
     }
 }
 
-#[cfg(feature = "alloc")]
-#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<'a, R: Read, T: ?Sized + alloc::borrow::ToOwned> Decode<R> for alloc::borrow::Cow<'a, T>
-where
-    <T as alloc::borrow::ToOwned>::Owned: Decode<R>,
-{
-    #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
-        Ok(Self::Owned(
-            <<T as alloc::borrow::ToOwned>::Owned as Decode<R>>::decode(decoder)?,
-        ))
-    }
-}
+// FIXME Re-enable this when specialization is stabilized
+// Since we only disable the more generic implementation,
+// re-enabling it won't be a breaking change.
+//
+// #[cfg(feature = "alloc")]
+// #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
+// impl<'a, R: Read, T: ?Sized + alloc::borrow::ToOwned> Decode<R> for alloc::borrow::Cow<'a, T>
+// where
+//     <T as alloc::borrow::ToOwned>::Owned: Decode<R>,
+// {
+//     #[inline]
+//     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+//         Ok(Self::Owned(
+//             <<T as alloc::borrow::ToOwned>::Owned as Decode<R>>::decode(decoder)?,
+//         ))
+//     }
+// }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<'data: 'a, 'a, R: BorrowRead<'data>, T: ?Sized + alloc::borrow::ToOwned> BorrowDecode<'data, R>
+impl<'data: 'a, 'a, R: BorrowRead<'data>, T: ?Sized + alloc::borrow::ToOwned> Decode<R>
     for alloc::borrow::Cow<'a, T>
 where
-    &'a T: BorrowDecode<'data, R>,
+    &'a T: Decode<R>,
 {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
-        Ok(Self::Borrowed(<&T>::borrow_decode(decoder)?))
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+        Ok(Self::Borrowed(<&T>::decode(decoder)?))
     }
 }
 
@@ -1103,9 +1101,9 @@ impl<R: Read> Decode<R> for alloc::boxed::Box<CStr> {
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a CStr {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a CStr {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         let mut len = 1;
         loop {
             let slice = decoder.peek_bytes(len)?;
@@ -1148,10 +1146,10 @@ impl<R: Read> Decode<R> for alloc::boxed::Box<std::ffi::OsStr> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a std::ffi::OsStr {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a std::ffi::OsStr {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
-        let string = <&str>::borrow_decode(decoder)?;
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+        let string = <&str>::decode(decoder)?;
         Ok(std::ffi::OsStr::new(string))
     }
 }
@@ -1193,10 +1191,10 @@ impl<R: Read> Decode<R> for alloc::boxed::Box<std::path::Path> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<'data: 'a, 'a, R: BorrowRead<'data>> BorrowDecode<'data, R> for &'a std::path::Path {
+impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a std::path::Path {
     #[inline]
-    fn borrow_decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
-        Ok(std::path::Path::new(<&std::ffi::OsStr>::borrow_decode(
+    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+        Ok(std::path::Path::new(<&std::ffi::OsStr>::decode(
             decoder,
         )?))
     }
