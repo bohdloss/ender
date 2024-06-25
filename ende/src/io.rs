@@ -357,6 +357,7 @@ impl Write for VecStream {
         self.ensure_capacity(self.pos + buf.len());
         let sub = &mut self.vec[self.pos..(self.pos + buf.len())];
         sub.copy_from_slice(buf);
+        self.pos += buf.len();
         Ok(())
     }
 }
@@ -369,6 +370,7 @@ impl Read for VecStream {
         self.ensure_capacity(self.pos + buf.len());
         let sub = &self.vec[self.pos..(self.pos + buf.len())];
         buf.copy_from_slice(sub);
+        self.pos += buf.len();
         Ok(())
     }
 }
