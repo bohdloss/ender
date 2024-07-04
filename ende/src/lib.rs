@@ -552,6 +552,7 @@ use parse_display::Display;
 pub use ende_derive::{Decode, Encode};
 pub use error::*;
 pub use opaque::*;
+pub use into::*;
 
 use crate::io::{BorrowRead, Read, Seek, SeekFrom, SizeLimit, SizeTrack, Write, Zero};
 
@@ -567,22 +568,40 @@ mod opaque;
 mod serde;
 mod source;
 mod windows1252;
+mod into;
+
+/// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
+/// with the default context.
+pub fn encode<W: IntoWrite, V: Encode<W::Write>>(
+    writer: W,
+    value: V,
+) -> EncodingResult<()> {
+    let mut encoder = Encoder::new(writer.into_write(), Context::default());
+    value.encode(&mut encoder)
+}
+
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
+/// with the default context.
+pub fn decode<R: IntoRead, V: Decode<R::Read>>(reader: R) -> EncodingResult<V> {
+    let mut decoder = Encoder::new(reader.into_read(), Context::default());
+    V::decode(&mut decoder)
+}
 
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
 /// with the given context.
-pub fn encode_with<W: Write, V: Encode<W>>(
+pub fn encode_with<W: IntoWrite, V: Encode<W::Write>>(
     writer: W,
     context: Context,
     value: V,
 ) -> EncodingResult<()> {
-    let mut encoder = Encoder::new(writer, context);
+    let mut encoder = Encoder::new(writer.into_write(), context);
     value.encode(&mut encoder)
 }
 
 /// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
 /// with the given context.
-pub fn decode_with<R: Read, V: Decode<R>>(reader: R, context: Context) -> EncodingResult<V> {
-    let mut decoder = Encoder::new(reader, context);
+pub fn decode_with<R: IntoRead, V: Decode<R::Read>>(reader: R, context: Context) -> EncodingResult<V> {
+    let mut decoder = Encoder::new(reader.into_read(), context);
     V::decode(&mut decoder)
 }
 
