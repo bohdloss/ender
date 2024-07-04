@@ -947,7 +947,7 @@ impl Default for BinSettings {
 }
 
 /// The state of the encoder, including its options and a `flatten` state variable
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct Context<'a> {
     /// User provided data. This can be purposed for storing any kind of data,
