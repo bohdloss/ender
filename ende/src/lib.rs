@@ -552,7 +552,7 @@ use parse_display::Display;
 pub use ende_derive::{Decode, Encode};
 pub use error::*;
 pub use opaque::*;
-pub use into::*;
+pub use convenience::*;
 
 use crate::io::{BorrowRead, Read, Seek, SeekFrom, SizeLimit, SizeTrack, Write, Zero};
 
@@ -568,42 +568,7 @@ mod opaque;
 mod serde;
 mod source;
 mod windows1252;
-mod into;
-
-/// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
-/// with the default context.
-pub fn encode<W: IntoWrite, V: Encode<W::Write>>(
-    writer: W,
-    value: V,
-) -> EncodingResult<()> {
-    let mut encoder = Encoder::new(writer.into_write(), Context::default());
-    value.encode(&mut encoder)
-}
-
-/// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
-/// with the default context.
-pub fn decode<R: IntoRead, V: Decode<R::Read>>(reader: R) -> EncodingResult<V> {
-    let mut decoder = Encoder::new(reader.into_read(), Context::default());
-    V::decode(&mut decoder)
-}
-
-/// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
-/// with the given context.
-pub fn encode_with<W: IntoWrite, V: Encode<W::Write>>(
-    writer: W,
-    context: Context,
-    value: V,
-) -> EncodingResult<()> {
-    let mut encoder = Encoder::new(writer.into_write(), context);
-    value.encode(&mut encoder)
-}
-
-/// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
-/// with the given context.
-pub fn decode_with<R: IntoRead, V: Decode<R::Read>>(reader: R, context: Context) -> EncodingResult<V> {
-    let mut decoder = Encoder::new(reader.into_read(), context);
-    V::decode(&mut decoder)
-}
+mod convenience;
 
 /// Controls the endianness of a numerical value. Endianness is just
 /// the order in which the value's bytes are written.
@@ -827,6 +792,20 @@ impl NumRepr {
             num_encoding: NumEncoding::Fixed,
         }
     }
+
+    /// Sets the **endianness**, then returns self.
+    #[inline]
+    pub const fn endianness(mut self, endiannes: Endianness) -> Self {
+        self.endianness = endiannes;
+        self
+    }
+
+    /// Sets the **numerical encoding**, then returns self.
+    #[inline]
+    pub const fn num_encoding(mut self, num_encoding: NumEncoding) -> Self {
+        self.num_encoding = num_encoding;
+        self
+    }
 }
 
 impl Default for NumRepr {
@@ -860,6 +839,34 @@ impl SizeRepr {
             max_size: usize::MAX,
         }
     }
+
+    /// Sets the **endianness**, then returns self.
+    #[inline]
+    pub const fn endianness(mut self, endiannes: Endianness) -> Self {
+        self.endianness = endiannes;
+        self
+    }
+
+    /// Sets the **numerical encoding**, then returns self.
+    #[inline]
+    pub const fn num_encoding(mut self, num_encoding: NumEncoding) -> Self {
+        self.num_encoding = num_encoding;
+        self
+    }
+
+    /// Sets the **bit width**, then returns self.
+    #[inline]
+    pub const fn bit_width(mut self, bit_width: BitWidth) -> Self {
+        self.width = bit_width;
+        self
+    }
+
+    /// Sets the **max size**, then returns self.
+    #[inline]
+    pub const fn max_size(mut self, max_size: usize) -> Self {
+        self.max_size = max_size;
+        self
+    }
 }
 
 impl Default for SizeRepr {
@@ -888,6 +895,27 @@ impl VariantRepr {
             num_encoding: NumEncoding::Fixed,
             width: BitWidth::Bit32,
         }
+    }
+
+    /// Sets the **endianness**, then returns self.
+    #[inline]
+    pub const fn endianness(mut self, endiannes: Endianness) -> Self {
+        self.endianness = endiannes;
+        self
+    }
+
+    /// Sets the **numerical encoding**, then returns self.
+    #[inline]
+    pub const fn num_encoding(mut self, num_encoding: NumEncoding) -> Self {
+        self.num_encoding = num_encoding;
+        self
+    }
+
+    /// Sets the **bit width**, then returns self.
+    #[inline]
+    pub const fn bit_width(mut self, bit_width: BitWidth) -> Self {
+        self.width = bit_width;
+        self
     }
 }
 
@@ -925,6 +953,27 @@ impl StringRepr {
             len: StrLen::LengthPrefixed,
         }
     }
+
+    /// Sets the **string encoding**, then returns self.
+    #[inline]
+    pub const fn str_encoding(mut self, str_encoding: StrEncoding) -> Self {
+        self.encoding = str_encoding;
+        self
+    }
+    
+    /// Sets the **endianness**, then returns self.
+    #[inline]
+    pub const fn endianness(mut self, endiannes: Endianness) -> Self {
+        self.endianness = endiannes;
+        self
+    }
+
+    /// Sets the **string length encoding**, then returns self.
+    #[inline]
+    pub const fn len_encoding(mut self, len_encoding: StrLen) -> Self {
+        self.len = len_encoding;
+        self
+    }
 }
 
 impl Default for StringRepr {
@@ -955,6 +1004,34 @@ impl BinSettings {
             variant_repr: VariantRepr::new(),
             string_repr: StringRepr::new(),
         }
+    }
+
+    /// Sets the **number** representation settings, then returns self.
+    #[inline]
+    pub const fn num_repr(mut self, num_repr: NumRepr) -> Self {
+        self.num_repr = num_repr;
+        self
+    }
+
+    /// Sets the **size** representation settings, then returns self.
+    #[inline]
+    pub const fn size_repr(mut self, size_repr: SizeRepr) -> Self {
+        self.size_repr = size_repr;
+        self
+    }
+
+    /// Sets the **variant** representation settings, then returns self.
+    #[inline]
+    pub const fn variant_repr(mut self, variant_repr: VariantRepr) -> Self {
+        self.variant_repr = variant_repr;
+        self
+    }
+
+    /// Sets the **string** representation settings, then returns self.
+    #[inline]
+    pub const fn string_repr(mut self, string_repr: StringRepr) -> Self {
+        self.string_repr = string_repr;
+        self
     }
 }
 
@@ -1008,7 +1085,7 @@ pub struct Context<'a> {
 impl<'a> Context<'a> {
     /// Constructs the default encoder state. Options will be set to default, flatten to None.
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             user: None,
             settings: BinSettings::new(),
@@ -1018,6 +1095,58 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// Replaces the settings with `settings`, then returns self.
+    #[inline]
+    pub const fn settings(mut self, settings: BinSettings) -> Self {
+        self.settings = settings;
+        self
+    }
+
+    /// Replaces the user data with `data`, then returns self.
+    #[inline]
+    pub const fn user_data<'b>(self, data: &'b dyn Any) -> Context<'b> {
+        let this = Context {
+            user: Some(data),
+            settings: self.settings,
+            bool_flatten: self.bool_flatten,
+            variant_flatten: self.variant_flatten,
+            size_flatten: self.size_flatten,
+        };
+        this
+    }
+
+    /// Replaces the bool flatten state variable with `Some(value)`, then returns self.
+    #[inline]
+    pub const fn bool_flatten(mut self, value: bool) -> Self {
+        self.bool_flatten = Some(value);
+        self
+    }
+
+    /// Replaces the variant flatten state variable with `Some(value)`, then returns self.
+    /// 
+    /// **Beware of providing an [`Opaque`] with an integer literal without a specific type!**
+    /// 
+    /// By default, rust will infer `i32` as the type, thus it will be converted to a *Signed*
+    /// enum variant value, and you will get a (bad) surprise when you try to then encode/decode
+    /// an enum that uses *Unsigned* variant discriminants (most enums).
+    /// 
+    /// How to avoid this?
+    /// - Write the type in the num literal E.G. `Opaque::from(3u32)` or `Opaque::from(3 as u32)`
+    /// - Better yet, use an explicit opaque value ([`Opaque::signed`], [`Opaque::unsigned`])
+    #[inline]
+    pub const fn variant_flatten(mut self, value: Opaque) -> Self
+    {
+        self.variant_flatten = Some(value);
+        self
+    }
+
+    /// Replaces the size flatten state variable with `Some(value)`, then returns self.
+    #[inline]
+    pub const fn size_flatten(mut self, value: usize) -> Self {
+        self.size_flatten = Some(value);
+        self
+    }
+    
     /// Just like [`Self::new`] but uses the given settings instead of the default.
     #[inline]
     pub fn with_settings(settings: BinSettings) -> Self {
@@ -1054,19 +1183,19 @@ impl<'a> Context<'a> {
 
     /// Returns the state of the [`bool`] flatten variable, consuming it.
     #[inline]
-    pub fn bool_flatten(&mut self) -> Option<bool> {
+    pub fn consume_bool_flatten(&mut self) -> Option<bool> {
         replace(&mut self.bool_flatten, None)
     }
 
     /// Returns the state of the Variant flatten variable, consuming it.
     #[inline]
-    pub fn variant_flatten(&mut self) -> Option<Opaque> {
+    pub fn consume_variant_flatten(&mut self) -> Option<Opaque> {
         replace(&mut self.variant_flatten, None)
     }
 
     /// Returns the state of the [`usize`] flatten variable, consuming it.
     #[inline]
-    pub fn size_flatten(&mut self) -> Option<usize> {
+    pub fn consume_size_flatten(&mut self) -> Option<usize> {
         replace(&mut self.size_flatten, None)
     }
 }
@@ -1375,7 +1504,7 @@ impl<T: Write> Encoder<'_, T> {
     /// check that the value does not exceed the max size.
     #[inline]
     pub fn write_usize(&mut self, value: usize) -> EncodingResult<()> {
-        if let Some(size) = self.ctxt.size_flatten() {
+        if let Some(size) = self.ctxt.consume_size_flatten() {
             if size != value {
                 return Err(EncodingError::FlattenError(FlattenError::LenMismatch {
                     expected: size,
@@ -1440,7 +1569,7 @@ impl<T: Write> Encoder<'_, T> {
         V: Sign<Sign = Unsigned>,
     {
         let value = Opaque::from(value);
-        if let Some(variant) = self.ctxt.variant_flatten() {
+        if let Some(variant) = self.ctxt.consume_variant_flatten() {
             if value != variant {
                 return Err(FlattenError::VariantMismatch {
                     expected: variant,
@@ -1478,7 +1607,7 @@ impl<T: Write> Encoder<'_, T> {
         V: Sign<Sign = Signed>,
     {
         let value = Opaque::from(value);
-        if let Some(variant) = self.ctxt.variant_flatten() {
+        if let Some(variant) = self.ctxt.consume_variant_flatten() {
             if value != variant {
                 return Err(FlattenError::VariantMismatch {
                     expected: variant,
@@ -1512,7 +1641,7 @@ impl<T: Write> Encoder<'_, T> {
     /// as described above.
     #[inline]
     pub fn write_bool(&mut self, value: bool) -> EncodingResult<()> {
-        if let Some(boolean) = self.ctxt.bool_flatten() {
+        if let Some(boolean) = self.ctxt.consume_bool_flatten() {
             if boolean != value {
                 return Err(FlattenError::BoolMismatch {
                     expected: boolean,
@@ -1885,7 +2014,7 @@ impl<T: Read> Encoder<'_, T> {
     /// does not exceed the max size.
     #[inline]
     pub fn read_usize(&mut self) -> EncodingResult<usize> {
-        if let Some(size) = self.ctxt.size_flatten() {
+        if let Some(size) = self.ctxt.consume_size_flatten() {
             Ok(size)
         } else {
             let encoding = self.ctxt.settings.size_repr.num_encoding;
@@ -1938,7 +2067,7 @@ impl<T: Read> Encoder<'_, T> {
         V: Sign<Sign = Unsigned>,
         Opaque: TryInto<V, Error = EncodingError>,
     {
-        if let Some(variant) = self.ctxt.variant_flatten() {
+        if let Some(variant) = self.ctxt.consume_variant_flatten() {
             variant.try_into()
         } else {
             let width = self.ctxt.settings.variant_repr.width;
@@ -1969,7 +2098,7 @@ impl<T: Read> Encoder<'_, T> {
         V: Sign<Sign = Signed>,
         Opaque: TryInto<V, Error = EncodingError>,
     {
-        if let Some(variant) = self.ctxt.variant_flatten() {
+        if let Some(variant) = self.ctxt.consume_variant_flatten() {
             variant.try_into()
         } else {
             let width = self.ctxt.settings.variant_repr.width;
@@ -1999,7 +2128,7 @@ impl<T: Read> Encoder<'_, T> {
     /// otherwise the boolean is decoded as described above.
     #[inline]
     pub fn read_bool(&mut self) -> EncodingResult<bool> {
-        if let Some(boolean) = self.ctxt.bool_flatten() {
+        if let Some(boolean) = self.ctxt.consume_bool_flatten() {
             Ok(boolean)
         } else {
             match self.read_byte()? {

@@ -53,11 +53,41 @@ enum OpaqueInner {
 ///
 /// Conversion errors where the value wouldn't fit in the requested
 /// type, are coerced to [`EncodingError`]s
+/// 
+/// **Beware of providing an [`Opaque`] with an integer literal without a specific type!**
+/// 
+/// By default, rust will infer `i32` as the type, thus it will be converted to a *Signed*
+/// enum variant value, and you will get a (bad) surprise when you try to then encode/decode
+/// an enum that uses *Unsigned* variant discriminants (most enums).
+/// 
+/// How to avoid this?
+/// - Write the type in the num literal E.G. `Opaque::from(3u32)` or `Opaque::from(3 as u32)`
+/// - Better yet, use an explicit opaque value ([`Opaque::signed`], [`Opaque::unsigned`])
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Display)]
 #[repr(transparent)]
 pub struct Opaque(OpaqueInner);
 
 impl Opaque {
+	/// Constructs a new opaque integer, enforcing at compile time that the number type is **signed**
+	#[allow(private_bounds)]
+	#[inline]
+	pub fn signed<V>(value: V) -> Self
+	where V: Sign<Sign = Signed>,
+	      Self: From<V>
+	{
+		Self::from(value)
+	}
+
+	/// Constructs a new opaque integer, enforcing at compile time that the number type is **unsigned**
+	#[allow(private_bounds)]
+	#[inline]
+	pub fn unsigned<V>(value: V) -> Self
+	where V: Sign<Sign = Unsigned>,
+	      Self: From<V>
+	{
+		Self::from(value)
+	}
+	
     /// Returns the [`Signedness`] of the opaque integer.
     #[inline]
     pub fn sign(&self) -> Signedness {
