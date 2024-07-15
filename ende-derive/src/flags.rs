@@ -60,6 +60,7 @@ impl Function {
 pub enum TypeModifier {
     As(Type),
     Into(Type),
+    From(Type),
 }
 
 impl TypeModifier {
@@ -67,6 +68,7 @@ impl TypeModifier {
         match self {
             TypeModifier::As(ty) => ty,
             TypeModifier::Into(ty) => ty,
+            TypeModifier::From(ty) => ty,
         }
     }
 }
@@ -528,6 +530,13 @@ impl Flags {
                 }
 
                 self.ty_mods = Some(TypeModifier::Into(ty));
+            }
+            Flag::From { ty, .. } => {
+                if self.ty_mods.is_some() {
+                    return Err(Error::new(span, MULTIPLE_TY_MODS));
+                }
+
+                self.ty_mods = Some(TypeModifier::From(ty));
             }
             Flag::Flatten { target, param, .. } => match target {
                 FlattenTarget::Bool { .. } => {

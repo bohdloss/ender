@@ -160,6 +160,11 @@ impl TypeModifier {
             }
             TypeModifier::Into(ty) => {
                 parse_quote!(
+                    &(<#field_ty as ::core::convert::Into<#ty>>::into(::core::clone::Clone::clone(#name)))
+                )
+            }
+            TypeModifier::From(ty) => {
+                parse_quote!(
                     &(<#ty as ::core::convert::From<#field_ty>>::from(::core::clone::Clone::clone(#name)))
                 )
             }
@@ -175,6 +180,11 @@ impl TypeModifier {
                 )
             }
             TypeModifier::Into(ty) => {
+                parse_quote!(
+                    <#ty as ::core::convert::Into<#field_ty>>::into(#input)
+                )
+            }
+            TypeModifier::From(ty) => {
                 parse_quote!(
                     <#field_ty as ::core::convert::From<#ty>>::from(#input)
                 )

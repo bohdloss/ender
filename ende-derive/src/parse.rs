@@ -18,6 +18,7 @@ pub mod kw {
 
     /* Conversions */
     custom_keyword!(into);
+    custom_keyword!(from);
 
     /* Keywords used for flags */
     custom_keyword!(en);
@@ -302,9 +303,16 @@ pub enum Flag {
         ty: Type,
     },
     /// The field should be encoded/decoded as if it was of the given type. It should then be
-    /// converted back to the appropriate type. The conversion methods are the From and Into traits.
+    /// converted back to the appropriate type. The conversion method is the Into trait.
     Into {
         kw: kw::into,
+        colon: Token![:],
+        ty: Type,
+    },
+    /// The field should be encoded/decoded as if it was of the given type. It should then be
+    /// converted back to the appropriate type. The conversion method is the From trait.
+    From {
+        kw: kw::from,
         colon: Token![:],
         ty: Type,
     },
@@ -381,6 +389,7 @@ impl Flag {
             Flag::With { kw, .. } => kw.span,
             Flag::As { kw, .. } => kw.span,
             Flag::Into { kw, .. } => kw.span,
+            Flag::From { kw, .. } => kw.span,
             Flag::Flatten { kw, .. } => kw.span,
             Flag::Validate { kw, .. } => kw.span,
             Flag::Modifiers { target, .. } => target.span(),
@@ -638,6 +647,12 @@ impl Parse for Flag {
             })
         } else if input.peek(kw::into) {
             Ok(Self::Into {
+                kw: input.parse()?,
+                colon: input.parse()?,
+                ty: input.parse()?,
+            })
+        }  else if input.peek(kw::from) {
+            Ok(Self::From {
                 kw: input.parse()?,
                 colon: input.parse()?,
                 ty: input.parse()?,

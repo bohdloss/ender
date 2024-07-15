@@ -382,7 +382,10 @@ use parse_display::Display;
 /// The conversion is done through the `as` keyword.
 /// * `into: $ty` - Converts the value of the field to `$ty` before encoding it
 /// and back to the original field type after decoding it.<br>
-/// The conversion is done through the `From` and `Into` traits.
+/// The conversion is done through the `Into` trait.
+/// * `from: $ty` - Converts the value of the field to `$ty` before encoding it
+/// and back to the original field type after decoding it.<br>
+/// The conversion is done through the `From` trait.
 /// ### Example:
 /// ```rust
 /// # use ende::{Encode, Decode};
