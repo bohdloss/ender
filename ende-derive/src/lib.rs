@@ -62,6 +62,8 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
 
     quote!(
         #[automatically_derived]
+        #[allow(unused)]
+        #[allow(dead_code)]
         impl #impl_generics #crate_name::Encode<#encoder_generic> for #item_name #ty_generics #where_clause {
             fn encode(&self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
                 #body
@@ -128,6 +130,8 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
 
     quote!(
         #[automatically_derived]
+        #[allow(unused)]
+        #[allow(dead_code)]
         impl #impl_generics #crate_name::Decode<#encoder_generic> for #item_name #ty_generics #where_clause {
             fn decode(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
                 #body
