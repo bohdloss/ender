@@ -1,8 +1,8 @@
-Helper macros to derive [`Encode`], [`Decode`] and [`BorrowDecode`] for a `struct` or `enum`.<br>
+Helper macros to derive [`Encode`] and [`Decode`] for a `struct` or `enum`.<br>
 This macro supports a series of helper flags to aid customization.
 
 All flags follow the following format:
-`#[ende(flag1; flag2; flag2; ...)]`
+`#[ender(flag1; flag2; flag2; ...)]`
 
 The 2 special flags `en` and `de`, called Scope flags, can be used only at the beginning
 of the list to indicate that all the flags in the attribute declaration only apply to the
@@ -17,6 +17,11 @@ decoded so far (actually all the fields while encoding), but the `validate` flag
 provides a reference to the field it is applied on.<br>
 If the fields are part of a tuple struct/variant, the references will be named `m{idx}` where `idx` are the
 indexes of the tuple fields (E.G. `m0`, `m1`, ...), otherwise their names will match those of the fields themselves.
+
+A seeking impl is an implementation of [`SeekEncode`], [`SeekDecode`] or [`SeekBorrowDecode`] rather
+than their non-seek variants.
+When a flag is said to be a `seek` flag, it means that when used anywhere it will switch the
+impl to a seeking impl.
 
 The flags currently implemented are split into 5 groups:
 # 1. Setting Modifiers
@@ -43,39 +48,45 @@ All setting modifiers follow the `$target: $mod1, $mod2, ...` pattern.
 - Max-size modifier: `max = $expr`
   - Available targets:
     - `size`
-- String encoding modifier: `utf8`, `utf16`, `utf32`
+- String encoding modifier: `ascii`, `utf8`, `utf16`, `utf32`, `windows1252`
+  - Available targets:
+    - `string`
+- String length encoding modifier: `len_prefix`, `null_term`, `null_term($max:expr)`
   - Available targets:
     - `string`
     <br>
 ### Example:
 ```rust
-use ende::{Encode, Decode};
 #[derive(Encode, Decode)]
-# #[ende(crate: ende)]
 /// The variants of this enum will be encoded in the little endian ordering,
 /// using a fixed numerical encoding and a 32-bit width.
-#[ende(variant: little_endian, fixed, bit32)]
+#[ender(variant: little_endian, fixed, bit32)]
 enum MyEnum {
     VariantA {
         /// The length of this String will be encoded using big endian ordering,
         /// fixed numerical encoding and 16-bit width, with a max length of 100
-        #[ende(size: big_endian, fixed, bit16, max = 100)]
+        #[ender(size: big_endian, fixed, bit16, max = 100)]
         field: String,
-        /// Encode this String with utf16 big endian
-        #[ende(string: utf16, big_endian)]
+        /// Encode this String with utf16 big endian, and prefix it with its length
+        #[ender(string: utf16, big_endian, len_prefix)]
         utf_16: String,
-        /// Encode this String as an utf8 string
-        #[ende(string: utf8)]
+        /// Encode this String as an utf8 null-terminated string
+        #[ender(string: utf8, null_term)]
         utf_8: String,
+        /// Encode this String as an utf8 null-terminated string with a fixed length of `15`
+        /// Exactly `15` bytes will be read in all cases, and the length of the string is given
+        /// by the first occurrence of a null byte or the `15` byte mark.
+        #[ender(string: utf8, null_term(15))]
+        max_15: String,
     },
     VariantB {
         /// This number will be encoded using little endian ordering, and the
-        /// leb128 [NumEncoding][`ende::NumEncoding`]
-        #[ende(num: little_endian, leb128)]
+        /// leb128 [NumEncoding][`ender::NumEncoding`]
+        #[ender(num: little_endian, leb128)]
         field: u64,
-        #[ende(num: protobuf_zz)]
-        zigzag: i128,
-	},
+        #[ender(num: protobuf_zz)]
+        zigzag: i128, 
+    },
 }
 ```
 # 2. Stream Modifiers
@@ -85,8 +96,7 @@ Note that the order in which stream modifiers are declared is very important:<br
 They are applied in the declaration order during encoding, but in the reverse order during
 decoding, for consistency. However, the item-level modifiers take priority over the field-level
 modifiers (see [ambiguous example](#ambiguous-example)).<br>
-* `redir: $path(...)` - Currently the only supported stream modifier, but more may
-be added in the future. Uses the given path to find an encoding/decoding function which
+* `redir: $path(...)` - Uses the given path to find an encoding/decoding function which
 alters the writer/reader and passes a modified encoder to a closure.<br>
 This can be used to implement encryption, compression and other transformations of the
 underlying stream, or even redirections to another stream.<br>
@@ -97,40 +107,46 @@ you're doing, in which case you should take a look at the [facade module][`facad
     * If the scope is Decode, the path must be callable as `decode`.<br>
     * If no scope is specified, the path must point to a module with encoding and decoding functions
 with the same signatures as above.
+* `ptr $seek: $expr` - This is a `seek` flag. Seeks to the location given by $expr
+(which must be of type usize or isize) relative to $seek - which can be
+"start", "end" or "cur"rrent - before encoding/decoding this field, then seeks back to the
+previous location.
 ### Example:
 ```rust
-use ende::{Encode, Decode};
-use ende::facade::fake::*;
 #[derive(Encode, Decode)]
-#[ende(crate: ende)]
 struct MyStruct {
     secret_key: Vec<u8>,
     iv: Vec<u8>,
     /// While **encoding**, this field is compressed -> encrypted.
     /// While **decoding**, this field is decrypted -> decompressed.
-    #[ende(redir: gzip(9))]
-    #[ende(redir: aes(iv, secret_key))]
+    #[ender(redir: gzip(9))]
+    #[ender(redir: aes(iv, secret_key))]
     super_secret_data: Vec<u8>,
+    file_pointer: usize,
+    /// Marks the current offset, seeks to `file_pointer` bytes from the start of the file,
+    /// encodes/decodes the field, then seeks back.
+    #[ender(ptr start: *file_pointer)]
+    apple_count: u64,
+    /// This field is effectively laid *right after* `file_pointer`
+    /// in the binary representation.
+    other_data: i32,
 }
 ```
 ### Ambiguous example:
 ```rust
-use ende::{Encode, Decode};
-use ende::facade::fake::*;
 #[derive(Encode, Decode)]
-#[ende(crate: ende)]
 /// Because of the priority rules of items over fields, this is ambiguous, see below
-#[ende(redir: gzip(9))]
+#[ender(redir: gzip(9))]
 struct MyStruct {
     /// While **encoding**, this field is encrypted -> compressed.
     /// While **decoding**, this field is decompressed -> decrypted.
     /// Because the "compressed" flag is declared before the "encrypted" flag, one might
     /// think they are applied in that order. However, since the item-level flag takes priority,
     /// it is applied *after* the field flag.
-    /// 
+    ///
     /// According to your needs, this might not be what you want, so be careful when mixing
     /// item-level and field-level stream modifiers.
-    #[ende(redir: aes(&[], &[]))]
+    #[ender(redir: aes(&[], &[]))]
     super_secret_data: Vec<u8>,
 }
 ```
@@ -141,67 +157,44 @@ Optionally, the serde crate name can be specified (useful if the serde crate was
 another name).
 * `with: $path` - Uses the given path to find the encoding/decoding function.<br>
     * If the scope is Encode, the path must be callable as
-`fn<T: Write>(&V, &mut ende::Encoder<T>) -> EncodingResult<()>`
+`fn<T: Write>(&V, &mut ender::Encoder<T>) -> EncodingResult<()>`
 where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
     * If the scope is Decode, the path must be callable as
-`fn<T: Read>(&mut ende::Encoder<T>) -> EncodingResult<V>`
+`fn<T: Read>(&mut ender::Encoder<T>) -> EncodingResult<V>`
 where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
     * If no scope is specified, the path must point to a module with encoding and decoding functions
 with the same signatures as above.
 ### Example:
 ```rust
-use ende::{Encode, Decode};
-use ende::facade::fake::rsa;
-use uuid::Uuid;
-
 #[derive(Encode, Decode)]
-#[ende(crate: ende)]
 struct Friends {
-	/// Has Serialize/Deserialize implementations, but no Encode/Decode implementations.
+    /// Has Serialize/Deserialize implementations, but no Encode/Decode implementations.
     /// A perfect fit for integrating with serde!
-    #[ende(serde)]
+    #[ender(serde)]
     uuid: Uuid,
     /// Here we demonstrate how the with flag changes based on whether a scope
     /// is declared. This:
-    #[ende(with: person_encoder)]
-    friend1: person_encoder::Person,
+    #[ender(with: person_encoder)]
+    friend1: Person,
     /// ...is equivalent to this!
-    #[ende(en; with: person_encoder::encode)]
-    #[ende(de; with: person_encoder::decode)]
-    friend2: person_encoder::Person,
+    #[ender(en; with: person_encoder::encode)]
+    #[ender(de; with: person_encoder::decode)]
+    friend2: Person,
     /// Not the smartest way to store a private key!
     private_key: Vec<u8>,
     public_key: Vec<u8>,
     /// This block of data will be encrypted before being encoded using the public key,
     /// and decrypted after being decoded using the private key.
-    #[ende(with: rsa(public_key, private_key))]
+    #[ender(with: rsa(public_key, private_key))]
     even_more_secret_data: Vec<u8>,
 }
-
 mod person_encoder {
-    use ende::io::{Write, Read};
-	use ende::{Encoder, EncodingResult, Encode};
-	
-    pub struct Person {
-        name: String,
-        surname: String,
-        age: u32,
-    }
-    
-	pub fn encode<T: Write>(person: &Person, encoder: &mut Encoder<T>) -> EncodingResult<()> {
-        person.name.encode(encoder)?;
-        person.surname.encode(encoder)?;
-        person.age.encode(encoder)?;
-        Ok(())
-	}
-	
-	pub fn decode<T: Read>(encoder: &mut Encoder<T>) -> EncodingResult<Person> {
-        Ok(Person {
-            name: encoder.decode_value()?,
-            surname: encoder.decode_value()?,
-            age: encoder.decode_value()?,
-		})
-	}
+     pub fn encode<T: Write>(person: &Person, encoder: &mut Encoder<T>) -> EncodingResult<()> {
+         /* ... */
+     }
+     pub fn decode<T: Read>(encoder: &mut Encoder<T>) -> EncodingResult<Person> {
+         /* ... */
+     }
 }
 ```
 # 4. Type Modifiers
@@ -212,61 +205,38 @@ and back to the original field type after decoding it.<br>
 The conversion is done through the `as` keyword.
 * `into: $ty` - Converts the value of the field to `$ty` before encoding it
 and back to the original field type after decoding it.<br>
-The conversion is done through the `From` and `Into` traits.
+The conversion is done through the `Into` trait.
+* `from: $ty` - Converts the value of the field to `$ty` before encoding it
+and back to the original field type after decoding it.<br>
+The conversion is done through the `From` trait.
 ### Example:
 ```rust
-use ende::{Encode, Decode};
-
 #[derive(Encode, Decode)]
-#[ende(crate: ende)]
 struct Mountain {
     /// Height is encoded as a `u16`, then decoded back to a `f64`.
     /// These operations are performed using the `as` keyword.
-    #[ende(as: u16)]
+    #[ender(as: u16)]
     height: f64,
     /// Boulder is encoded as a `BigRock`, then decoded back to a `Boulder`.
     /// This can be done because `BigRock` implements `From<Boulder>`, and
     /// `Boulder` implements `From<BigRock>`.
-    ///
-    /// Note: `BigRock` is required to implement `Encode` and `Decode`,
-    /// but `Boulder` is not.
-    #[ende(into: BigRock)]
+    #[ender(into: BigRock)]
     boulder: Boulder,
 }
 
+/// Note: `BigRock` is required to implement `Encode` and `Decode`,
+/// but `Boulder` is not.
 #[derive(Encode, Decode)]
-#[ende(crate: ende)]
 struct BigRock {
     weight: f64
 }
 
-impl From<Boulder> for BigRock {
-    fn from(value: Boulder) -> Self {
-		Self {
-            weight: value.weight
-		}
-    }
-}
-
-#[derive(Clone)]
-struct Boulder {
-    weight: f64,
-    radius: f64
-}
-
-impl From<BigRock> for Boulder {
-    fn from(value: BigRock) -> Self {
-		Self {
-			weight: value.weight,
-            radius: 1.0
-		}
-	}
-}
+/* From<Boulder> and From<BigRock> impls here... */
 ```
 # 5. Helpers
 Helper flags change certain parameters or add conditions for when a field
 or item should be encoded/decoded.<br>
-* `crate: $crate` - Overwrites the default crate name which is assumed to be `ende`.
+* `crate: $crate` - Overwrites the default crate name which is assumed to be `ender`.
 Can only be applied to items.
 * `if: $expr` - The field will only be encoded/decoded if the given expression
 evaluates to true, otherwise the default value is computed.
@@ -284,52 +254,88 @@ to indicate that the presence of an optional value is known from the context.
 should be decoded using its borrowing decode implementation, and allows you to optionally specify a
 set of lifetimes to override those normally inferred by the macro. These lifetimes will be bound
 to the lifetime of the encoder's data.
+* `goto $seek: $expr` - This is a `seek` flag. Indicates a jump to a different stream position
+before encoding this field or item.
+$seek can be any of "start", "end" or "cur", while $expr must produce a value of
+type usize or isize relative to $seek.<br>
+If you need the stream position to be restored after encoding/decoding the field, see the
+`ptr` *stream modifier`.
+* `pos_tracker: $ident` - This is a `seek` flag. Stores the current stream position in a
+variable with the given name.
+Note that the position is stored *before* the `ptr` and `goto` flags, if any.
 <br>
+`seeking` - This is a `seek` flag. Does nothing, but simply forces a seeking impl to be used.
+This can only be applied to the whole item, as it doesn't make sense on individual fields.
 ### Example:
 
 ```rust
-use std::borrow::Cow;
-use ende::{Encode, Decode, BorrowDecode};
-use uuid::Uuid;
+/// Hehe >:3
+extern crate ender as enderman;
 
-// Hehe >:3
-extern crate ende as enderman;
-
-#[derive(Encode, Decode, BorrowDecode)]
-/// We specify the name of the re-exported ende crate.
-#[ende(crate: enderman)]
+#[derive(Encode, Decode)]
+/// We specify the name of the re-exported ender crate.
+#[ender(crate: enderman)]
+/// We specify this should use a seeking impl
+/// This is redundant of course, but we include it for completeness :P
+#[ender(seeking)]
 struct PersonEntry<'record> {
   /// Will come in handy later
   name_present: bool,
   /// Similar to the previous example, but with the addition of the flatten flag!
   /// We know a Uuid is always 16 bytes long, so we omit writing/reading that data.
-  #[ende(serde; flatten: 16)]
+  #[ender(serde; flatten size: 16)]
   uuid: Uuid,
   /// Just the string version of the uuid, not present in the binary data.
   /// Skip the Encoding step, and Decode it from the uuid.
-  #[ende(skip; default: uuid.to_string())]
+  #[ender(skip; default: uuid.to_string())]
   uuid_string: String,
   /// We know whether this is present from the context, therefore we don't write whether
   /// the optional value is present, and when reading we assume it is.
   /// Since the "if" flag is also present, the field will only be decoded if the expression
   /// evaluates to true, making the previous operation safe
   /// (no risk of decoding garbage data)
-  #[ende(flatten: some; if: * name_present)]
+  #[ender(flatten bool: true; if: * name_present)]
   name: Option<String>,
+  /// Contains a file offset to the rest of the data
+  pointer_to_data: usize,
+  /// Go to the location in the specified file offset from this point onwards.
+  ///
   /// This might be too long to clone from the decoder, so we borrow it instead.
-  /// Decode impl -> Cow::Owned
+  /// Decode impl -> Cow::Owned -- (NOT YET - WILL WORK WHEN SPECIALIZATION IS STABILIZED)
   /// BorrowDecode impl -> Cow::Borrowed
   /// The macro will infer the borrow lifetime to be `'record`.
-  #[ende(borrow)]
+  #[ender(goto start: *pointer_to_data; borrow)]
   criminal_record: Cow<'record, str>,
   /// Only present if the name is also present, but we want to provide a custom default!
-  #[ende(default: String::from("Smith"); if: * name_present)]
+  #[ender(default: String::from("Smith"); if: * name_present)]
   surname: String,
   /// No-one allowed before 18!
-  #[ende(validate: * age >= 18, "User is too young: {}", age)]
+  #[ender(validate: * age >= 18, "User is too young: {}", age)]
   age: u32,
   /// This is temporary data, we don't care about including it in the binary format.
-  #[ende(skip; default: 100)]
+  #[ender(skip; default: 100)]
   health: u64,
+}
+```
+# Relationship between seek flags
+
+```rust
+#[derive(Encode, Decode)]
+/// This is the same...
+struct Ptr {
+    pointer: usize,
+    #[ender(ptr start: *pointer)]
+    data: /* ... */
+}
+
+#[derive(Encode, Decode)]
+/// As this!
+struct Goto {
+    pointer: usize,
+    #[ender(pos_tracker: current)]
+    #[ender(goto start: *pointer)]
+    data: /* ... */
+    #[ender(goto start: current)]
+    seek_back: (),
 }
 ```

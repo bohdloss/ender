@@ -13,7 +13,7 @@ mod generator;
 mod lifetime;
 mod parse;
 
-static ENDE: &str = "ende";
+static ENDER: &str = "ender";
 
 /// Emulates the $crate available in regular macros
 fn dollar_crate(name: &str) -> Ident {
@@ -28,7 +28,7 @@ fn dollar_crate(name: &str) -> Ident {
     )
 }
 
-#[proc_macro_derive(Encode, attributes(ende))]
+#[proc_macro_derive(Encode, attributes(ender))]
 pub fn encode(input: TokenStream1) -> TokenStream1 {
     let input = parse_macro_input!(input as DeriveInput);
     let ctxt = match Ctxt::parse_from(&input, Target::Encode) {
@@ -72,7 +72,7 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
     ).into()
 }
 
-#[proc_macro_derive(Decode, attributes(ende))]
+#[proc_macro_derive(Decode, attributes(ender))]
 pub fn decode(input: TokenStream1) -> TokenStream1 {
     let input = parse_macro_input!(input as DeriveInput);
     let ctxt = match Ctxt::parse_from(&input, Target::Decode) {

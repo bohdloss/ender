@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "ende",
-    "ende-derive",
+    "ender",
+    "ender-derive",
 ]
 
 [patch.crates-io]
-ende = { path = "ende" }
-ende-derive = { path = "ende-derive" }
+ender = { path = "ender" }
+ender-derive = { path = "ender-derive" }

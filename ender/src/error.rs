@@ -68,7 +68,7 @@ pub enum EncodingError {
         got: Signedness,
     },
     /// An attempt was made to flatten an option or result, but the inner value was unexpected.
-    /// Example: `#[ende(flatten: some)]` applied on an `Option` containing the `None` variant
+    /// Example: `#[ender(flatten: some)]` applied on an `Option` containing the `None` variant
     #[display("Flatten error: {0}")]
     FlattenError(FlattenError),
     /// An attempt was made to lock a RefCell/Mutex/RwLock or similar, but it failed.
@@ -78,7 +78,7 @@ pub enum EncodingError {
     /// meaning the decoding operation can be attempted again with a non-borrowing function.
     #[display("Borrow error: {0}")]
     BorrowError(BorrowError),
-    /// A `#[ende(validate = ...)]` check failed
+    /// A `#[ender(validate = ...)]` check failed
     #[display("Validation error: {0}")]
     ValidationError(
         #[cfg(feature = "alloc")] alloc::string::String,

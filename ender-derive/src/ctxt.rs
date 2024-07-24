@@ -9,7 +9,7 @@ use syn::{
 
 use crate::flags::{FlagTarget, Flags, TypeModifier};
 use crate::lifetime::process_field_lifetimes;
-use crate::parse::{EndeAttribute, Flag, ReprAttribute};
+use crate::parse::{EnderAttribute, Flag, ReprAttribute};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum EnumRepr {
@@ -219,8 +219,8 @@ impl FlagGroup {
     pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Vec<Self>> {
         let mut groups = Vec::new();
 
-        for attr in attrs.iter().filter(|x| x.meta.path().is_ident("ende")) {
-            let ende_attr: EndeAttribute = attr.parse_args()?;
+        for attr in attrs.iter().filter(|x| x.meta.path().is_ident("ender")) {
+            let ende_attr: EnderAttribute = attr.parse_args()?;
             let scope = ende_attr.scope();
 
             // If the scope is not "Both", either "en" or "de" was specified, we need to remove them

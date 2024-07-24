@@ -3,24 +3,24 @@
 // #[derive(BorrowDecode)]
 // pub struct Borrow<'a, 'b> {
 //     string: &'a str,
-//     #[ende(borrow)]
+//     #[ender(borrow)]
 //     data: &'b [u8],
 // }
 //
 // #[derive(Encode, Decode)]
-// #[ende(num: little_endian)]
+// #[ender(num: little_endian)]
 // #[allow(unused)]
 // #[cfg(feature = "std")]
 // pub struct StructStruct {
-//     #[ende(skip)]
-//     #[ende(default: 100)]
+//     #[ender(skip)]
+//     #[ender(default: 100)]
 //     value1: u64,
-//     #[ende(if: *value1 > 10)]
-//     #[ende(default: *value1 as f32)]
-//     #[ende(as: u8)]
+//     #[ender(if: *value1 > 10)]
+//     #[ender(default: *value1 as f32)]
+//     #[ender(as: u8)]
 //     value2: f32,
 //     unit: (),
-//     #[ende(with: rsa(&[], &[]))]
+//     #[ender(with: rsa(&[], &[]))]
 //     secret: Vec<u8>,
 // }
 //
@@ -30,13 +30,13 @@
 //     iv: Vec<u8>,
 //     /// While **encoding**, this field is compressed -> encrypted.
 //     /// While **decoding**, this field is decrypted -> decompressed.
-//     #[ende(redir: gzip(9))]
-//     #[ende(redir: aes(iv, secret_key))]
+//     #[ender(redir: gzip(9))]
+//     #[ender(redir: aes(iv, secret_key))]
 //     super_secret_data: Vec<u8>,
 //     file_pointer: usize,
 //     /// Marks the current offset, seeks to `file_pointer` bytes from the start of the file,
 //     /// encodes/decodes the field, then seeks back.
-//     #[ende(ptr start: * file_pointer)]
+//     #[ender(ptr start: * file_pointer)]
 //     apple_count: u64,
 //     /// This field is effectively laid *right after* `file_pointer`
 //     /// in the binary representation.
@@ -46,7 +46,7 @@
 // #[derive(Encode, Decode)]
 // pub struct TupleStruct(
 //     u64,
-//     #[ende(num: leb128, big_endian; size: max = 15, bit16, little_endian, fixed; variant: bit128, fixed, big_endian)]
+//     #[ender(num: leb128, big_endian; size: max = 15, bit16, little_endian, fixed; variant: bit128, fixed, big_endian)]
 //      f64,
 // );
 //
@@ -55,14 +55,14 @@
 //
 // #[derive(Encode, Decode)]
 // #[repr(isize)]
-// #[ende(size: bit64; variant: bit64, leb128)]
+// #[ender(size: bit64; variant: bit64, leb128)]
 // pub enum Enum {
 //     StructVariant {
 //         value1: u64,
-//         #[ende(validate: *value2 == 16.0, "Expected 16.0, got {}", value2)]
+//         #[ender(validate: *value2 == 16.0, "Expected 16.0, got {}", value2)]
 //         value2: f64,
 //     },
-//     TupleVariant(u64, #[ende(if: *m0 >= 154)] f64) = u16::MAX as isize,
+//     TupleVariant(u64, #[ender(if: *m0 >= 154)] f64) = u16::MAX as isize,
 //     UnitVariant,
 // }
 //
@@ -73,7 +73,7 @@
 // pub struct EmptyTupleStruct();
 //
 // #[derive(Encode, Decode)]
-// #[ende(variant: little_endian)]
+// #[ender(variant: little_endian)]
 // pub enum EmptyVariantEnum {
 //     StructVariant {},
 //     TupleVariant(),
@@ -103,11 +103,11 @@
 // //    |     ^^^^^
 //
 // #[derive(Encode, Decode)]
-// #[ende(with: aes)]
+// #[ender(with: aes)]
 // #[cfg(feature = "std")]
 // pub struct VersionContainer {
 //     name_present: bool,
-//     #[ende(if: *name_present)]
+//     #[ender(if: *name_present)]
 //     name: String,
 // }
 
@@ -146,7 +146,7 @@ macro_rules! test_num_encoding {
         #[test]
         pub fn $fn_name() {
             #[derive(PartialEq, Eq, Debug, Encode, Decode)]
-            #[ende(variant: bit8)]
+            #[ender(variant: bit8)]
             enum MaybeSigned {
                 Signed(i64),
                 Unsigned(u64),

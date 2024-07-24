@@ -7,7 +7,7 @@ use syn::{parse_quote, Error, Expr, Lifetime, Path, Type};
 use crate::ctxt::Scope;
 use crate::enums::{BitWidth, Endianness, NumEncoding, StrEncoding, StrLen};
 use crate::parse::{Flag, FlattenTarget, Formatting, ModTarget, Modifier, SeekTarget};
-use crate::{dollar_crate, ENDE};
+use crate::{dollar_crate, ENDER};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FlagTarget {
@@ -375,7 +375,7 @@ pub struct SeekParam {
 pub struct Flags {
     /// Whether this is an item or field
     pub target: FlagTarget,
-    /// The name of the crate - ende by default
+    /// The name of the crate - ender by default
     pub crate_name: Param<Ident>,
     /// Only set when the "skip" flag is specified. Will generate empty Encode and Decode
     /// implementations. Can only be accompanied by the "default" flag.
@@ -416,7 +416,7 @@ impl Flags {
     pub fn new(target: FlagTarget) -> Self {
         Self {
             target,
-            crate_name: Param::Default(dollar_crate(ENDE)),
+            crate_name: Param::Default(dollar_crate(ENDER)),
             skip: false,
             default: Param::Default(parse_quote!(Default::default())),
             function: Function::Default,
@@ -464,7 +464,7 @@ impl Flags {
         let span = flag.span();
         match flag {
             Flag::Crate { crate_name, .. } => {
-                if self.target == FlagTarget::Field {
+                if self.target != FlagTarget::Item {
                     return Err(Error::new(
                         span,
                         r#""crate" flag can only be applied at the item level"#,

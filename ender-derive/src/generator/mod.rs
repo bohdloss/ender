@@ -22,7 +22,7 @@ impl Ctxt {
     }
 }
 
-/// This is an aggregation of statements to allow access to fields inside `ende` flags expressions
+/// This is an aggregation of statements to allow access to fields inside `ender` flags expressions
 #[derive(Clone)]
 pub struct RefCode<'a> {
     ctxt: &'a Ctxt,

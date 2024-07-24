@@ -258,7 +258,7 @@ pub enum Flag {
     En { kw: kw::en },
     /// All the following flags only apply to the decoding step
     De { kw: kw::de },
-    /// Changes the name of the `ende` crate used in the derivation process
+    /// Changes the name of the `ender` crate used in the derivation process
     Crate {
         kw: Token![crate],
         colon: Token![:],
@@ -403,15 +403,15 @@ impl Flag {
     }
 }
 
-/// Represents the `#[ende(... stuff ...)]` attribute
+/// Represents the `#[ender(... stuff ...)]` attribute
 #[derive(Clone)]
 #[allow(dead_code)]
-pub struct EndeAttribute {
+pub struct EnderAttribute {
     pub flags: Punctuated<Flag, Token![;]>,
 }
 
 #[allow(dead_code)]
-impl EndeAttribute {
+impl EnderAttribute {
     pub fn scope(&self) -> Scope {
         self.flags
             .iter()
@@ -729,7 +729,7 @@ impl Parse for Flag {
     }
 }
 
-impl Parse for EndeAttribute {
+impl Parse for EnderAttribute {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             flags: Punctuated::parse_terminated(input)?,

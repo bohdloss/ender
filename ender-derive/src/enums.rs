@@ -1,5 +1,5 @@
 //! The following file contains enums and functions copied from the
-//! `ende` library. Any modifications done to the enums in the original library
+//! `ender` library. Any modifications done to the enums in the original library
 //! must be ALWAYS reflected here.
 
 use std::fmt::Display;

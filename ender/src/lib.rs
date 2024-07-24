@@ -9,10 +9,10 @@
 //! # Example
 //!
 //! ```rust
-//! # use ende::*;
-//! # use ende::io::*;
+//! # use ender::*;
+//! # use ender::io::*;
 //! # #[derive(Debug, PartialEq, Encode, Decode)]
-//! # #[ende(crate: ende)]
+//! # #[ender(crate: ender)]
 //! # struct Person {
 //! # 	name: String,
 //! #    age: u64,
@@ -21,7 +21,7 @@
 //! # }
 //! #
 //! # #[derive(Debug, PartialEq, Encode, Decode)]
-//! # #[ende(crate: ende)]
+//! # #[ender(crate: ender)]
 //! # enum EyeColor {
 //! #    Brown,
 //! #    Blue,
@@ -42,10 +42,10 @@
 //! };
 //!
 //! // Encode John into the matrix
-//! encode_with(SliceMut::new(&mut the_matrix), Context::new(), &john)?;
+//! encode_with(SliceMut::new(&mut the_matrix), Context::default(), &john)?;
 //!
 //! // Bring him back
-//! let john_2: Person = decode_with(Slice::new(&the_matrix), Context::new())?;
+//! let john_2: Person = decode_with(Slice::new(&the_matrix), Context::default())?;
 //!
 //! // But is he really the same John?
 //! assert_eq!(john, john_2);
@@ -102,7 +102,7 @@
 //! binary formats.
 //!
 //! While for example [`bincode`](https://crates.io/crates/bincode) is perfectly
-//! ok for many applications, `ende` was made with compatibility with existing
+//! ok for many applications, `ender` was made with compatibility with existing
 //! data formats in mind.
 //!
 //! For this very purpose, many internal details of the encoder are exposed
@@ -111,28 +111,21 @@
 //!
 //! # Deriving
 //!
-//! A big selling point of `ende` are its macros, which allow you to heavily
+//! A big selling point of `ender` are its macros, which allow you to heavily
 //! customize the codegen through a series of attributes.
 //! To learn more about those, check out `DERIVE.md` in this crate's repository root.
-//!
-//! # Where to start
-//!
-//! TODO add examples
 //!
 //! # MSRV
 //!
 //! This crate will always target the latest version of rust, in order
-//! to get the access to new features as soon as they are released and
+//! to get access to new features as soon as they are released and
 //! update the code accordingly if beneficial.
 //! Of course, breaking API changes will be accompanied by a major version
 //! bump.
 //!
 //! # Future plans
 //!
-//! I plan on adding support for a `SeekEncode` and `SeekDecode` set of traits
-//! and relative macro attributes for file formats where the data is not laid sequentially.
-//!
-//! I also plan on adding support for `async` io through a feature gate.
+//! I plan on adding support for `async` io through a feature gate.
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -148,7 +141,7 @@ use parse_display::Display;
 /// This macro supports a series of helper flags to aid customization.
 ///
 /// All flags follow the following format:
-/// `#[ende(flag1; flag2; flag2; ...)]`
+/// `#[ender(flag1; flag2; flag2; ...)]`
 ///
 /// The 2 special flags `en` and `de`, called Scope flags, can be used only at the beginning
 /// of the list to indicate that all the flags in the attribute declaration only apply to the
@@ -203,35 +196,36 @@ use parse_display::Display;
 ///     <br>
 /// ### Example:
 /// ```rust
-/// # use ende::{Encode, Decode};
+/// # use ender::{Encode, Decode};
 /// #[derive(Encode, Decode)]
-/// # #[ende(crate: ende)]
+/// # #[ender(crate: ender)]
 /// /// The variants of this enum will be encoded in the little endian ordering,
 /// /// using a fixed numerical encoding and a 32-bit width.
-/// #[ende(variant: little_endian, fixed, bit32)]
+/// #[ender(variant: little_endian, fixed, bit32)]
 /// enum MyEnum {
 ///     VariantA {
 ///         /// The length of this String will be encoded using big endian ordering,
 ///         /// fixed numerical encoding and 16-bit width, with a max length of 100
-///         #[ende(size: big_endian, fixed, bit16, max = 100)]
+///         #[ender(size: big_endian, fixed, bit16, max = 100)]
 ///         field: String,
 ///         /// Encode this String with utf16 big endian, and prefix it with its length
-///         #[ende(string: utf16, big_endian, len_prefix)]
+///         #[ender(string: utf16, big_endian, len_prefix)]
 ///         utf_16: String,
 ///         /// Encode this String as an utf8 null-terminated string
-///         #[ende(string: utf8, null_term)]
+///         #[ender(string: utf8, null_term)]
 ///         utf_8: String,
-///         /// Encode this String as an utf8 null-terminated string with a maximum length of `15`
-///         /// After having read `15` bytes, no more are read.
-///         #[ende(string: utf8, null_term(15))]
+///         /// Encode this String as an utf8 null-terminated string with a fixed length of `15`
+///         /// Exactly `15` bytes will be read in all cases, and the length of the string is given
+///         /// by the first occurrence of a null byte or the `15` byte mark.
+///         #[ender(string: utf8, null_term(15))]
 ///         max_15: String,
 ///     },
 ///     VariantB {
 ///         /// This number will be encoded using little endian ordering, and the
-///         /// leb128 [NumEncoding][`ende::NumEncoding`]
-///         #[ende(num: little_endian, leb128)]
+///         /// leb128 [NumEncoding][`ender::NumEncoding`]
+///         #[ender(num: little_endian, leb128)]
 ///         field: u64,
-///         #[ende(num: protobuf_zz)]
+///         #[ender(num: protobuf_zz)]
 ///         zigzag: i128,
 /// 	},
 /// }
@@ -260,22 +254,22 @@ use parse_display::Display;
 /// previous location.
 /// ### Example:
 /// ```rust
-/// # use ende::{Encode, Decode};
-/// # use ende::facade::fake::*;
+/// # use ender::{Encode, Decode};
+/// # use ender::facade::fake::*;
 /// #[derive(Encode, Decode)]
-/// # #[ende(crate: ende)]
+/// # #[ender(crate: ender)]
 /// struct MyStruct {
 ///     secret_key: Vec<u8>,
 ///     iv: Vec<u8>,
 ///     /// While **encoding**, this field is compressed -> encrypted.
 ///     /// While **decoding**, this field is decrypted -> decompressed.
-///     #[ende(redir: gzip(9))]
-///     #[ende(redir: aes(iv, secret_key))]
+///     #[ender(redir: gzip(9))]
+///     #[ender(redir: aes(iv, secret_key))]
 ///     super_secret_data: Vec<u8>,
 ///     file_pointer: usize,
 ///     /// Marks the current offset, seeks to `file_pointer` bytes from the start of the file,
 ///     /// encodes/decodes the field, then seeks back.
-///     #[ende(ptr start: *file_pointer)]
+///     #[ender(ptr start: *file_pointer)]
 ///     apple_count: u64,
 ///     /// This field is effectively laid *right after* `file_pointer`
 ///     /// in the binary representation.
@@ -284,12 +278,12 @@ use parse_display::Display;
 /// ```
 /// ### Ambiguous example:
 /// ```rust
-/// # use ende::{Encode, Decode};
-/// # use ende::facade::fake::*;
+/// # use ender::{Encode, Decode};
+/// # use ender::facade::fake::*;
 /// #[derive(Encode, Decode)]
-/// # #[ende(crate: ende)]
+/// # #[ender(crate: ender)]
 /// /// Because of the priority rules of items over fields, this is ambiguous, see below
-/// #[ende(redir: gzip(9))]
+/// #[ender(redir: gzip(9))]
 /// struct MyStruct {
 ///     /// While **encoding**, this field is encrypted -> compressed.
 ///     /// While **decoding**, this field is decompressed -> decrypted.
@@ -299,7 +293,7 @@ use parse_display::Display;
 ///     ///
 ///     /// According to your needs, this might not be what you want, so be careful when mixing
 ///     /// item-level and field-level stream modifiers.
-///     #[ende(redir: aes(&[], &[]))]
+///     #[ender(redir: aes(&[], &[]))]
 ///     super_secret_data: Vec<u8>,
 /// }
 /// ```
@@ -310,45 +304,45 @@ use parse_display::Display;
 /// another name).
 /// * `with: $path` - Uses the given path to find the encoding/decoding function.<br>
 ///     * If the scope is Encode, the path must be callable as
-/// `fn<T: Write>(&V, &mut ende::Encoder<T>) -> EncodingResult<()>`
+/// `fn<T: Write>(&V, &mut ender::Encoder<T>) -> EncodingResult<()>`
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
 ///     * If the scope is Decode, the path must be callable as
-/// `fn<T: Read>(&mut ende::Encoder<T>) -> EncodingResult<V>`
+/// `fn<T: Read>(&mut ender::Encoder<T>) -> EncodingResult<V>`
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
 /// with the same signatures as above.
 /// ### Example:
 /// ```rust
-/// # use ende::{Encode, Decode};
-/// # use ende::facade::fake::rsa;
+/// # use ender::{Encode, Decode};
+/// # use ender::facade::fake::rsa;
 /// # use uuid::Uuid;
 /// # use person_encoder::Person;
 /// #[derive(Encode, Decode)]
-/// # #[ende(crate: ende)]
+/// # #[ender(crate: ender)]
 /// struct Friends {
 /// 	/// Has Serialize/Deserialize implementations, but no Encode/Decode implementations.
 ///     /// A perfect fit for integrating with serde!
-///     #[ende(serde)]
+///     #[ender(serde)]
 ///     uuid: Uuid,
 ///     /// Here we demonstrate how the with flag changes based on whether a scope
 ///     /// is declared. This:
-///     #[ende(with: person_encoder)]
+///     #[ender(with: person_encoder)]
 ///     friend1: Person,
 ///     /// ...is equivalent to this!
-///     #[ende(en; with: person_encoder::encode)]
-///     #[ende(de; with: person_encoder::decode)]
+///     #[ender(en; with: person_encoder::encode)]
+///     #[ender(de; with: person_encoder::decode)]
 ///     friend2: Person,
 ///     /// Not the smartest way to store a private key!
 ///     private_key: Vec<u8>,
 ///     public_key: Vec<u8>,
 ///     /// This block of data will be encrypted before being encoded using the public key,
 ///     /// and decrypted after being decoded using the private key.
-///     #[ende(with: rsa(public_key, private_key))]
+///     #[ender(with: rsa(public_key, private_key))]
 ///     even_more_secret_data: Vec<u8>,
 /// }
 /// mod person_encoder {
-/// #    use ende::io::{Write, Read};
-/// #    use ende::{Encoder, EncodingResult, Encode};
+/// #    use ender::io::{Write, Read};
+/// #    use ender::{Encoder, EncodingResult, Encode};
 /// #
 /// #     pub struct Person {
 /// #        name: String,
@@ -388,26 +382,26 @@ use parse_display::Display;
 /// The conversion is done through the `From` trait.
 /// ### Example:
 /// ```rust
-/// # use ende::{Encode, Decode};
+/// # use ender::{Encode, Decode};
 /// #
 /// #[derive(Encode, Decode)]
-/// # #[ende(crate: ende)]
+/// # #[ender(crate: ender)]
 /// struct Mountain {
 ///     /// Height is encoded as a `u16`, then decoded back to a `f64`.
 ///     /// These operations are performed using the `as` keyword.
-///     #[ende(as: u16)]
+///     #[ender(as: u16)]
 ///     height: f64,
 ///     /// Boulder is encoded as a `BigRock`, then decoded back to a `Boulder`.
 ///     /// This can be done because `BigRock` implements `From<Boulder>`, and
 ///     /// `Boulder` implements `From<BigRock>`.
-///     #[ende(into: BigRock)]
+///     #[ender(into: BigRock)]
 ///     boulder: Boulder,
 /// }
 ///
 /// /// Note: `BigRock` is required to implement `Encode` and `Decode`,
 /// /// but `Boulder` is not.
 /// #[derive(Encode, Decode)]
-/// # #[ende(crate: ende)]
+/// # #[ender(crate: ender)]
 /// struct BigRock {
 ///     weight: f64
 /// }
@@ -439,7 +433,7 @@ use parse_display::Display;
 /// # 5. Helpers
 /// Helper flags change certain parameters or add conditions for when a field
 /// or item should be encoded/decoded.<br>
-/// * `crate: $crate` - Overwrites the default crate name which is assumed to be `ende`.
+/// * `crate: $crate` - Overwrites the default crate name which is assumed to be `ender`.
 /// Can only be applied to items.
 /// * `if: $expr` - The field will only be encoded/decoded if the given expression
 /// evaluates to true, otherwise the default value is computed.
@@ -473,34 +467,34 @@ use parse_display::Display;
 ///
 /// ```rust
 /// # use std::borrow::Cow;
-/// # use ende::{Encode, Decode};
+/// # use ender::{Encode, Decode};
 /// # use uuid::Uuid;
 /// /// Hehe >:3
-/// extern crate ende as enderman;
+/// extern crate ender as enderman;
 ///
 /// #[derive(Encode, Decode)]
-/// /// We specify the name of the re-exported ende crate.
-/// #[ende(crate: enderman)]
+/// /// We specify the name of the re-exported ender crate.
+/// #[ender(crate: enderman)]
 /// /// We specify this should use a seeking impl
 /// /// This is redundant of course, but we include it for completeness :P
-/// #[ende(seeking)]
+/// #[ender(seeking)]
 /// struct PersonEntry<'record> {
 ///   /// Will come in handy later
 ///   name_present: bool,
 ///   /// Similar to the previous example, but with the addition of the flatten flag!
 ///   /// We know a Uuid is always 16 bytes long, so we omit writing/reading that data.
-///   #[ende(serde; flatten size: 16)]
+///   #[ender(serde; flatten size: 16)]
 ///   uuid: Uuid,
 ///   /// Just the string version of the uuid, not present in the binary data.
 ///   /// Skip the Encoding step, and Decode it from the uuid.
-///   #[ende(skip; default: uuid.to_string())]
+///   #[ender(skip; default: uuid.to_string())]
 ///   uuid_string: String,
 ///   /// We know whether this is present from the context, therefore we don't write whether
 ///   /// the optional value is present, and when reading we assume it is.
 ///   /// Since the "if" flag is also present, the field will only be decoded if the expression
 ///   /// evaluates to true, making the previous operation safe
 ///   /// (no risk of decoding garbage data)
-///   #[ende(flatten bool: true; if: * name_present)]
+///   #[ender(flatten bool: true; if: * name_present)]
 ///   name: Option<String>,
 ///   /// Contains a file offset to the rest of the data
 ///   pointer_to_data: usize,
@@ -510,49 +504,49 @@ use parse_display::Display;
 ///   /// Decode impl -> Cow::Owned -- (NOT YET - WILL WORK WHEN SPECIALIZATION IS STABILIZED)
 ///   /// BorrowDecode impl -> Cow::Borrowed
 ///   /// The macro will infer the borrow lifetime to be `'record`.
-///   #[ende(goto start: *pointer_to_data; borrow)]
+///   #[ender(goto start: *pointer_to_data; borrow)]
 ///   criminal_record: Cow<'record, str>,
 ///   /// Only present if the name is also present, but we want to provide a custom default!
-///   #[ende(default: String::from("Smith"); if: * name_present)]
+///   #[ender(default: String::from("Smith"); if: * name_present)]
 ///   surname: String,
 ///   /// No-one allowed before 18!
-///   #[ende(validate: * age >= 18, "User is too young: {}", age)]
+///   #[ender(validate: * age >= 18, "User is too young: {}", age)]
 ///   age: u32,
 ///   /// This is temporary data, we don't care about including it in the binary format.
-///   #[ende(skip; default: 100)]
+///   #[ender(skip; default: 100)]
 ///   health: u64,
 /// }
 /// ```
 /// # Relationship between seek flags
 ///
 /// ```
-/// # use ende_derive::{Decode, Encode};
+/// # use ender::{Decode, Encode};
 /// #[derive(Encode, Decode)]
-/// # #[ende(crate: ende)]
+/// # #[ender(crate: ender)]
 /// /// This is the same...
 /// struct Ptr {
 ///     pointer: usize,
-///     #[ende(ptr start: *pointer)]
+///     #[ender(ptr start: *pointer)]
 ///     data: /* ... */
 /// #   (),
 /// }
 ///
 /// #[derive(Encode, Decode)]
-/// # #[ende(crate: ende)]
+/// # #[ender(crate: ender)]
 /// /// As this!
 /// struct Goto {
 ///     pointer: usize,
-///     #[ende(pos_tracker: current)]
-///     #[ende(goto start: *pointer)]
+///     #[ender(pos_tracker: current)]
+///     #[ender(goto start: *pointer)]
 ///     data: /* ... */
 /// #   (),
-///     #[ende(goto start: current)]
+///     #[ender(goto start: current)]
 ///     seek_back: (),
 /// }
 /// ```
 #[cfg(feature = "derive")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "derive")))]
-pub use ende_derive::{Decode, Encode};
+pub use ender_derive::{Decode, Encode};
 pub use error::*;
 pub use opaque::*;
 pub use convenience::*;
@@ -671,18 +665,18 @@ impl BitWidth {
     /// [`usize`]: prim@usize
     /// [`isize`]: prim@isize
     #[inline]
-    pub const fn native() -> BitWidth {
+    pub const fn native() -> Self {
         #[cfg(target_pointer_width = "64")]
         {
-            BitWidth::Bit64
+            Self::Bit64
         }
         #[cfg(target_pointer_width = "32")]
         {
-            BitWidth::Bit32
+            Self::Bit32
         }
         #[cfg(target_pointer_width = "16")]
         {
-            BitWidth::Bit16
+            Self::Bit16
         }
     }
 
@@ -691,7 +685,7 @@ impl BitWidth {
     /// # Example
     ///
     /// ```rust
-    /// use ende::BitWidth;
+    /// use ender::BitWidth;
     /// let sixteen = BitWidth::Bit16;
     ///
     /// assert_eq!(sixteen.bits(), 16);
@@ -712,7 +706,7 @@ impl BitWidth {
     /// # Example
     ///
     /// ```rust
-    /// use ende::BitWidth;
+    /// use ender::BitWidth;
     /// let eight_bits = BitWidth::Bit8;
     /// let thirtytwo_bits = BitWidth::Bit32;
     ///
@@ -1747,8 +1741,8 @@ impl<T: Write> Encoder<'_, T> {
     /// # Example
     ///
     /// ```
-    /// use ende::{Context, Encoder};
-    /// use ende::io::Zero;
+    /// use ender::{Context, Encoder};
+    /// use ender::io::Zero;
     ///
     /// let mut encoder = Encoder::new(Zero, Context::new());
     /// encoder.write_str("Hello, world!".chars()).unwrap();
@@ -2469,8 +2463,8 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
     /// # Example
     ///
     /// ```
-    /// use ende::{Context, Encoder};
-    /// use ende::io::Slice;
+    /// use ender::{Context, Encoder};
+    /// use ender::io::Slice;
     ///
     /// let slice = [0, 7, 15, 42, 2];
     /// let encoder = Encoder::new(Slice::new(&slice), Context::new());
@@ -2689,11 +2683,13 @@ impl<T: Seek> Encoder<'_, T> {
 }
 
 /// A binary data structure specification which can be **encoded** into its binary representation.
+/// 
+/// Implementations that need to **seek** should implement for `W: Write + Seek`.
+///
+/// You should keep your implementation as general as possible and avoid
+/// implementing for a `R = ConcreteType>` if possible
 pub trait Encode<W: Write> {
     /// Encodes `self` into its binary format.
-    ///
-    /// Implementations that **need** to seek, should implement [`seek_encode`][`Self::seek_encode`]
-    /// instead, and define this method to return a [`SeekError::SeekNecessary`]
     ///
     /// Calling `encode` multiple times on the same value without
     /// changing the encoder settings or the value itself in-between calls should produce
@@ -2708,6 +2704,31 @@ pub trait Encode<W: Write> {
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation.
+/// 
+/// Implementations that need to **seek** should implement for `R: Read + Seek`,
+/// while those that need to **borrow** should implement for `R: BorrowRead<'data>`.
+/// 
+/// If you need both, use `R: BorrowRead<'data> + Seek`
+/// 
+/// You should keep your implementation as general as possible and avoid
+/// implementing for a `R = ConcreteType>` if possible
+/// 
+/// # Note about lifetimes
+/// 
+/// An implementation of this trait where your type uses the same lifetime as the decoder
+/// (the `'data` lifetime) will greatly limit the possible usages of the implementation.
+/// 
+/// Instead, prefer giving your type a different lifetime and make the `'data` lifetime depends on it.
+/// 
+/// ### Correct:
+/// ```ignore
+/// impl<'data: 'a, 'b, ..., 'a, 'b, ...> Decode<BorrowRead<'data>> for Thing<'a, 'b, ...> { ... }
+/// ```
+///
+/// ### Misleading:
+/// ```ignore
+/// impl<'data> Decode<BorrowRead<'data>> for Thing<'data, 'data, ...> { ... }
+/// ```
 pub trait Decode<R: Read>: Sized {
     /// Decodes an owned version of `Self` from its binary format.
     ///

@@ -1,8 +1,8 @@
 [package]
-name = "ende"
+name = "ender"
 version = "0.1.0"
 edition = "2021"
-repository = "https://github.com/bohdloss/ende"
+repository = "https://github.com/bohdloss/ender"
 keywords = ["no_std", "ecoding", "ende", "parsing", "binary"]
 categories = ["embedded", "encoding", "parsing", "no-std", "no-std::no-alloc"]
 description = "An encoding library to work with any binary data format"
@@ -17,7 +17,7 @@ rustdoc-args = ["--generate-link-to-definition"]
 features = ["std", "derive"]
 
 [dependencies]
-ende-derive = { version = "1", path = "../ende-derive" }
+ender-derive = { version = "1", path = "../ender-derive" }
 array-init = "2.1.0"
 parse-display = "0.9.0"
 bytemuck = { version = "1.15.0" }
@@ -38,7 +38,7 @@ default = ["std"]
 # Keeps track of the various structures being encoded/decoded to provide better information
 # when debugging a binary format. This probably prevents some optimizations on release mode,
 # so use this ONLY in executables, NEVER in libraries.
-debug = ["ende-derive/debug"]
+debug = ["ender-derive/debug"]
 
 # Enables all features. Includes serde support, encryption and compression, and the derive macros.
 # The unstable feature still has to be enabled separately.
@@ -59,4 +59,4 @@ serde = ["dep:serde"]
 derive = []
 
 # Enables features only available in nightly.
-unstable = ["ende-derive/unstable"]
+unstable = ["ender-derive/unstable"]
