@@ -1,8 +1,5 @@
-use std::ops::Deref;
-
-use quote::ToTokens;
 use syn::{
-    Lifetime, Type, TypeReference, TypeSlice,
+    Lifetime, Type,
 };
 use syn::visit::{Visit, visit_type};
 

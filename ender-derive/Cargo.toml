@@ -2,6 +2,8 @@
 name = "ender-derive"
 version = "0.2.0"
 edition = "2021"
+description = "Macros for ender. Not meant to be used as a standalone crate"
+license = "MIT"
 
 [lib]
 proc-macro = true
