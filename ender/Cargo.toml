@@ -1,23 +1,23 @@
 [package]
 name = "ender"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 repository = "https://github.com/bohdloss/ender"
-keywords = ["no_std", "ecoding", "ende", "parsing", "binary"]
+keywords = ["no_std", "ecoding", "ender", "parsing", "binary"]
 categories = ["embedded", "encoding", "parsing", "no-std", "no-std::no-alloc"]
 description = "An encoding library to work with any binary data format"
 license = "MIT"
 readme = "../README.md"
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["debug", "alloc", "std", "serde", "derive", "unstable"]
 rustdoc-args = ["--generate-link-to-definition"]
 
 [package.metadata.playground]
 features = ["std", "derive"]
 
 [dependencies]
-ender-derive = { version = "1", path = "../ender-derive" }
+ender-derive = { version = "=0.2.0", optional = true, path = "../ender-derive" }
 array-init = "2.1.0"
 parse-display = "0.9.0"
 bytemuck = { version = "1.15.0" }
@@ -56,7 +56,7 @@ std = ["alloc", "embedded-io/std", "serde?/std"]
 serde = ["dep:serde"]
 
 # Enables the derive(Encode, Decode) macros.
-derive = []
+derive = ["ender-derive"]
 
 # Enables features only available in nightly.
 unstable = ["ender-derive/unstable"]
