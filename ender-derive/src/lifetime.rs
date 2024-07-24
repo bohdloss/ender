@@ -9,7 +9,6 @@ use syn::visit::{Visit, visit_type};
 use crate::ctxt::Field;
 
 /// Searches through the fields to find all the lifetime bounds
-/// required by a `BorrowDecode` implementation.
 /// If the field has a type modifier, that type will be searched for lifetimes instead.
 /// If the target is `Decode`, this will discard all the borrow flags of the field.
 pub fn process_field_lifetimes(
@@ -49,37 +48,7 @@ fn discover_field_lifetime_bounds(field: &Field) -> syn::Result<Vec<Lifetime>> {
             Ok(lifetimes)
         }
     } else {
-        // No borrow flag was declared, but maybe we can infer the lifetime for simple types
-        match field.virtual_ty() {
-            Type::Reference(TypeReference {
-                lifetime: Some(lif),
-                elem,
-                ..
-            }) => match elem.deref() {
-                Type::Slice(TypeSlice { elem, .. }) => {
-                    let name = elem.to_token_stream().to_string();
-                    match name.as_str() {
-                        "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i32" | "i64"
-                        | "i128" | "usize" | "isize" => {
-                            return Ok(vec![lif.clone()]);
-                        }
-                        _ => {}
-                    }
-                }
-                Type::Path(path) => {
-                    let name = path.to_token_stream().to_string();
-                    match name.as_str() {
-                        "str" => {
-                            return Ok(vec![lif.clone()]);
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-        // No simple type detected
+        // No borrow flag was declared, so just return an empty vec
         Ok(Vec::new())
     }
 }

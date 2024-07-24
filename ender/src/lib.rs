@@ -137,8 +137,12 @@ use core::mem::replace;
 
 use parse_display::Display;
 
-/// Helper macros to derive [`Encode`] and [`Decode`] for a `struct` or `enum`.<br>
-/// This macro supports a series of helper flags to aid customization.
+/// # The Ender Derivonomicon
+///
+/// The following is a full and up-to-date breakdown of the `Encode` and `Decode` derive macros,
+/// their attributes, how they work and all the possible ways you can modify the codegen.
+///
+/// ## Flags Essentials
 ///
 /// All flags follow the following format:
 /// `#[ender(flag1; flag2; flag2; ...)]`
@@ -157,10 +161,17 @@ use parse_display::Display;
 /// If the fields are part of a tuple struct/variant, the references will be named `m{idx}` where `idx` are the
 /// indexes of the tuple fields (E.G. `m0`, `m1`, ...), otherwise their names will match those of the fields themselves.
 ///
-/// A seeking impl is an implementation of [`SeekEncode`], [`SeekDecode`] or [`SeekBorrowDecode`] rather
-/// than their non-seek variants.
+/// A seeking impl is an implementation of [`Encode`] or [`Decode`] that has an additional [`Seek`]
+/// trait bound
 /// When a flag is said to be a `seek` flag, it means that when used anywhere it will switch the
 /// impl to a seeking impl.
+///
+/// A borrowing impl is an implementation of [`Encode`] or [`Decode`] that has a [`BorrowRead`]
+/// trait bound rather than a [`Read`] one.
+/// When a flag is said to be a `borrow` flag, it means that when used anywhere it will switch the
+/// impl to a borrowing impl.
+///
+/// Borrowing and seeking impls can be combined.
 ///
 /// The flags currently implemented are split into 5 groups:
 /// # 1. Setting Modifiers
@@ -447,7 +458,7 @@ use parse_display::Display;
 /// a Vec or HashMap) doesn't need to be encoded/decoded, because it is known from the context.
 /// Can also be used with an `Option` in conjunction with the `if` flag and without the `$expr`
 /// to indicate that the presence of an optional value is known from the context.
-/// * `borrow: $lif1, $lif2, $lif3, ...` - Only available when deriving `BorrowDecode`. Indicates this field
+/// * `borrow: $lif1, $lif2, $lif3, ...` - This is a `borrow` flag. Indicates this field
 /// should be decoded using its borrowing decode implementation, and allows you to optionally specify a
 /// set of lifetimes to override those normally inferred by the macro. These lifetimes will be bound
 /// to the lifetime of the encoder's data.
@@ -2683,7 +2694,7 @@ impl<T: Seek> Encoder<'_, T> {
 }
 
 /// A binary data structure specification which can be **encoded** into its binary representation.
-/// 
+///
 /// Implementations that need to **seek** should implement for `W: Write + Seek`.
 ///
 /// You should keep your implementation as general as possible and avoid
@@ -2704,22 +2715,22 @@ pub trait Encode<W: Write> {
 }
 
 /// A binary data structure specification which can be **decoded** from its binary representation.
-/// 
+///
 /// Implementations that need to **seek** should implement for `R: Read + Seek`,
 /// while those that need to **borrow** should implement for `R: BorrowRead<'data>`.
-/// 
+///
 /// If you need both, use `R: BorrowRead<'data> + Seek`
-/// 
+///
 /// You should keep your implementation as general as possible and avoid
 /// implementing for a `R = ConcreteType>` if possible
-/// 
+///
 /// # Note about lifetimes
-/// 
+///
 /// An implementation of this trait where your type uses the same lifetime as the decoder
 /// (the `'data` lifetime) will greatly limit the possible usages of the implementation.
-/// 
+///
 /// Instead, prefer giving your type a different lifetime and make the `'data` lifetime depends on it.
-/// 
+///
 /// ### Correct:
 /// ```ignore
 /// impl<'data: 'a, 'b, ..., 'a, 'b, ...> Decode<BorrowRead<'data>> for Thing<'a, 'b, ...> { ... }

@@ -1,4 +1,4 @@
-# ender
+# Ender
 
 A rust **EN**coding and **DE**coding library for writing custom protocols and file formats.
 
