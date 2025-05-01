@@ -22,9 +22,13 @@ impl Ctxt {
                 )?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
+                let puller = self.flags.derive_puller(self)?;
+                let pusher = self.flags.derive_pusher(self)?;
 
                 Ok(quote!(
                     #pos_tracker
+                    #puller
+                    #pusher
                     #pre
                     #seek
                     { #modified }
@@ -62,11 +66,15 @@ impl Ctxt {
                 )?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
+                let puller = self.flags.derive_puller(self)?;
+                let pusher = self.flags.derive_pusher(self)?;
 
                 Ok(quote!(
                     #const_code
 
                     #pos_tracker
+                    #puller
+                    #pusher
                     #pre
                     #seek
                     { #modified }
@@ -170,6 +178,8 @@ impl Field {
         let validate = self.flags.derive_validation(ctxt, Some(&ref_code))?;
         let seek = self.flags.derive_seek(ctxt)?;
         let pos_tracker = self.flags.derive_pos_tracker(ctxt)?;
+        let puller = self.flags.derive_puller(ctxt)?;
+        let pusher = self.flags.derive_pusher(ctxt)?;
 
         let encode = if let Some(converter) = &self.flags.ty_mods {
             self.flags.function.derive_encode(
@@ -198,6 +208,8 @@ impl Field {
             quote!(
                 #validate
                 #pos_tracker
+                #puller
+                #pusher
                 if #condition {
                     #pre
                     #seek
@@ -209,6 +221,8 @@ impl Field {
             quote!(
                 #validate
                 #pos_tracker
+                #puller
+                #pusher
                 #pre
                 #seek
                 #modified;

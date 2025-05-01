@@ -30,6 +30,8 @@ pub mod kw {
     custom_keyword!(validate);
     custom_keyword!(borrow);
     custom_keyword!(goto);
+    custom_keyword!(pull);
+    custom_keyword!(push);
 
     /* Keywords related to `Seek` specifically */
     custom_keyword!(start);
@@ -374,6 +376,26 @@ pub enum Flag {
     },
     /// Forces a `Seek*` implementation
     Seek { kw: kw::seeking },
+    /// Stores a value obtained from the user provided data in the context inside a local variable
+    Pull { 
+        kw: kw::pull,
+        user: Ident,
+        as_kw: Token![as],
+        ty: Type,
+        colon: Token![:],
+        var: Ident,
+        fat_larrow: Token![<=],
+        expr: Expr
+    },
+    /// Stores a value in the user provided data in the context
+    Push { 
+        kw: kw::pull,
+        user: Ident,
+        as_kw: Token![as],
+        ty: Type,
+        colon: Token![:],
+        expr: Expr
+    }
 }
 
 impl Flag {
@@ -399,6 +421,8 @@ impl Flag {
             Flag::Goto { kw, .. } => kw.span,
             Flag::PosTracker { kw, .. } => kw.span,
             Flag::Seek { kw } => kw.span,
+            Flag::Pull { kw, .. } => kw.span,
+            Flag::Push { kw, .. } => kw.span,
         }
     }
 }
@@ -723,6 +747,26 @@ impl Parse for Flag {
             })
         } else if input.peek(kw::seeking) {
             Ok(Self::Seek { kw: input.parse()? })
+        } else if input.peek(kw::pull) {
+            Ok(Self::Pull {
+                kw: input.parse()?,
+                user: input.parse()?,
+                as_kw: input.parse()?,
+                ty: input.parse()?,
+                colon: input.parse()?,
+                var: input.parse()?,
+                fat_larrow: input.parse()?,
+                expr: input.parse()?
+            })
+        } else if input.peek(kw::push) {
+            Ok(Self::Push {
+                kw: input.parse()?,
+                user: input.parse()?,
+                as_kw: input.parse()?,
+                ty: input.parse()?,
+                colon: input.parse()?,
+                expr: input.parse()?
+            })
         } else {
             Err(Error::new(input.span(), FLAGS_USAGE))
         }

@@ -471,9 +471,19 @@ use parse_display::Display;
 /// * `pos_tracker: $ident` - This is a `seek` flag. Stores the current stream position in a
 /// variable with the given name.
 /// Note that the position is stored *before* the `ptr` and `goto` flags, if any.
-/// <br>
-/// `seeking` - This is a `seek` flag. Does nothing, but simply forces a seeking impl to be used.
+/// * `pull $user as $ty: $var <= $expr` - Attempts to retrieve the `user` field from the context and
+/// downcast it to `$ty`, early returning an error if it fails.
+/// The reference is available to the `$expr` through the `$user` ident, which is executed and its value
+/// stored in a local variable `$val`.
+/// 
+/// This flag is applied *before* `push`
+/// * `push $user as $ty: $expr` - Attempts to retrieve the `user` field from the context and
+/// downcast it to `$ty`, early returning an error if it fails.
+/// The reference is available to the `$expr` through the `$user` ident, which is executed and its value
+/// ignored.
+/// * `seeking` - This is a `seek` flag. Does nothing, but simply forces a seeking impl to be used.
 /// This can only be applied to the whole item, as it doesn't make sense on individual fields.
+/// <br>
 /// ### Example:
 ///
 /// ```rust
@@ -2733,7 +2743,7 @@ pub trait Encode<W: Write> {
 ///
 /// ### Correct:
 /// ```ignore
-/// impl<'data: 'a, 'b, ..., 'a, 'b, ...> Decode<BorrowRead<'data>> for Thing<'a, 'b, ...> { ... }
+/// impl<'data: 'a + 'b + ..., 'a, 'b, ...> Decode<BorrowRead<'data>> for Thing<'a, 'b, ...> { ... }
 /// ```
 ///
 /// ### Misleading:

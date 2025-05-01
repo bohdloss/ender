@@ -369,6 +369,28 @@ pub struct SeekParam {
     pub seek: Expr,
 }
 
+#[derive(Clone)]
+pub struct Puller {
+    /// This will be of type `&{ty}` and will be brought in scope of `expr`
+    pub user: Ident,
+    /// An attempt is made to obtain the user data and downcast it to this type
+    pub ty: Type,
+    /// If successful, the value of `expr` will be stored in a local variable named `local`
+    pub local: Ident,
+    /// The expr that is evaluated when the downcast succeeds
+    pub expr: Expr,
+}
+
+#[derive(Clone)]
+pub struct Pusher {
+    /// This will be of type `&{ty}` and will be brought in scope of `expr`
+    pub user: Ident,
+    /// An attempt is made to obtain the user data and downcast it to this type
+    pub ty: Type,
+    /// The expr that is evaluated when the downcast succeeds
+    pub expr: Expr,
+}
+
 /// All the possible flags a field or item can have. The target allows the apply method to
 /// check whether each flag is supported.
 #[derive(Clone)]
@@ -408,6 +430,10 @@ pub struct Flags {
     ///
     /// Can only be applied to fields
     pub pos_tracker: Option<Ident>,
+    /// Allows to retrieve a value from the user provided data in the context, storing it in a local variable
+    pub pull: Option<Puller>,
+    /// Allows to store a value into the user provided data in the context
+    pub push: Option<Pusher>,
     /// Forces a `Seek*` implementation
     pub force_seek: bool,
 }
@@ -428,6 +454,8 @@ impl Flags {
             borrow: None,
             seek: None,
             pos_tracker: None,
+            pull: None,
+            push: None,
             force_seek: false,
         }
     }
@@ -671,6 +699,35 @@ impl Flags {
                 }
 
                 self.force_seek = true;
+            }
+            Flag::Pull { user, ty, var, expr, .. } => {
+                if self.pull.is_some() {
+                    return Err(Error::new(
+                        span,
+                        r#""pull" flag declared more than once"#,
+                    ));
+                }
+
+                self.pull = Some(Puller {
+                    user,
+                    ty,
+                    local: var,
+                    expr,
+                });
+            }
+            Flag::Push { user, ty, expr, .. } => {
+                if self.push.is_some() {
+                    return Err(Error::new(
+                        span,
+                        r#""push" flag declared more than once"#,
+                    ));
+                }
+
+                self.push = Some(Pusher {
+                    user,
+                    ty,
+                    expr,
+                });
             }
         }
 

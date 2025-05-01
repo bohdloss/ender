@@ -20,9 +20,13 @@ impl Ctxt {
                 )?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
+                let puller = self.flags.derive_puller(self)?;
+                let pusher = self.flags.derive_pusher(self)?;
 
                 Ok(quote!(
                     #pos_tracker
+                    #puller
+                    #pusher
                     #pre
                     #seek
                     let __val: Self = { #modified };
@@ -74,11 +78,15 @@ impl Ctxt {
                 )?;
                 let seek = self.flags.derive_seek(self)?;
                 let pos_tracker = self.flags.derive_pos_tracker(self)?;
+                let puller = self.flags.derive_puller(self)?;
+                let pusher = self.flags.derive_pusher(self)?;
 
                 Ok(quote!(
                     #const_code
 
                     #pos_tracker
+                    #puller
+                    #pusher
                     #pre
                     #seek
                     let __val: Self = { #modified };
@@ -223,6 +231,8 @@ impl Field {
         )?;
         let seek = self.flags.derive_seek(ctxt)?;
         let pos_tracker = self.flags.derive_pos_tracker(ctxt)?;
+        let puller = self.flags.derive_puller(ctxt)?;
+        let pusher = self.flags.derive_pusher(ctxt)?;
 
         let decode = if self.flags.skip {
             quote!(
@@ -264,6 +274,8 @@ impl Field {
 
         let decode = quote!(
             #pos_tracker
+            #puller
+            #pusher
             let #field_name: #field_ty = #decode;
             #validate
         );

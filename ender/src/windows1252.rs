@@ -257,13 +257,13 @@ const ENC_TO_DEC: [Option<char>; 256] = [
     Some('\u{FF}'),
 ];
 
-pub(crate) fn enc_to_dec(byte: u8) -> Option<char> {
+pub(crate) const fn enc_to_dec(byte: u8) -> Option<char> {
     ENC_TO_DEC[byte as usize]
 }
 
-pub(crate) fn dec_to_enc(ch: char) -> Option<u8> {
+pub(crate) const fn dec_to_enc(ch: char) -> Option<u8> {
     match ch {
-        ch @ '\0'..='\u{7F}' | ch @ '\u{A0}'..='\u{AC}' | ch @ '\u{AF}'..='\u{FF}' => Some(ch as u8),
+        '\0'..='\u{7F}' | '\u{A0}'..='\u{AC}' | '\u{AF}'..='\u{FF}' => Some(ch as u8),
         '\u{20AC}' => Some(128),
         '\u{201A}' => Some(130),
         '\u{192}' => Some(131),

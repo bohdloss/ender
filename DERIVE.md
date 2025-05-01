@@ -267,16 +267,25 @@ set of lifetimes to override those normally inferred by the macro. These lifetim
 to the lifetime of the encoder's data.
 * `goto $seek: $expr` - This is a `seek` flag. Indicates a jump to a different stream position
 before encoding this field or item.
-$seek can be any of "start", "end" or "cur", while $expr must produce a value of
-type usize or isize relative to $seek.<br>
+`$seek` can be any of "start", "end" or "cur", while `$expr` must produce a value of
+type usize or isize relative to `$seek`.<br>
 If you need the stream position to be restored after encoding/decoding the field, see the
 `ptr` *stream modifier`.
 * `pos_tracker: $ident` - This is a `seek` flag. Stores the current stream position in a
 variable with the given name.
 Note that the position is stored *before* the `ptr` and `goto` flags, if any.
-<br>
-`seeking` - This is a `seek` flag. Does nothing, but simply forces a seeking impl to be used.
+* `pull $user as $ty: $var <= $expr` - Attempts to retrieve the `$user` field from the context and
+downcast it to `$ty`, early returning an error if it fails.
+The reference is available to the `$expr` through the `$user` pattern, which is executed and its value
+stored in a local variable `$val`.
+This flag is applied *before* `push`
+* `push $user as $ty: $expr` - Attempts to retrieve the `user` field from the context and
+downcast it to `$ty`, early returning an error if it fails.
+The reference is available to the `$expr` through the `$user` pattern, which is executed and its value
+ignored.
+* `seeking` - This is a `seek` flag. Does nothing, but simply forces a seeking impl to be used.
 This can only be applied to the whole item, as it doesn't make sense on individual fields.
+<br>
 ### Example:
 
 ```rust

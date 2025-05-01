@@ -4,7 +4,7 @@ use syn::{parse_quote, Expr, Type};
 
 use crate::ctxt::{Ctxt, Field, ItemType, Scope, Target, Variant};
 use crate::flags::{
-    AllModifiers, FlagTarget, Flags, Function, ModifierGroup, StreamModifier, TypeModifier,
+    AllModifiers, FlagTarget, Flags, Function, ModifierGroup, Puller, Pusher, StreamModifier, TypeModifier
 };
 use crate::generator::tokenize::CtxtToTokens;
 use crate::parse::Formatting;
@@ -254,6 +254,39 @@ impl Flags {
             let var = format_ident!("{}", var);
 
             quote!(let #var = #crate_name::Encoder::stream_position(#encoder)?;)
+        } else {
+            quote!()
+        })
+    }
+
+    pub fn derive_puller(&self, ctxt: &Ctxt) -> syn::Result<TokenStream2> {
+        Ok(if let Some(Puller { user, ty, local, expr  }) = &self.pull {
+            let ref crate_name = ctxt.flags.crate_name;
+            let ref encoder = ctxt.encoder;
+
+            let user = format_ident!("{}", user);
+            let local = format_ident!("{}", local);
+
+            quote!(let #local = {
+                let #user = #crate_name::Encoder::user_data::<#ty>(#encoder)?;
+                #expr
+            };)
+        } else {
+            quote!()
+        })
+    }
+
+    pub fn derive_pusher(&self, ctxt: &Ctxt) -> syn::Result<TokenStream2> {
+        Ok(if let Some(Pusher { user, ty, expr  }) = &self.push {
+            let ref crate_name = ctxt.flags.crate_name;
+            let ref encoder = ctxt.encoder;
+
+            let user = format_ident!("{}", user);
+
+            quote!(let _ = {
+                let #user = #crate_name::Encoder::user_data::<#ty>(#encoder)?;
+                #expr
+            };)
         } else {
             quote!()
         })
