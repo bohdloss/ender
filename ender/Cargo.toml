@@ -42,15 +42,17 @@ debug = ["ender-derive/debug"]
 
 # Enables all features. Includes serde support, encryption and compression, and the derive macros.
 # The unstable feature still has to be enabled separately.
-all = ["alloc", "std", "derive", "serde"]
+all = ["alloc", "sync", "std", "derive", "serde"]
 
 # Imports the alloc crate, enabling some additional features and Encode/Decode implementations,
 # at the cost of portability
 alloc = ["embedded-io/alloc", "serde?/alloc"]
 
+sync = []
+
 # Imports the std crate, enabling some additional features and Encode/Decode implementations,
 # at the cost of portability
-std = ["alloc", "embedded-io/std", "serde?/std"]
+std = ["alloc", "sync", "embedded-io/std", "serde?/std"]
 
 # Enables the serde compatibility layer.
 serde = ["dep:serde"]

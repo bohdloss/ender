@@ -190,7 +190,7 @@ impl<W: Write, T: Encode<W>> Encode<W> for alloc::rc::Rc<T> {
     }
 }
 
-#[cfg(all(feature = "alloc"))]
+#[cfg(all(feature = "alloc", feature = "sync"))]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
 impl<W: Write, T: Encode<W>> Encode<W> for alloc::sync::Arc<T> {
     #[inline]
@@ -930,7 +930,7 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::rc::Rc<T> {
     }
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", feature = "sync"))]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
 impl<R: Read, T: Decode<R>> Decode<R> for alloc::sync::Arc<T> {
     #[inline]
