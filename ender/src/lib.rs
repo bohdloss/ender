@@ -471,16 +471,15 @@ use parse_display::Display;
 /// * `pos_tracker: $ident` - This is a `seek` flag. Stores the current stream position in a
 /// variable with the given name.
 /// Note that the position is stored *before* the `ptr` and `goto` flags, if any.
-/// * `pull $user as $ty: $var <= $expr` - Attempts to retrieve the `user` field from the context and
-/// downcast it to `$ty`, early returning an error if it fails.
-/// The reference is available to the `$expr` through the `$user` ident, which is executed and its value
-/// stored in a local variable `$val`.
-/// 
+/// * `pull $temp as $ty: $var <= $expr` - Attempts to retrieve the `user` field from the context and
+/// downcast it to `$ty`, early returning an error if it fails, and assigns it to the temporary variable `$temp`.
+/// The `$expr` is executed and its value stored in a local variable `$val`.
+/// This is useful for reading data from the context so that it is later available to other attributes.
 /// This flag is applied *before* `push`
-/// * `push $user as $ty: $expr` - Attempts to retrieve the `user` field from the context and
-/// downcast it to `$ty`, early returning an error if it fails.
-/// The reference is available to the `$expr` through the `$user` ident, which is executed and its value
-/// ignored.
+/// * `push $temp as $ty: $expr` - Attempts to retrieve the `user` field from the context and
+/// downcast it to `$ty`, early returning an error if it fails, and assigns it to the temporary variable `$temp`.
+/// The `$expr` is executed and its value ignored.
+/// This is useful for writing data to the context.
 /// * `seeking` - This is a `seek` flag. Does nothing, but simply forces a seeking impl to be used.
 /// This can only be applied to the whole item, as it doesn't make sense on individual fields.
 /// <br>
@@ -1295,7 +1294,7 @@ impl<'a, T> Encoder<'a, T> {
             .and_then(|x| {
                 x.downcast_ref().ok_or(val_error!(
                     "User-data doesnt match the requested concrete type of {}",
-                    stringify!(U)
+                    core::any::type_name::<U>()
                 ))
             })
     }
