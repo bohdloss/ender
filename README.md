@@ -1,6 +1,6 @@
 # Ender
 
-<a href="https://crates.io/crates/ender" rel="Crates IO Ender">![Crates IO Ender](https://img.shields.io/crates/v/ender)</a>
+<a href="https://crates.io/crates/ender" rel="Crates IO Ender">![Crates IO Ender](https://img.shields.io/crates/v/ender?style=for-the-badge)</a>
 
 A rust **EN**coding and **DE**coding library for writing custom protocols and file formats.
 
