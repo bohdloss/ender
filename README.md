@@ -1,5 +1,7 @@
 # Ender
 
+![Crates.io Version](https://img.shields.io/crates/v/ender)
+
 A rust **EN**coding and **DE**coding library for writing custom protocols and file formats.
 
 It aims to be **intuitive**, **expandable** and **correct**.
