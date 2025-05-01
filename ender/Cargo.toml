@@ -40,7 +40,7 @@ default = ["std"]
 # so use this ONLY in executables, NEVER in libraries.
 debug = ["ender-derive/debug"]
 
-# Enables all features. Includes serde support, encryption and compression, and the derive macros.
+# Enables all features. Includes serde support and the derive macros.
 # The unstable feature still has to be enabled separately.
 all = ["alloc", "sync", "std", "derive", "serde"]
 
@@ -48,6 +48,7 @@ all = ["alloc", "sync", "std", "derive", "serde"]
 # at the cost of portability
 alloc = ["embedded-io/alloc", "serde?/alloc"]
 
+# Enables implementations of Encode/Decode for types that require atomic support
 sync = []
 
 # Imports the std crate, enabling some additional features and Encode/Decode implementations,

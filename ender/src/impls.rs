@@ -191,7 +191,7 @@ impl<W: Write, T: Encode<W>> Encode<W> for alloc::rc::Rc<T> {
 }
 
 #[cfg(all(feature = "alloc", feature = "sync"))]
-#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
+#[cfg_attr(feature = "unstable", doc(cfg(all(feature = "alloc", feature = "sync"))))]
 impl<W: Write, T: Encode<W>> Encode<W> for alloc::sync::Arc<T> {
     #[inline]
     fn encode(&self, encoder: &mut Encoder<W>) -> EncodingResult<()> {
@@ -931,7 +931,7 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::rc::Rc<T> {
 }
 
 #[cfg(all(feature = "alloc", feature = "sync"))]
-#[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
+#[cfg_attr(feature = "unstable", doc(cfg(all(feature = "alloc", feature = "sync"))))]
 impl<R: Read, T: Decode<R>> Decode<R> for alloc::sync::Arc<T> {
     #[inline]
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
