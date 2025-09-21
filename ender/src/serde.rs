@@ -135,6 +135,7 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
+        self.write_usize(v.len())?;
         self.write_bytes(v)
     }
 
