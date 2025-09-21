@@ -1,6 +1,6 @@
 [package]
 name = "ender"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 repository = "https://github.com/bohdloss/ender"
 keywords = ["no_std", "ecoding", "ender", "parsing", "binary"]
@@ -17,10 +17,10 @@ rustdoc-args = ["--generate-link-to-definition"]
 features = ["std", "derive"]
 
 [dependencies]
-ender-derive = { version = "=0.3.2", optional = true, path = "../ender-derive" }
+ender-derive = { version = "=0.3.3", optional = true, path = "../ender-derive" }
 array-init = "2.1.0"
 parse-display = { version = "0.10.0", default-features = false }
-bytemuck = { version = "1.15.0" }
+bytemuck = { version = "1.23.2" }
 embedded-io = { version = "0.6.1", default-features = false }
 
 # serde feature
