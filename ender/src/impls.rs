@@ -615,9 +615,9 @@ impl<W: Write> Encode<W> for std::net::SocketAddrV6 {
 macro_rules! impl_decode {
     ($($ty:ty => $read:ident);* $(;)? ) => {
 	    $(
-	    impl<R: $crate::io::Read> $crate::Decode<R> for $ty {
+	    impl<'de, R: $crate::io::Read<'de>> $crate::Decode<'de, R> for $ty {
 		    #[inline]
-            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self> where Self: Sized {
+            fn decode<'ctx>(decoder: &mut $crate::Encoder<'ctx, R>) -> $crate::EncodingResult<Self> where 'de: 'ctx  {
 		        decoder.$read()
 		    }
 	    }
@@ -644,16 +644,16 @@ impl_decode! {
     isize => read_isize;
 }
 
-impl<R: Read> Decode<R> for () {
+impl<'de, R: Read<'de>> Decode<'de, R> for () {
     #[inline]
-    fn decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(_decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(())
     }
 }
 
-impl<R: Read, T: Decode<R>, const SIZE: usize> Decode<R> for [T; SIZE] {
+impl<'de, R: Read<'de>, T: Decode<'de, R>, const SIZE: usize> Decode<'de, R> for [T; SIZE] {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         array_init::try_array_init(|i| decoder.with_index(|decoder| T::decode(decoder), i))
     }
 }
@@ -667,9 +667,9 @@ macro_rules! consume {
 macro_rules! tuple_decode {
     ($($name:ident)+) => {
 	    #[allow(non_snake_case)]
-	    impl<R: $crate::io::Read, $($name: $crate::Decode<R>),+> $crate::Decode<R> for ($($name),+) {
+	    impl<'de, R: $crate::io::Read<'de>, $($name: $crate::Decode<'de, R>),+> $crate::Decode<'de, R> for ($($name),+) {
 		    #[inline]
-            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self>{
+            fn decode<'ctx>(decoder: &mut $crate::Encoder<'ctx, R>) -> $crate::EncodingResult<Self> where 'de: 'ctx {
 			    Ok(($(
 		            consume!($name, $crate::Decode::decode(decoder)?),
 		        )+))
@@ -698,9 +698,9 @@ macro_rules! slice_borrow {
     ($($ty:ty => $borrow:ident);* $(;)?) => {
 	    $(
 	    #[allow(non_snake_case)]
-	    impl<'data: 'a, 'a, R: BorrowRead<'data>> $crate::Decode<R> for &'a [$ty] {
+	    impl<'de: 'a, 'a, R: BorrowRead<'de>> $crate::Decode<'de, R> for &'a [$ty] {
 		    #[inline]
-            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self>{
+            fn decode<'ctx>(decoder: &mut $crate::Encoder<'ctx, R>) -> $crate::EncodingResult<Self> where 'de: 'ctx {
 			    let len = decoder.read_usize()?;
 			    let endianness = decoder.ctxt.settings.num_repr.endianness;
 			    let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
@@ -724,27 +724,27 @@ slice_borrow! {
     f64 => borrow_f64_slice;
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [u8] {
+impl<'de: 'a, 'a, R: BorrowRead<'de>> Decode<'de, R> for &'a [u8] {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
         decoder.borrow_u8_slice(len, num_encoding)
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [i8] {
+impl<'de: 'a, 'a, R: BorrowRead<'de>> Decode<'de, R> for &'a [i8] {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
         decoder.borrow_i8_slice(len, num_encoding)
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [usize] {
+impl<'de: 'a, 'a, R: BorrowRead<'de>> Decode<'de, R> for &'a [usize] {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.size_repr.num_encoding;
         let endianness = decoder.ctxt.settings.size_repr.endianness;
@@ -754,9 +754,9 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [usize] {
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [isize] {
+impl<'de: 'a, 'a, R: BorrowRead<'de>> Decode<'de, R> for &'a [isize] {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let num_encoding = decoder.ctxt.settings.size_repr.num_encoding;
         let endianness = decoder.ctxt.settings.size_repr.endianness;
@@ -768,26 +768,26 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a [isize] {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read> Decode<R> for alloc::string::String {
+impl<'de, R: Read<'de>> Decode<'de, R> for alloc::string::String {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         decoder.read_str()
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read> Decode<R> for alloc::boxed::Box<str> {
+impl<'de, R: Read<'de>> Decode<'de, R> for alloc::boxed::Box<str> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let string = alloc::string::String::decode(decoder)?;
         Ok(string.into_boxed_str())
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a str {
+impl<'de: 'a, 'a, R: BorrowRead<'de>> Decode<'de, R> for &'a str {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         // Can only be borrowed when the string encoding is utf-8
         // else the user might get some surprises if we just assume it to be utf-8
         let str_encoding = decoder.ctxt.settings.string_repr.encoding;
@@ -805,9 +805,9 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a str {
     }
 }
 
-impl<R: Read, T: Decode<R>> Decode<R> for Option<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for Option<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(match decoder.read_bool()? {
             true => Some(T::decode(decoder)?),
             false => None,
@@ -815,9 +815,9 @@ impl<R: Read, T: Decode<R>> Decode<R> for Option<T> {
     }
 }
 
-impl<R: Read, T: Decode<R>, E: Decode<R>> Decode<R> for Result<T, E> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>, E: Decode<'de, R>> Decode<'de, R> for Result<T, E> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(match decoder.read_bool()? {
             true => Ok(T::decode(decoder)?),
             false => Err(E::decode(decoder)?),
@@ -825,27 +825,27 @@ impl<R: Read, T: Decode<R>, E: Decode<R>> Decode<R> for Result<T, E> {
     }
 }
 
-impl<R: Read, T: ?Sized> Decode<R> for PhantomData<T> {
+impl<'de, R: Read<'de>, T: ?Sized> Decode<'de, R> for PhantomData<T> {
     #[inline]
-    fn decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(_decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self)
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for alloc::boxed::Box<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(alloc::boxed::Box::new(<T as Decode<R>>::decode(decoder)?))
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<[T]> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for alloc::boxed::Box<[T]> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut vec = alloc::vec::Vec::new();
         vec.reserve_exact(len);
@@ -869,7 +869,7 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<[T]> {
 //     <T as alloc::borrow::ToOwned>::Owned: Decode<R>,
 // {
 //     #[inline]
-//     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+//     fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
 //         Ok(Self::Owned(
 //             <<T as alloc::borrow::ToOwned>::Owned as Decode<R>>::decode(decoder)?,
 //         ))
@@ -878,72 +878,72 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<[T]> {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<'data: 'a, 'a, R: BorrowRead<'data>, T: ?Sized + alloc::borrow::ToOwned> Decode<R>
+impl<'de: 'a, 'a, R: BorrowRead<'de>, T: ?Sized + alloc::borrow::ToOwned> Decode<'de, R>
     for alloc::borrow::Cow<'a, T>
 where
-    &'a T: Decode<R>,
+    &'a T: Decode<'de, R>,
 {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::Borrowed(<&T>::decode(decoder)?))
     }
 }
 
-impl<R: Read, T: Copy + Decode<R>> Decode<R> for Cell<T> {
+impl<'de, R: Read<'de>, T: Copy + Decode<'de, R>> Decode<'de, R> for Cell<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Cell::new(T::decode(decoder)?))
     }
 }
 
-impl<R: Read, T: Decode<R>> Decode<R> for RefCell<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for RefCell<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(RefCell::new(T::decode(decoder)?))
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read, T: Decode<R>> Decode<R> for std::sync::Mutex<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for std::sync::Mutex<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::new(T::decode(decoder)?))
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read, T: Decode<R>> Decode<R> for std::sync::RwLock<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for std::sync::RwLock<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::new(T::decode(decoder)?))
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, T: Decode<R>> Decode<R> for alloc::rc::Rc<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for alloc::rc::Rc<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::new(T::decode(decoder)?))
     }
 }
 
 #[cfg(all(feature = "alloc", feature = "sync"))]
 #[cfg_attr(feature = "unstable", doc(cfg(all(feature = "alloc", feature = "sync"))))]
-impl<R: Read, T: Decode<R>> Decode<R> for alloc::sync::Arc<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for alloc::sync::Arc<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::new(T::decode(decoder)?))
     }
 }
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, K: Ord + Decode<R>, V: Decode<R>> Decode<R> for alloc::collections::BTreeMap<K, V> {
+impl<'de, R: Read<'de>, K: Ord + Decode<'de, R>, V: Decode<'de, R>> Decode<'de, R> for alloc::collections::BTreeMap<K, V> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut map = Self::new();
 
@@ -957,9 +957,9 @@ impl<R: Read, K: Ord + Decode<R>, V: Decode<R>> Decode<R> for alloc::collections
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, K: Ord + Decode<R>> Decode<R> for alloc::collections::BTreeSet<K> {
+impl<'de, R: Read<'de>, K: Ord + Decode<'de, R>> Decode<'de, R> for alloc::collections::BTreeSet<K> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut set = Self::new();
 
@@ -973,9 +973,9 @@ impl<R: Read, K: Ord + Decode<R>> Decode<R> for alloc::collections::BTreeSet<K> 
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, T: Ord + Decode<R>> Decode<R> for alloc::collections::BinaryHeap<T> {
+impl<'de, R: Read<'de>, T: Ord + Decode<'de, R>> Decode<'de, R> for alloc::collections::BinaryHeap<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut heap = Self::with_capacity(len);
 
@@ -989,11 +989,11 @@ impl<R: Read, T: Ord + Decode<R>> Decode<R> for alloc::collections::BinaryHeap<T
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read, K: core::hash::Hash + Eq + Decode<R>, V: Decode<R>> Decode<R>
+impl<'de, R: Read<'de>, K: core::hash::Hash + Eq + Decode<'de, R>, V: Decode<'de, R>> Decode<'de, R>
     for std::collections::hash_map::HashMap<K, V>
 {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut map = Self::with_capacity(len);
 
@@ -1007,11 +1007,11 @@ impl<R: Read, K: core::hash::Hash + Eq + Decode<R>, V: Decode<R>> Decode<R>
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read, K: core::hash::Hash + Eq + Decode<R>> Decode<R>
+impl<'de, R: Read<'de>, K: core::hash::Hash + Eq + Decode<'de, R>> Decode<'de, R>
     for std::collections::hash_set::HashSet<K>
 {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut map = Self::with_capacity(len);
 
@@ -1025,9 +1025,9 @@ impl<R: Read, K: core::hash::Hash + Eq + Decode<R>> Decode<R>
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::LinkedList<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for alloc::collections::LinkedList<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut list = Self::new();
 
@@ -1041,9 +1041,9 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::LinkedList<T> {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::VecDeque<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for alloc::collections::VecDeque<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut deque = Self::with_capacity(len);
 
@@ -1057,9 +1057,9 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::VecDeque<T> {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read, T: Decode<R>> Decode<R> for alloc::vec::Vec<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for alloc::vec::Vec<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let len = decoder.read_usize()?;
         let mut vec = Self::with_capacity(len);
 
@@ -1073,9 +1073,9 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::vec::Vec<T> {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read> Decode<R> for alloc::ffi::CString {
+impl<'de, R: Read<'de>> Decode<'de, R> for alloc::ffi::CString {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let mut data = alloc::vec::Vec::new();
         loop {
             let val = decoder.read_byte()?;
@@ -1094,16 +1094,16 @@ impl<R: Read> Decode<R> for alloc::ffi::CString {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl<R: Read> Decode<R> for alloc::boxed::Box<CStr> {
+impl<'de, R: Read<'de>> Decode<'de, R> for alloc::boxed::Box<CStr> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(alloc::ffi::CString::decode(decoder)?.into_boxed_c_str())
     }
 }
 
-impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a CStr {
+impl<'de: 'a, 'a, R: BorrowRead<'de>> Decode<'de, R> for &'a CStr {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let mut len = 1;
         loop {
             let slice = decoder.peek_bytes(len)?;
@@ -1123,9 +1123,9 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a CStr {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::ffi::OsString {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::ffi::OsString {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         use core::str::FromStr;
         let string = String::decode(decoder)?;
 
@@ -1137,35 +1137,35 @@ impl<R: Read> Decode<R> for std::ffi::OsString {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for alloc::boxed::Box<std::ffi::OsStr> {
+impl<'de, R: Read<'de>> Decode<'de, R> for alloc::boxed::Box<std::ffi::OsStr> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(std::ffi::OsString::decode(decoder)?.into_boxed_os_str())
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a std::ffi::OsStr {
+impl<'de: 'a, 'a, R: BorrowRead<'de>> Decode<'de, R> for &'a std::ffi::OsStr {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let string = <&str>::decode(decoder)?;
         Ok(std::ffi::OsStr::new(string))
     }
 }
 
-impl<R: Read> Decode<R> for Duration {
+impl<'de, R: Read<'de>> Decode<'de, R> for Duration {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::new(decoder.read_u64()?, decoder.read_u32()?))
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::time::SystemTime {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::time::SystemTime {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         let duration = Duration::decode(decoder)?;
         Ok(Self::UNIX_EPOCH + duration)
     }
@@ -1173,36 +1173,36 @@ impl<R: Read> Decode<R> for std::time::SystemTime {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::path::PathBuf {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::path::PathBuf {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::from(std::ffi::OsString::decode(decoder)?))
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for alloc::boxed::Box<std::path::Path> {
+impl<'de, R: Read<'de>> Decode<'de, R> for alloc::boxed::Box<std::path::Path> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(std::path::PathBuf::decode(decoder)?.into_boxed_path())
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a std::path::Path {
+impl<'de: 'a, 'a, R: BorrowRead<'de>> Decode<'de, R> for &'a std::path::Path {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(std::path::Path::new(<&std::ffi::OsStr>::decode(
             decoder,
         )?))
     }
 }
 
-impl<R: Read, T: Decode<R>> Decode<R> for Range<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for Range<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self {
             start: T::decode(decoder)?,
             end: T::decode(decoder)?,
@@ -1210,41 +1210,41 @@ impl<R: Read, T: Decode<R>> Decode<R> for Range<T> {
     }
 }
 
-impl<R: Read, T: Decode<R>> Decode<R> for RangeInclusive<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for RangeInclusive<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::new(T::decode(decoder)?, T::decode(decoder)?))
     }
 }
 
-impl<R: Read, T: Decode<R>> Decode<R> for RangeTo<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for RangeTo<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self {
             end: T::decode(decoder)?,
         })
     }
 }
 
-impl<R: Read, T: Decode<R>> Decode<R> for RangeFrom<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for RangeFrom<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self {
             start: T::decode(decoder)?,
         })
     }
 }
 
-impl<R: Read> Decode<R> for RangeFull {
+impl<'de, R: Read<'de>> Decode<'de, R> for RangeFull {
     #[inline]
-    fn decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(_decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self)
     }
 }
 
-impl<R: Read, T: Decode<R>> Decode<R> for Bound<T> {
+impl<'de, R: Read<'de>, T: Decode<'de, R>> Decode<'de, R> for Bound<T> {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::Included(T::decode(decoder)?),
             1 => Self::Excluded(T::decode(decoder)?),
@@ -1257,9 +1257,9 @@ impl<R: Read, T: Decode<R>> Decode<R> for Bound<T> {
 macro_rules! impl_nz_decode {
     ($($ty:ident => $read:ident);* $(;)? ) => {
 	    $(
-	    impl<R: $crate::io::Read> $crate::Decode<R> for core::num::$ty {
+	    impl<'de, R: $crate::io::Read<'de>> $crate::Decode<'de, R> for core::num::$ty {
 		    #[inline]
-            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self> {
+            fn decode<'ctx>(decoder: &mut $crate::Encoder<'ctx, R>) -> $crate::EncodingResult<Self> where 'de: 'ctx {
 		        Ok(
 			        Self::new(decoder.$read()?)
 			        .ok_or($crate::val_error!(concat!("Found a value of 0 while decoding a ", stringify!($ty))))?
@@ -1287,18 +1287,18 @@ impl_nz_decode! {
 
 #[cfg(feature = "unstable")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "unstable")))]
-impl<R: Read> Decode<R> for ! {
+impl<'de, R: Read<'de>> Decode<'de, R> for ! {
     #[inline]
-    fn decode(_decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(_decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         return Err(EncodingError::invalid_variant(0usize));
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::net::IpAddr {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::net::IpAddr {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::V4(decoder.decode_value()?),
             1 => Self::V6(decoder.decode_value()?),
@@ -1309,27 +1309,27 @@ impl<R: Read> Decode<R> for std::net::IpAddr {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::net::Ipv4Addr {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::net::Ipv4Addr {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(<Self as From<[u8; 4]>>::from(decoder.decode_value()?))
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::net::Ipv6Addr {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::net::Ipv6Addr {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(<Self as From<[u8; 16]>>::from(decoder.decode_value()?))
     }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::net::SocketAddr {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::net::SocketAddr {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(match decoder.read_uvariant::<u8>()? {
             0 => Self::V4(decoder.decode_value()?),
             1 => Self::V6(decoder.decode_value()?),
@@ -1340,9 +1340,9 @@ impl<R: Read> Decode<R> for std::net::SocketAddr {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::net::SocketAddrV4 {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::net::SocketAddrV4 {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::new(
             std::net::Ipv4Addr::decode(decoder)?,
             u16::decode(decoder)?,
@@ -1352,9 +1352,9 @@ impl<R: Read> Decode<R> for std::net::SocketAddrV4 {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<R: Read> Decode<R> for std::net::SocketAddrV6 {
+impl<'de, R: Read<'de>> Decode<'de, R> for std::net::SocketAddrV6 {
     #[inline]
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx {
         Ok(Self::new(
             std::net::Ipv6Addr::decode(decoder)?,
             u16::decode(decoder)?,

@@ -240,6 +240,7 @@ impl FlagGroup {
 /// Holds information about the lifetimes being borrowed when deriving `BorrowDecode`
 pub struct BorrowData {
     pub decoder: Lifetime,
+    pub context: Lifetime,
     pub sub_lifetimes: Vec<Lifetime>,
 }
 
@@ -358,7 +359,8 @@ impl Ctxt {
             enum_repr,
             struct_data,
             borrow_data: BorrowData {
-                decoder: Lifetime::new("'__data", Span::call_site()),
+                decoder: Lifetime::new("'__de", Span::call_site()),
+                context: Lifetime::new("'__ctx", Span::call_site()),
                 sub_lifetimes: lifetimes,
             },
         };

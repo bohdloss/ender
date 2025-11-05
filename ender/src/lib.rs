@@ -134,7 +134,7 @@ use core::any::Any;
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::mem::replace;
-
+use core::marker::PhantomData;
 use parse_display::Display;
 
 /// # The Ender Derivonomicon
@@ -369,7 +369,7 @@ use parse_display::Display;
 /// #        Ok(())
 ///      }
 /// #
-///      pub fn decode<T: Read>(encoder: &mut Encoder<T>) -> EncodingResult<Person> {
+///      pub fn decode<'de, 'ctx, T: Read<'de>>(encoder: &mut Encoder<'ctx, T>) -> EncodingResult<Person> where 'de: 'ctx {
 ///          /* ... */
 /// #        Ok(Person {
 /// #            name: encoder.decode_value()?,
@@ -1235,9 +1235,10 @@ pub struct Encoder<'a, T> {
 macro_rules! debug_fn {
     ($fn_name:ident, $variant_name:ident ( $ty:ty )) => {
         #[inline]
-        pub fn $fn_name<F, R>(&mut self, f: F, s: $ty) -> EncodingResult<R>
+        pub fn $fn_name<'de, F, R>(&mut self, f: F, s: $ty) -> EncodingResult<R>
         where
-            F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>,
+            F: FnOnce(&mut Encoder<'a, T>) -> EncodingResult<R>,
+            'de: 'a
         {
             #[cfg(feature = "debug")]
             {
@@ -1317,14 +1318,14 @@ impl<T: Write> Encoder<'_, T> {
     }
 }
 
-impl<T: Read> Encoder<'_, T> {
+impl<'de, 'a, T: Read<'de>> Encoder<'a, T> {
     /// Method for convenience.
     ///
     /// Decodes a value using `self` as the decoder.
     ///
     /// This method is not magic - it is literally defined as `V::decode(self)`
     #[inline]
-    pub fn decode_value<V: Decode<T>>(&mut self) -> EncodingResult<V> {
+    pub fn decode_value<V: Decode<'de, T>>(&mut self) -> EncodingResult<V> where 'de: 'a {
         V::decode(self)
     }
 }
@@ -1960,7 +1961,7 @@ macro_rules! make_read_fns {
     };
 }
 
-impl<T: Read> Encoder<'_, T> {
+impl<'de, T: Read<'de>> Encoder<'_, T> {
     make_read_fns! {
         type u8 {
             pub u_read: read_u8,
@@ -2311,11 +2312,12 @@ impl<T: Read> Encoder<'_, T> {
     where
         S: FromIterator<char>,
     {
-        struct LenPrefixCharIter<'iter, 'user, T: Read> {
+        struct LenPrefixCharIter<'de, 'iter, 'user, T: Read<'de>> {
             encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
+            phantom: PhantomData<&'de ()>
         }
 
-        impl<'iter, 'user, T: Read> Iterator for LenPrefixCharIter<'iter, 'user, T> {
+        impl<'de, 'iter, 'user, T: Read<'de>> Iterator for LenPrefixCharIter<'de, 'iter, 'user, T> {
             type Item = EncodingResult<char>;
             fn next(&mut self) -> Option<Self::Item> {
                 if self.encoder.stream.remaining_readable() == 0 {
@@ -2328,11 +2330,12 @@ impl<T: Read> Encoder<'_, T> {
             }
         }
 
-        struct NullTermCharIter<'iter, 'user, T: Read> {
+        struct NullTermCharIter<'de, 'iter, 'user, T: Read<'de>> {
             encoder: &'iter mut Encoder<'user, T>,
+            phantom: PhantomData<&'de ()>
         }
 
-        impl<T: Read> Iterator for NullTermCharIter<'_, '_, T> {
+        impl<'de, T: Read<'de>> Iterator for NullTermCharIter<'de, '_, '_, T> {
             type Item = EncodingResult<char>;
             fn next(&mut self) -> Option<Self::Item> {
                 match self.encoder.read_char_or_null() {
@@ -2352,11 +2355,12 @@ impl<T: Read> Encoder<'_, T> {
             }
         }
 
-        struct NullTermWithMaxCharIter<'iter, 'user, T: Read> {
+        struct NullTermWithMaxCharIter<'de, 'iter, 'user, T: Read<'de>> {
             encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
+            phantom: PhantomData<&'de ()>
         }
 
-        impl<T: Read> Iterator for NullTermWithMaxCharIter<'_, '_, T> {
+        impl<'de, T: Read<'de>> Iterator for NullTermWithMaxCharIter<'de, '_, '_, T> {
             type Item = EncodingResult<char>;
             fn next(&mut self) -> Option<Self::Item> {
                 if self.encoder.stream.remaining_readable() == 0 {
@@ -2399,17 +2403,19 @@ impl<T: Read> Encoder<'_, T> {
                 let length = self.read_usize()?;
                 let iter = LenPrefixCharIter {
                     encoder: Encoder::new(SizeLimit::new(&mut self.stream, 0, length), self.ctxt),
+                    phantom: PhantomData
                 };
 
                 iter.collect()
             }
             StrLen::NullTerminated => {
-                let iter = NullTermCharIter { encoder: self };
+                let iter = NullTermCharIter { encoder: self, phantom: PhantomData };
                 iter.collect()
             }
             StrLen::NullTerminatedFixed(max) => {
                 let iter = NullTermWithMaxCharIter {
                     encoder: Encoder::new(SizeLimit::new(&mut self.stream, 0, max), self.ctxt),
+                    phantom: PhantomData
                 };
                 iter.collect()
             }
@@ -2663,7 +2669,7 @@ impl<'data, T: BorrowRead<'data>> Encoder<'_, T> {
     }
 }
 
-impl<T: Seek> Encoder<'_, T> {
+impl<'ctx, T: Seek> Encoder<'ctx, T> {
     /// Returns the current stream position as a byte offset from the start.
     #[inline]
     pub fn stream_position(&mut self) -> EncodingResult<usize> {
@@ -2683,7 +2689,7 @@ impl<T: Seek> Encoder<'_, T> {
     #[inline]
     pub fn with_seek<F, R>(&mut self, f: F, seek: SeekFrom) -> EncodingResult<R>
     where
-        F: FnOnce(&mut Encoder<T>) -> EncodingResult<R>,
+        F: FnOnce(&mut Encoder<'ctx, T>) -> EncodingResult<R>,
     {
         // Track the current position
         let prev = self.stream_position()? as isize;
@@ -2726,9 +2732,9 @@ pub trait Encode<W: Write> {
 /// A binary data structure specification which can be **decoded** from its binary representation.
 ///
 /// Implementations that need to **seek** should implement for `R: Read + Seek`,
-/// while those that need to **borrow** should implement for `R: BorrowRead<'data>`.
+/// while those that need to **borrow** should implement for `R: BorrowRead<'de>`.
 ///
-/// If you need both, use `R: BorrowRead<'data> + Seek`
+/// If you need both, use `R: BorrowRead<'de> + Seek`
 ///
 /// You should keep your implementation as general as possible and avoid
 /// implementing for a `R = ConcreteType>` if possible
@@ -2736,21 +2742,21 @@ pub trait Encode<W: Write> {
 /// # Note about lifetimes
 ///
 /// An implementation of this trait where your type uses the same lifetime as the decoder
-/// (the `'data` lifetime) will greatly limit the possible usages of the implementation.
+/// (the `'de` lifetime) will greatly limit the possible usages of the implementation.
 ///
-/// Instead, prefer giving your type a different lifetime and make the `'data` lifetime depends on it.
+/// Instead, prefer giving your type a different lifetime and make the `'de` lifetime depends on it.
 ///
 /// ### Correct:
 /// ```ignore
-/// impl<'data: 'a + 'b + ..., 'a, 'b, ...> Decode<BorrowRead<'data>> for Thing<'a, 'b, ...> { ... }
+/// impl<'de: 'a + 'b + ..., 'a, 'b, ...> Decode<BorrowRead<'de>> for Thing<'a, 'b, ...> { ... }
 /// ```
 ///
 /// ### Misleading:
 /// ```ignore
-/// impl<'data> Decode<BorrowRead<'data>> for Thing<'data, 'data, ...> { ... }
+/// impl<'de> Decode<BorrowRead<'de>> for Thing<'de, 'de, ...> { ... }
 /// ```
-pub trait Decode<R: Read>: Sized {
-    /// Decodes an owned version of `Self` from its binary format.
+pub trait Decode<'de, R: Read<'de>>: Sized {
+    /// Decodes `Self` from its binary format.
     ///
     /// Implementations that **need** to seek, should implement [`seek_decode`][`Self::seek_decode`]
     /// instead, and define this method to return a [`SeekError::SeekNecessary`]
@@ -2764,5 +2770,9 @@ pub trait Decode<R: Read>: Sized {
     /// is preserved. If the result is Err,
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
-    fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self>;
+    fn decode<'ctx>(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> where 'de: 'ctx;
 }
+
+/// Supertrait of [`Decode`] that decodes an owned version of `Self`.
+pub trait DecodeOwned<R: for<'de> Read<'de>>: for<'de> Decode<'de, R> {}
+impl<R: for<'de> Read<'de>, T> DecodeOwned<R> for T where T: for<'de> Decode<'de, R> {}

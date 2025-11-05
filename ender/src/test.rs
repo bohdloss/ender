@@ -111,12 +111,14 @@
 //     name: String,
 // }
 
+use alloc::borrow::Cow;
 use crate::io::{Slice, SliceMut, VecStream};
 use crate::{
     BinSettings, BitWidth, Context, Decode, Encode, Encoder, Endianness, NumEncoding, NumRepr,
     SizeRepr, StrEncoding, StrLen, StringRepr, VariantRepr,
 };
 use std::hash::{DefaultHasher, Hasher};
+use uuid::Uuid;
 
 const SETTINGS: BinSettings = BinSettings {
     num_repr: NumRepr {
@@ -257,4 +259,77 @@ pub fn test() {
     // let val = stream.read_i128().unwrap();
     // println!("{:#0130b}", val);
     // println!("{val}");
+}
+
+#[derive(Encode)]
+struct MyStruct {
+    secret_key: Vec<u8>,
+    iv: Vec<u8>,
+    /// While **encoding**, this field is compressed -> encrypted.
+    /// While **decoding**, this field is decrypted -> decompressed.
+    #[ender(redir: crate::facade::fake::gzip(9))]
+    #[ender(redir: crate::facade::fake::aes(iv, secret_key))]
+    super_secret_data: Vec<u8>,
+    file_pointer: usize,
+    /// Marks the current offset, seeks to `file_pointer` bytes from the start of the file,
+    /// encodes/decodes the field, then seeks back.
+    #[ender(ptr start: *file_pointer)]
+    apple_count: u64,
+    /// This field is effectively laid *right after* `file_pointer`
+    /// in the binary representation.
+    other_data: i32,
+}
+
+#[automatically_derived]
+#[allow(unused)]
+#[allow(dead_code)]
+impl<'__de, __T: crate::io::Read<'__de> + crate::io::Seek> crate::Decode<'__de, __T> for MyStruct {
+    fn decode<'__ctx>(__decoder: &mut crate::Encoder<'__ctx, __T>) -> crate::EncodingResult<Self>
+    where
+        '__de   : '__ctx,
+    {
+        let __val: Self = {
+            let secret_key: Vec<u8> = {
+                let __val: Vec<u8> = <Vec<u8> as crate::Decode<__T>>::decode(__decoder)?;
+                __val
+            };
+            let iv: Vec<u8> = {
+                let ref secret_key = secret_key;
+                let __val: Vec<u8> = <Vec<u8> as crate::Decode<__T>>::decode(__decoder)?;
+                __val
+            };
+            let super_secret_data: Vec<u8> = {
+                let ref secret_key = secret_key;
+                let ref iv = iv;
+                let __val: Vec<u8> = crate::facade::fake::aes::decode(&mut *__decoder, |__decoder| { Ok({ crate::facade::fake::gzip::decode(&mut *__decoder, |__decoder| { Ok({ <Vec<u8> as crate::Decode<__T>>::decode(__decoder)? }) }, 9)? }) }, iv, secret_key)?;
+                __val
+            };
+            let file_pointer: usize = {
+                let ref secret_key = secret_key;
+                let ref iv = iv;
+                let ref super_secret_data = super_secret_data;
+                let __val: usize = <usize as crate::Decode<__T>>::decode(__decoder)?;
+                __val
+            };
+            let apple_count: u64 = {
+                let ref secret_key = secret_key;
+                let ref iv = iv;
+                let ref super_secret_data = super_secret_data;
+                let ref file_pointer = file_pointer;
+                let __val: u64 = crate::Encoder::with_seek(&mut *__decoder, |__decoder| { Ok({ <u64 as crate::Decode<__T>>::decode(__decoder)? }) }, crate::io::SeekFrom::Start(*file_pointer))?;
+                __val
+            };
+            let other_data: i32 = {
+                let ref secret_key = secret_key;
+                let ref iv = iv;
+                let ref super_secret_data = super_secret_data;
+                let ref file_pointer = file_pointer;
+                let ref apple_count = apple_count;
+                let __val: i32 = <i32 as crate::Decode<__T>>::decode(__decoder)?;
+                __val
+            };
+            crate::EncodingResult::Ok(Self { secret_key, iv, super_secret_data, file_pointer, apple_count, other_data })?
+        };
+        crate::EncodingResult::Ok(__val)
+    }
 }

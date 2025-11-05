@@ -19,11 +19,13 @@ pub mod fake {
             unimplemented!()
         }
 
-        pub fn decode<V: Decode<T>, T: Read>(
-            _decoder: &mut Encoder<T>,
+        pub fn decode<'de, 'ctx, V: Decode<'de, T>, T: Read<'de>>(
+            _decoder: &mut Encoder<'ctx, T>,
             _public_key: &[u8],
             _private_key: &[u8],
-        ) -> EncodingResult<V> {
+        ) -> EncodingResult<V>
+        where 'de: 'ctx
+        {
             // Rsa decryption code here
             unimplemented!()
         }
@@ -48,15 +50,16 @@ pub mod fake {
             unimplemented!()
         }
 
-        pub fn decode<Orig, Val, F>(
-            _encoder: &mut Encoder<Orig>,
+        pub fn decode<'de, 'ctx, Orig, Val, F>(
+            _encoder: &mut Encoder<'ctx, Orig>,
             _fun: F,
             _iv: &[u8],
             _key: &[u8],
         ) -> EncodingResult<Val>
         where
-            Orig: Read,
-            F: FnOnce(&mut Encoder<Orig>) -> EncodingResult<Val>,
+            Orig: Read<'de>,
+            F: FnOnce(&mut Encoder<'ctx, Orig>) -> EncodingResult<Val>,
+            'de: 'ctx
         {
             // Aes decryption code here
             unimplemented!()
@@ -85,14 +88,15 @@ pub mod fake {
             unimplemented!()
         }
 
-        pub fn decode<Orig, Val, F>(
-            _encoder: &mut Encoder<Orig>,
+        pub fn decode<'de, 'ctx, Orig, Val, F>(
+            _encoder: &mut Encoder<'ctx, Orig>,
             _fun: F,
             _compression_level: u32,
         ) -> EncodingResult<Val>
         where
-            Orig: Read,
-            F: FnOnce(&mut Encoder<Orig>) -> EncodingResult<Val>,
+            Orig: Read<'de>,
+            F: FnOnce(&mut Encoder<'ctx, Orig>) -> EncodingResult<Val>,
+            'de: 'ctx
         {
             // Decompression code here
             unimplemented!()

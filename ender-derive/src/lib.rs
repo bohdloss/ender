@@ -83,7 +83,8 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
     let ref encoder_generic = ctxt.encoder_generic;
     let ref crate_name = ctxt.flags.crate_name;
     let ref decoder_lif = ctxt.borrow_data.decoder;
-    
+    let ref context_lif = ctxt.borrow_data.context;
+
     let type_param = if ctxt.requires_borrowing_impl() {
         if ctxt.requires_seeking_impl() {
             parse_quote!(#encoder_generic: #crate_name::io::BorrowRead<#decoder_lif> + #crate_name::io::Seek)
@@ -92,9 +93,9 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
         }
     } else {
         if ctxt.requires_seeking_impl() {
-            parse_quote!(#encoder_generic: #crate_name::io::Read + #crate_name::io::Seek)
+            parse_quote!(#encoder_generic: #crate_name::io::Read<#decoder_lif> + #crate_name::io::Seek)
         } else {
-            parse_quote!(#encoder_generic: #crate_name::io::Read)
+            parse_quote!(#encoder_generic: #crate_name::io::Read<#decoder_lif>)
         }
     };
 
@@ -112,9 +113,9 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
     // Inject the decoder's generic parameter and lifetime in the `impl` generics
     let mut generics = ctxt.generics.clone();
     generics.params.push(GenericParam::Type(type_param));
-    if ctxt.requires_borrowing_impl() {
+    // if ctxt.requires_borrowing_impl() {
         generics.params.insert(0, GenericParam::Lifetime(lif));
-    }
+    // }
     
     // Impl generics use injected generics
     let (impl_generics, _, _) = generics.split_for_impl();
@@ -132,8 +133,8 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
         #[automatically_derived]
         #[allow(unused)]
         #[allow(dead_code)]
-        impl #impl_generics #crate_name::Decode<#encoder_generic> for #item_name #ty_generics #where_clause {
-            fn decode(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
+        impl #impl_generics #crate_name::Decode<#decoder_lif, #encoder_generic> for #item_name #ty_generics #where_clause {
+            fn decode<#context_lif>(#encoder: &mut #crate_name::Encoder<#context_lif, #encoder_generic>) -> #crate_name::EncodingResult<Self> where #decoder_lif: #context_lif {
                 #body
             }
         }

@@ -124,16 +124,6 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
         v.encode(self)
     }
 
-    #[cfg(not(feature = "alloc"))]
-    fn collect_str<G: ?Sized>(self, _value: &G) -> Result<Self::Ok, Self::Error>
-    where
-        G: Display,
-    {
-        Err(serde_error(
-            "Types implementing Display cannot be serialized without the alloc feature",
-        ))
-    }
-
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
         self.write_usize(v.len())?;
         self.write_bytes(v)
@@ -246,6 +236,16 @@ impl<T: Write> Serializer for &mut Encoder<'_, T> {
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         self.write_uvariant(variant_index)?;
         Ok(self)
+    }
+
+    #[cfg(not(feature = "alloc"))]
+    fn collect_str<G: ?Sized>(self, _value: &G) -> Result<Self::Ok, Self::Error>
+    where
+        G: Display,
+    {
+        Err(serde_error(
+            "Types implementing Display cannot be serialized without the alloc feature",
+        ))
     }
 
     fn is_human_readable(&self) -> bool {
@@ -380,7 +380,7 @@ impl<T: Write> SerializeStructVariant for &mut Encoder<'_, T> {
     }
 }
 
-impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
+impl<'de: 'ctx, 'ctx, T: Read<'de>> Deserializer<'de> for &mut Encoder<'ctx, T> {
     type Error = EncodingError;
 
     fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
@@ -606,6 +606,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
         visitor.visit_seq(SeqAccessEncoder {
             encoder: self,
             length: len,
+            phantom: Default::default(),
         })
     }
 
@@ -616,6 +617,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
         visitor.visit_seq(SeqAccessEncoder {
             encoder: self,
             length: len,
+            phantom: Default::default(),
         })
     }
 
@@ -631,6 +633,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
         visitor.visit_seq(SeqAccessEncoder {
             encoder: self,
             length: len,
+            phantom: Default::default(),
         })
     }
 
@@ -642,6 +645,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
         visitor.visit_map(MapAccessEncoder {
             encoder: self,
             length: len,
+            phantom: Default::default(),
         })
     }
 
@@ -657,6 +661,7 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
         visitor.visit_seq(SeqAccessEncoder {
             encoder: self,
             length: fields.len(),
+            phantom: Default::default(),
         })
     }
 
@@ -693,12 +698,13 @@ impl<'de, T: Read> Deserializer<'de> for &mut Encoder<'de, T> {
     }
 }
 
-struct SeqAccessEncoder<'a, 'de, T: Read> {
-    encoder: &'a mut Encoder<'de, T>,
+struct SeqAccessEncoder<'de: 'ctx + 'ref_, 'ctx, 'ref_, T: Read<'de>> {
+    encoder: &'ref_ mut Encoder<'ctx, T>,
     length: usize,
+    phantom: core::marker::PhantomData<&'de ()>,
 }
 
-impl<'de, T: Read> SeqAccess<'de> for SeqAccessEncoder<'_, 'de, T> {
+impl<'de: 'ctx + 'ref_, 'ctx, 'ref_, T: Read<'de>> SeqAccess<'de> for SeqAccessEncoder<'de, 'ctx, 'ref_, T> {
     type Error = EncodingError;
 
     fn next_element_seed<G>(&mut self, seed: G) -> Result<Option<G::Value>, Self::Error>
@@ -718,12 +724,13 @@ impl<'de, T: Read> SeqAccess<'de> for SeqAccessEncoder<'_, 'de, T> {
     }
 }
 
-struct MapAccessEncoder<'a, 'de, T: Read> {
-    encoder: &'a mut Encoder<'de, T>,
+struct MapAccessEncoder<'de: 'ctx + 'ref_, 'ctx, 'ref_, T: Read<'de>> {
+    encoder: &'ref_ mut Encoder<'ctx, T>,
     length: usize,
+    phantom: core::marker::PhantomData<&'de ()>
 }
 
-impl<'de, T: Read> MapAccess<'de> for MapAccessEncoder<'_, 'de, T> {
+impl<'de: 'ctx + 'ref_, 'ctx, 'ref_, T: Read<'de>> MapAccess<'de> for MapAccessEncoder<'de, 'ctx, 'ref_, T> {
     type Error = EncodingError;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
@@ -750,7 +757,7 @@ impl<'de, T: Read> MapAccess<'de> for MapAccessEncoder<'_, 'de, T> {
     }
 }
 
-impl<'de, T: Read> EnumAccess<'de> for &mut Encoder<'de, T> {
+impl<'de: 'ctx, 'ctx, T: Read<'de>> EnumAccess<'de> for &mut Encoder<'ctx, T> {
     type Error = EncodingError;
     type Variant = Self;
 
@@ -763,7 +770,7 @@ impl<'de, T: Read> EnumAccess<'de> for &mut Encoder<'de, T> {
     }
 }
 
-impl<'de, T: Read> VariantAccess<'de> for &mut Encoder<'de, T> {
+impl<'de: 'ctx, 'ctx, T: Read<'de>> VariantAccess<'de> for &mut Encoder<'ctx, T> {
     type Error = EncodingError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {

@@ -100,7 +100,7 @@ impl<T: Write> std::io::Write for Std<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<T: Read> std::io::Read for Std<T> {
+impl<'de, T: Read<'de>> std::io::Read for Std<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         <T as Read>::read(&mut self.0, buf).map_err(io_err)?;
@@ -136,7 +136,7 @@ impl<T: std::io::Write> Write for Std<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl<T: std::io::Read> Read for Std<T> {
+impl<'de, T: std::io::Read> Read<'de> for Std<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         <T as std::io::Read>::read_exact(&mut self.0, buf).map_err(Into::into)
@@ -206,7 +206,7 @@ impl Write for SliceMut<'_> {
     }
 }
 
-impl Read for SliceMut<'_> {
+impl<'de> Read<'de> for SliceMut<'de> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         let rem = self.slice.len() - self.pos;
@@ -254,7 +254,7 @@ impl<'data> Slice<'data> {
     }
 }
 
-impl Read for Slice<'_> {
+impl<'de> Read<'de> for Slice<'de> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         let rem = self.slice.len() - self.pos;
@@ -364,7 +364,7 @@ impl Write for VecStream {
 
 #[cfg(feature = "alloc")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "alloc")))]
-impl Read for VecStream {
+impl Read<'_> for VecStream {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         self.ensure_capacity(self.pos + buf.len());
@@ -457,7 +457,7 @@ impl<T: Write> Write for SizeTrack<T> {
     }
 }
 
-impl<T: Read> Read for SizeTrack<T> {
+impl<'de, T: Read<'de>> Read<'de> for SizeTrack<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         let ok = self.stream.read(buf)?;
@@ -548,7 +548,7 @@ impl<T: Write> Write for SizeLimit<T> {
     }
 }
 
-impl<T: Read> Read for SizeLimit<T> {
+impl<'de, T: Read<'de>> Read<'de> for SizeLimit<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         if buf.len() > self.rsize {
@@ -591,7 +591,7 @@ impl Write for Zero {
     }
 }
 
-impl Read for Zero {
+impl<'de> Read<'de> for Zero {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         for x in buf {
@@ -617,21 +617,21 @@ pub trait Write {
 }
 
 /// Everything, be it a stream or buffer, which can be **decoded from**.
-pub trait Read {
+pub trait Read<'de> {
     /// Reads `buf.len()` bytes into `buf`.
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()>;
 }
 
 /// A buffer that is capable of lending data, in order to perform **zero copy decoding**.
-pub trait BorrowRead<'data>: Read {
+pub trait BorrowRead<'de>: Read<'de> {
     /// Exactly the same as [`borrow_read`][`Self::borrow_read`], except the stream position
     /// is not advanced. E.G. multiple subsequent calls to this function are guaranteed to produce
     /// the same output.
-    fn peek(&self, len: usize) -> EncodingResult<&'data [u8]>;
+    fn peek(&self, len: usize) -> EncodingResult<&'de [u8]>;
 
     /// Borrows a slice of bytes from the buffer, incrementing the buffer position.
     /// The slice's lifetime is bound to the buffer's lifetime.
-    fn borrow_read(&mut self, len: usize) -> EncodingResult<&'data [u8]>;
+    fn borrow_read(&mut self, len: usize) -> EncodingResult<&'de [u8]>;
 }
 
 /// The argument to a call to [`Seek::seek`].
@@ -708,7 +708,7 @@ impl<T: Write> Write for &mut T {
     }
 }
 
-impl<T: Read> Read for &mut T {
+impl<'de, T: Read<'de>> Read<'de> for &mut T {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         <T as Read>::read(self, buf)
@@ -722,13 +722,13 @@ impl<T: Seek> Seek for &mut T {
     }
 }
 
-impl<'data, T: BorrowRead<'data>> BorrowRead<'data> for &mut T {
+impl<'de, T: BorrowRead<'de>> BorrowRead<'de> for &mut T {
     #[inline]
-    fn peek(&self, len: usize) -> EncodingResult<&'data [u8]> {
-        <T as BorrowRead<'data>>::peek(self, len)
+    fn peek(&self, len: usize) -> EncodingResult<&'de [u8]> {
+        <T as BorrowRead<'de>>::peek(self, len)
     }
     #[inline]
-    fn borrow_read(&mut self, len: usize) -> EncodingResult<&'data [u8]> {
-        <T as BorrowRead<'data>>::borrow_read(self, len)
+    fn borrow_read(&mut self, len: usize) -> EncodingResult<&'de [u8]> {
+        <T as BorrowRead<'de>>::borrow_read(self, len)
     }
 }
