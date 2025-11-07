@@ -1,5 +1,5 @@
-use crate::{Context, Decode, Encode, Encoder, EncodingResult};
-use crate::io::{Read, Slice, SliceMut, Write};
+use crate::{Context, Decode, DecodeOwned, Encode, Encoder, EncodingResult};
+use crate::io::{Read, ReadOwned, Slice, SliceMut, Write};
 
 /// Encodes the given value by constructing an encoder on the fly backed by a
 /// [VecStream][`crate::io::VecStream`], then returning the wrapped vector of bytes.
@@ -21,6 +21,16 @@ pub fn encode_bytes<V: Encode<crate::io::VecStream>>(value: V) -> EncodingResult
 /// Uses the default [`Context`]
 #[inline]
 pub fn decode_bytes<'a, R: AsRef<[u8]>, V: Decode<'a, Slice<'a>>>(bytes: &'a R) -> EncodingResult<V> {
+	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), Context::default());
+	V::decode(&mut decoder)
+}
+
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap a byte
+/// slice.
+///
+/// Uses the default [`Context`]
+#[inline]
+pub fn decode_bytes_owned<'a, R: AsRef<[u8]>, V: DecodeOwned<Slice<'a>>>(bytes: &'a R) -> EncodingResult<V> {
 	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), Context::default());
 	V::decode(&mut decoder)
 }
@@ -49,6 +59,16 @@ pub fn decode_bytes_with<'a, R: AsRef<[u8]>, V: Decode<'a, Slice<'a>>>(bytes: &'
 	V::decode(&mut decoder)
 }
 
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap a byte
+/// slice.
+///
+/// Uses the given [`Context`]
+#[inline]
+pub fn decode_bytes_with_owned<'a, R: AsRef<[u8]>, V: DecodeOwned<Slice<'a>>>(bytes: &'a R, context: Context) -> EncodingResult<V> {
+	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), context);
+	V::decode(&mut decoder)
+}
+
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
 /// with the default context.
 #[inline]
@@ -65,6 +85,14 @@ pub fn encode<W: IntoWrite, V: Encode<W::Write>>(
 #[inline]
 pub fn decode<'de, R: IntoRead<'de>, V: Decode<'de, R::Read>>(reader: R) -> EncodingResult<V> {
 	let mut decoder = Encoder::new(reader.into_read(), Context::default());
+	V::decode(&mut decoder)
+}
+
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
+/// with the default context.
+#[inline]
+pub fn decode_owned<R: IntoReadOwned, V: DecodeOwned<R::ReadOwned>>(reader: R) -> EncodingResult<V> {
+	let mut decoder = Encoder::new(reader.into_read_owned(), Context::default());
 	V::decode(&mut decoder)
 }
 
@@ -85,6 +113,14 @@ pub fn encode_with<W: IntoWrite, V: Encode<W::Write>>(
 #[inline]
 pub fn decode_with<'de, R: IntoRead<'de>, V: Decode<'de, R::Read>>(reader: R, context: Context) -> EncodingResult<V> {
 	let mut decoder = Encoder::new(reader.into_read(), context);
+	V::decode(&mut decoder)
+}
+
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
+/// with the given context.
+#[inline]
+pub fn decode_with_owned<R: IntoReadOwned, V: DecodeOwned<R::ReadOwned>>(reader: R, context: Context) -> EncodingResult<V> {
+	let mut decoder = Encoder::new(reader.into_read_owned(), context);
 	V::decode(&mut decoder)
 }
 
@@ -130,6 +166,25 @@ pub trait IntoRead<'de> {
 	type Read: Read<'de>;
 	/// Transforms `self` into a type implementing [Read][`crate::io::Read`]
 	fn into_read(self) -> Self::Read;
+}
+
+/// Something that can be turned into a reader compatible with [Encoder][`crate::Encoder`]
+///
+/// This is automatically implemented for types that convert to a reader that implements [ReadOwned]
+pub trait IntoReadOwned: for<'de> IntoRead<'de> {
+	type ReadOwned: ReadOwned;
+	/// Transforms `self` into a type implementing [Read][`crate::io::Read`]
+	fn into_read_owned(self) -> Self::ReadOwned;
+}
+impl<T, R> IntoReadOwned for T where T:
+	for<'de> IntoRead<'de, Read = R>,
+	R: ReadOwned
+{
+	type ReadOwned = R;
+	#[inline]
+	fn into_read_owned(self) -> Self::ReadOwned {
+		self.into_read()
+	}
 }
 
 impl<'de, T: Read<'de>> IntoRead<'de> for T {

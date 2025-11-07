@@ -571,7 +571,7 @@ pub use error::*;
 pub use opaque::*;
 pub use convenience::*;
 
-use crate::io::{BorrowRead, Read, Seek, SeekFrom, SizeLimit, SizeTrack, Write, Zero};
+use crate::io::{BorrowRead, Read, ReadOwned, Seek, SeekFrom, SizeLimit, SizeTrack, Write, Zero};
 
 #[cfg(test)]
 mod test;
@@ -1318,14 +1318,29 @@ impl<T: Write> Encoder<'_, T> {
     }
 }
 
-impl<'de, 'a, T: Read<'de>> Encoder<'a, T> {
+impl<'de, 'ctx, T: Read<'de>> Encoder<'ctx, T> {
     /// Method for convenience.
     ///
     /// Decodes a value using `self` as the decoder.
     ///
     /// This method is not magic - it is literally defined as `V::decode(self)`
     #[inline]
-    pub fn decode_value<V: Decode<'de, T>>(&mut self) -> EncodingResult<V> where 'de: 'a {
+    pub fn decode_value<V: Decode<'de, T>>(&mut self) -> EncodingResult<V>
+    where
+        'de: 'ctx
+    {
+        V::decode(self)
+    }
+}
+
+impl<'a, T: ReadOwned> Encoder<'a, T> {
+    /// Method for convenience.
+    ///
+    /// Decodes an owned value using `self` as the decoder.
+    ///
+    /// This method is not magic - it is literally defined as `V::decode(self)`
+    #[inline]
+    pub fn decode_owned<V: DecodeOwned<T>>(&mut self) -> EncodingResult<V> {
         V::decode(self)
     }
 }
@@ -2774,5 +2789,5 @@ pub trait Decode<'de, R: Read<'de>>: Sized {
 }
 
 /// Supertrait of [`Decode`] that decodes an owned version of `Self`.
-pub trait DecodeOwned<R: for<'de> Read<'de>>: for<'de> Decode<'de, R> {}
-impl<R: for<'de> Read<'de>, T> DecodeOwned<R> for T where T: for<'de> Decode<'de, R> {}
+pub trait DecodeOwned<R: ReadOwned>: for<'de> Decode<'de, R> {}
+impl<R: ReadOwned, T> DecodeOwned<R> for T where T: for<'de> Decode<'de, R> {}

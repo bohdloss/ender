@@ -206,7 +206,7 @@ impl Write for SliceMut<'_> {
     }
 }
 
-impl<'de> Read<'de> for SliceMut<'de> {
+impl<'de> Read<'de> for SliceMut<'_> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         let rem = self.slice.len() - self.pos;
@@ -254,7 +254,7 @@ impl<'data> Slice<'data> {
     }
 }
 
-impl<'de> Read<'de> for Slice<'de> {
+impl<'de> Read<'de> for Slice<'_> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()> {
         let rem = self.slice.len() - self.pos;
@@ -579,7 +579,7 @@ impl<'data, T: BorrowRead<'data>> BorrowRead<'data> for SizeLimit<T> {
     }
 }
 
-/// A NOP stream, that ignores write and seek calls,and responds to read calls
+/// A NOP stream, that ignores write and seek calls, and responds to read calls
 /// with infinite zeroes.
 #[derive(Clone)]
 pub struct Zero;
@@ -621,6 +621,9 @@ pub trait Read<'de> {
     /// Reads `buf.len()` bytes into `buf`.
     fn read(&mut self, buf: &mut [u8]) -> EncodingResult<()>;
 }
+
+pub trait ReadOwned: for<'de> Read<'de> {}
+impl<R> ReadOwned for R where R: for<'de> Read<'de> {}
 
 /// A buffer that is capable of lending data, in order to perform **zero copy decoding**.
 pub trait BorrowRead<'de>: Read<'de> {
