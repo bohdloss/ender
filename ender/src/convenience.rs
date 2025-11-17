@@ -25,6 +25,16 @@ pub fn decode_bytes<'a, R: AsRef<[u8]>, V: Decode<Slice<'a>>>(bytes: &'a R) -> E
 	V::decode(&mut decoder)
 }
 
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap a byte
+/// slice.
+///
+/// Uses the default [`Context`]
+#[inline]
+pub fn decode_bytes_owned<R: AsRef<[u8]>, V: for<'a> Decode<Slice<'a>>>(bytes: &R) -> EncodingResult<V> {
+	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), Context::default());
+	V::decode(&mut decoder)
+}
+
 /// Encodes the given value by constructing an encoder on the fly backed by a
 /// [VecStream][`crate::io::VecStream`], then returning the wrapped vector of bytes
 /// 
@@ -45,6 +55,16 @@ pub fn encode_bytes_with<V: Encode<crate::io::VecStream>>(value: V, context: Con
 /// Uses the given [`Context`]
 #[inline]
 pub fn decode_bytes_with<'a, R: AsRef<[u8]>, V: Decode<Slice<'a>>>(bytes: &'a R, context: Context) -> EncodingResult<V> {
+	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), context);
+	V::decode(&mut decoder)
+}
+
+/// Decodes the given value by constructing an encoder on the fly and using it to wrap a byte
+/// slice.
+///
+/// Uses the given [`Context`]
+#[inline]
+pub fn decode_bytes_with_owned<R: AsRef<[u8]>, V: for<'a> Decode<Slice<'a>>>(bytes: &R, context: Context) -> EncodingResult<V> {
 	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), context);
 	V::decode(&mut decoder)
 }

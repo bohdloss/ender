@@ -111,11 +111,8 @@
 //     name: String,
 // }
 
-use crate::io::{Slice, SliceMut, VecStream};
-use crate::{
-    BinSettings, BitWidth, Context, Decode, Encode, Encoder, Endianness, NumEncoding, NumRepr,
-    SizeRepr, StrEncoding, StrLen, StringRepr, VariantRepr,
-};
+use crate::io::{Read, Slice, SliceMut, VecStream};
+use crate::{BinSettings, BitWidth, Context, Decode, Encode, Encoder, EncodingResult, Endianness, NumEncoding, NumRepr, SizeRepr, StrEncoding, StrLen, StringRepr, VariantRepr};
 use std::hash::{DefaultHasher, Hasher};
 
 const SETTINGS: BinSettings = BinSettings {
@@ -258,3 +255,53 @@ pub fn test() {
     // println!("{:#0130b}", val);
     // println!("{val}");
 }
+
+fn decode_owned<T: for<'de> Decode<Slice<'de>>>(bytes: &[u8]) -> T {
+    let mut encoder = Encoder::new(Slice::new(bytes), Context::default());
+    T::decode(&mut encoder).unwrap()
+}
+
+#[derive(Decode)]
+struct IImplDecodeOwned {
+    pub a: i32,
+    pub b: u64,
+    pub c: String,
+}
+
+#[derive(Decode)]
+struct IImplDecode<'a> {
+    #[ender(borrow)]
+    pub a: &'a [u8]
+}
+
+#[test]
+fn impls_test() {
+    // let _ = decode_owned::<IImplDecodeOwned>(&[]); // Should compile
+    // let _ = decode_owned::<IImplDecode>(&[]); // Should fail to compile
+}
+
+// Neither works due to trait method signature mismatching. YAY!
+
+// struct BorrowFromEncoderReference<'a> {
+//     ctx: &'a crate::BinSettings
+// }
+//
+// impl<'a, R: Read> Decode<R> for BorrowFromEncoderReference<'a> {
+//     fn decode(decoder: &'a mut Encoder<R>) -> EncodingResult<Self> {
+//         Ok(Self{
+//             ctx: &decoder.ctxt.settings
+//         })
+//     }
+// }
+
+// struct BorrowFromCtx<'ctx> {
+//     ctx: Context<'ctx>
+// }
+//
+// impl<'ctx, R: Read> Decode<R> for BorrowFromCtx<'ctx> {
+//     fn decode(decoder: &mut Encoder<'ctx, R>) -> EncodingResult<Self> {
+//         Ok(Self {
+//             ctx: decoder.ctxt
+//         })
+//     }
+// }
