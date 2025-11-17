@@ -2707,7 +2707,7 @@ impl<T: Seek> Encoder<'_, T> {
 /// Implementations that need to **seek** should implement for `W: Write + Seek`.
 ///
 /// You should keep your implementation as general as possible and avoid
-/// implementing for a `R = ConcreteType>` if possible
+/// implementing for a `R = ConcreteType` if possible
 pub trait Encode<W: Write> {
     /// Encodes `self` into its binary format.
     ///
@@ -2731,14 +2731,14 @@ pub trait Encode<W: Write> {
 /// If you need both, use `R: BorrowRead<'data> + Seek`
 ///
 /// You should keep your implementation as general as possible and avoid
-/// implementing for a `R = ConcreteType>` if possible
+/// implementing for a `R = ConcreteType` if possible
 ///
 /// # Note about lifetimes
 ///
 /// An implementation of this trait where your type uses the same lifetime as the decoder
 /// (the `'data` lifetime) will greatly limit the possible usages of the implementation.
 ///
-/// Instead, prefer giving your type a different lifetime and make the `'data` lifetime depends on it.
+/// Instead, prefer giving your type a different lifetime and make the `'data` lifetime depend on it.
 ///
 /// ### Correct:
 /// ```ignore
@@ -2750,10 +2750,7 @@ pub trait Encode<W: Write> {
 /// impl<'data> Decode<BorrowRead<'data>> for Thing<'data, 'data, ...> { ... }
 /// ```
 pub trait Decode<R: Read>: Sized {
-    /// Decodes an owned version of `Self` from its binary format.
-    ///
-    /// Implementations that **need** to seek, should implement [`seek_decode`][`Self::seek_decode`]
-    /// instead, and define this method to return a [`SeekError::SeekNecessary`]
+    /// Decodes `Self` from its binary format.
     ///
     /// Calling `decode` multiple times without changing the
     /// encoder settings or the underlying binary data in-between calls should produce
