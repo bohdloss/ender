@@ -1690,7 +1690,7 @@ impl<T: Write> Encoder<'_, T> {
             let endianness = self.ctxt.settings.string_repr.endianness;
             match self.ctxt.settings.string_repr.encoding {
                 StrEncoding::Ascii => {
-                    if value.is_ascii() {
+                    if !value.is_ascii() {
                         return Err(StringError::InvalidChar.into());
                     }
 
