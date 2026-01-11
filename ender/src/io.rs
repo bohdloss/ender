@@ -309,6 +309,7 @@ impl Seek for Slice<'_> {
 pub struct VecStream {
     vec: alloc::vec::Vec<u8>,
     pos: usize,
+    limit: usize
 }
 
 #[cfg(feature = "alloc")]
@@ -319,20 +320,21 @@ impl VecStream {
     /// The `start` parameter is used to determine the initial value of the stream pointer.
     #[inline]
     pub fn new(vec: alloc::vec::Vec<u8>, start: usize) -> Self {
-        let mut this = Self { vec, pos: start };
+        let vec_len = vec.len();
+        let mut this = Self { vec, pos: start, limit: vec_len.max(start) };
         this.ensure_capacity(this.pos);
         this
     }
     /// Read-only window into the contents of the vector written so far.
     #[inline]
     pub fn inner(&self) -> &[u8] {
-        &self.vec[..self.pos]
+        &self.vec[..self.limit]
     }
     /// Returns the vector, truncated to the length of the stream pointer at the moment
     /// of calling this function.
     #[inline]
     pub fn into_inner(mut self) -> alloc::vec::Vec<u8> {
-        self.vec.truncate(self.pos);
+        self.vec.truncate(self.limit);
         self.vec
     }
 
@@ -346,6 +348,7 @@ impl VecStream {
                 self.vec.push(0);
             }
         }
+        self.limit = self.limit.max(at_least);
     }
 }
 
@@ -579,7 +582,7 @@ impl<'data, T: BorrowRead<'data>> BorrowRead<'data> for SizeLimit<T> {
     }
 }
 
-/// A NOP stream, that ignores write and seek calls,and responds to read calls
+/// A NOP stream, that ignores write and seek calls, and responds to read calls
 /// with infinite zeroes.
 #[derive(Clone)]
 pub struct Zero;
