@@ -1676,19 +1676,18 @@ impl<T: Write> Encoder<'_, T> {
     /// in the encoder's state.
     #[inline]
     pub fn write_char(&mut self, value: char) -> EncodingResult<()> {
-        if value == '\0' {
-            self.write_char_or_null(None)
-        } else {
-            self.write_char_or_null(Some(value))
-        }
+        self.write_char_with(
+            value,
+            self.ctxt.settings.string_repr.encoding,
+            self.ctxt.settings.string_repr.endianness
+        )
     }
 
-    /// You MUST guarantee that char is never '\0'
+    /// Encodes a `char` to the underlying stream, according to the endianness and string encoding
+    /// passed as parameters.
     #[inline]
-    fn write_char_or_null(&mut self, value: Option<char>) -> EncodingResult<()> {
-        if let Some(value) = value {
-            let endianness = self.ctxt.settings.string_repr.endianness;
-            match self.ctxt.settings.string_repr.encoding {
+    pub fn write_char_with(&mut self, value: char, encoding: StrEncoding, endianness: Endianness) -> EncodingResult<()> {
+            match encoding {
                 StrEncoding::Ascii => {
                     if !value.is_ascii() {
                         return Err(StringError::InvalidChar.into());
@@ -1722,11 +1721,6 @@ impl<T: Write> Encoder<'_, T> {
                     }
                 }
             }
-        } else {
-            for _ in 0..self.ctxt.settings.string_repr.encoding.bytes() {
-                self.write_byte(0)?;
-            }
-        }
         Ok(())
     }
 
@@ -1772,35 +1766,65 @@ impl<T: Write> Encoder<'_, T> {
     where
         S: IntoIterator<Item = char, IntoIter: Clone>,
     {
+        self.write_str_with(
+            string,
+            self.ctxt.settings.string_repr.encoding,
+            self.ctxt.settings.string_repr.endianness,
+            self.ctxt.settings.string_repr.len
+        )
+    }
+
+    /// Encodes a string to the underlying stream, according to the endianness,
+    /// string encoding and string-length encoding passed as parameters.
+    /// Anything whose chars can be iterated over is considered a string.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ender::{Context, Encoder, Endianness, StrEncoding, StrLen};
+    /// use ender::io::Zero;
+    ///
+    /// let mut encoder = Encoder::new(Zero, Context::new());
+    /// encoder.write_str(
+    ///     "Goodbye, world :(".chars(),
+    ///     StrEncoding::Utf16,
+    ///     Endianness::BigEndian,
+    ///     StrLen::NullTerminated
+    /// ).unwrap();
+    /// ```
+    pub fn write_str_with<S>(&mut self, string: S, encoding: StrEncoding, endianness: Endianness, len_encoding: StrLen) -> EncodingResult<()>
+    where
+        S: IntoIterator<Item = char, IntoIter: Clone>,
+    {
         let chars = string.into_iter();
 
-        match self.ctxt.settings.string_repr.len {
+        match len_encoding {
             StrLen::LengthPrefixed => {
                 // We don't know the length of the string in advance
 
                 // Create a fake encoder that simply keeps track of the length
                 let mut sz_encoder = Encoder::new(SizeTrack::new(Zero), self.ctxt);
                 for ch in chars.clone() {
-                    sz_encoder.write_char(ch)?;
+                    sz_encoder.write_char_with(ch, encoding, endianness)?;
                 }
                 let size = sz_encoder.finish().0.size_written();
 
                 // Now encode the length and the string data
                 self.write_usize(size)?;
                 for ch in chars {
-                    self.write_char(ch)?;
+                    self.write_char_with(ch, encoding, endianness)?;
                 }
             }
             StrLen::NullTerminated => {
                 for ch in chars {
-                    self.write_char(ch)?;
+                    self.write_char_with(ch, encoding, endianness)?;
                 }
-                self.write_char_or_null(None)?;
+                self.write_char_with('\0', encoding, endianness)?;
             }
             StrLen::NullTerminatedFixed(max) => {
                 let mut capped = Encoder::new(SizeLimit::new(&mut self.stream, max, 0), self.ctxt);
                 for ch in chars {
-                    match capped.write_char(ch) {
+                    match capped.write_char_with(ch, encoding, endianness) {
                         Err(EncodingError::UnexpectedEnd) => {
                             Err(EncodingError::StringError(StringError::TooLong))
                         }
@@ -2160,18 +2184,19 @@ impl<T: Read> Encoder<'_, T> {
     /// in the encoder's state.
     #[inline]
     pub fn read_char(&mut self) -> EncodingResult<char> {
-        Ok(self.read_char_or_null()?.unwrap_or('\0'))
+        self.read_char_with(
+            self.ctxt.settings.string_repr.encoding,
+            self.ctxt.settings.string_repr.endianness
+        )
     }
 
+    /// Decodes a `char` from the underlying stream, according to the endianness and string encoding
+    /// passed as parameters.
     #[inline]
-    fn read_char_or_null(&mut self) -> EncodingResult<Option<char>> {
-        let endianness = self.ctxt.settings.string_repr.endianness;
-        match self.ctxt.settings.string_repr.encoding {
+    fn read_char_with(&mut self, encoding: StrEncoding, endianness: Endianness) -> EncodingResult<char> {
+        match encoding {
             StrEncoding::Ascii => {
                 let ch = self.read_byte()?;
-                if ch == 0 {
-                    return Ok(None);
-                }
                 if !ch.is_ascii() {
                     return Err(StringError::InvalidChar.into());
                 }
@@ -2182,14 +2207,11 @@ impl<T: Read> Encoder<'_, T> {
                 // We check that the character is ascii before converting it to a char
                 // and if it is, we return *BEFORE* converting it, so `ch` is ALWAYS
                 // Some at this point
-                Ok(Some(ch.unwrap()))
+                Ok(ch.unwrap())
             }
             StrEncoding::Utf8 => {
                 // See https://en.wikipedia.org/wiki/UTF-8#Encoding
                 let mut buf = self.read_byte()?;
-                if buf == 0 {
-                    return Ok(None);
-                }
                 let (add, rshift) = if buf.leading_ones() == 0 {
                     (0usize, 1u32)
                 } else {
@@ -2217,16 +2239,13 @@ impl<T: Read> Encoder<'_, T> {
                     ch = (ch << shift) | ((buf & 0b0011_1111) as u32);
                 }
 
-                Ok(Some(char::from_u32(ch).ok_or(
+                Ok(char::from_u32(ch).ok_or(
                     EncodingError::StringError(StringError::InvalidChar),
-                )?))
+                )?)
             }
             StrEncoding::Utf16 => {
                 // See https://en.wikipedia.org/wiki/UTF-16#Code_points_from_U+010000_to_U+10FFFF
                 let buf = self.read_u16_with(NumEncoding::Fixed, endianness)?;
-                if buf == 0 {
-                    return Ok(None);
-                }
                 let ch;
 
                 // This is a high surrogate
@@ -2253,28 +2272,22 @@ impl<T: Read> Encoder<'_, T> {
                     ch = buf as u32;
                 }
 
-                Ok(Some(char::from_u32(ch).ok_or(
+                Ok(char::from_u32(ch).ok_or(
                     EncodingError::StringError(StringError::InvalidChar),
-                )?))
+                )?)
             }
             StrEncoding::Utf32 => {
                 let buf = self.read_u32_with(NumEncoding::Fixed, endianness)?;
-                if buf == 0 {
-                    return Ok(None);
-                }
 
-                Ok(Some(char::from_u32(buf).ok_or(
+                Ok(char::from_u32(buf).ok_or(
                     EncodingError::StringError(StringError::InvalidChar),
-                )?))
+                )?)
             }
             StrEncoding::Windows1252 => {
                 let buf = self.read_byte()?;
-                if buf == 0 {
-                    return Ok(None);
-                }
 
                 if let Some(ch) = windows1252::enc_to_dec(buf) {
-                    Ok(Some(ch))
+                    Ok(ch)
                 } else {
                     Err(EncodingError::StringError(StringError::InvalidChar))
                 }
@@ -2311,8 +2324,24 @@ impl<T: Read> Encoder<'_, T> {
     where
         S: FromIterator<char>,
     {
+        self.read_str_with(
+            self.ctxt.settings.string_repr.encoding,
+            self.ctxt.settings.string_repr.endianness,
+            self.ctxt.settings.string_repr.len
+        )
+    }
+
+    /// Decodes a String from the underlying stream, according to the endianness,
+    /// and string encoding passed as parameters.
+    #[inline]
+    pub fn read_str_with<S>(&mut self, encoding: StrEncoding, endianness: Endianness, len_encoding: StrLen) -> EncodingResult<S>
+    where
+        S: FromIterator<char>,
+    {
         struct LenPrefixCharIter<'iter, 'user, T: Read> {
             encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
+            encoding: StrEncoding,
+            endianness: Endianness
         }
 
         impl<'iter, 'user, T: Read> Iterator for LenPrefixCharIter<'iter, 'user, T> {
@@ -2324,23 +2353,25 @@ impl<T: Read> Encoder<'_, T> {
                     return None;
                 };
                 
-                Some(self.encoder.read_char())
+                Some(self.encoder.read_char_with(self.encoding, self.endianness))
             }
         }
 
         struct NullTermCharIter<'iter, 'user, T: Read> {
             encoder: &'iter mut Encoder<'user, T>,
+            encoding: StrEncoding,
+            endianness: Endianness
         }
 
         impl<T: Read> Iterator for NullTermCharIter<'_, '_, T> {
             type Item = EncodingResult<char>;
             fn next(&mut self) -> Option<Self::Item> {
-                match self.encoder.read_char_or_null() {
-                    Ok(None) => {
+                match self.encoder.read_char_with(self.encoding, self.endianness) {
+                    Ok('\0') => {
                         // Null character found
                         None // => STOP!
                     }
-                    Ok(Some(x)) => {
+                    Ok(x) => {
                         // Just a char
                         Some(Ok(x)) // ==> Continue
                     }
@@ -2352,11 +2383,13 @@ impl<T: Read> Encoder<'_, T> {
             }
         }
 
-        struct NullTermWithMaxCharIter<'iter, 'user, T: Read> {
+        struct NullTermFixedLengthCharIter<'iter, 'user, T: Read> {
             encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
+            encoding: StrEncoding,
+            endianness: Endianness
         }
 
-        impl<T: Read> Iterator for NullTermWithMaxCharIter<'_, '_, T> {
+        impl<T: Read> Iterator for NullTermFixedLengthCharIter<'_, '_, T> {
             type Item = EncodingResult<char>;
             fn next(&mut self) -> Option<Self::Item> {
                 if self.encoder.stream.remaining_readable() == 0 {
@@ -2364,8 +2397,8 @@ impl<T: Read> Encoder<'_, T> {
                     // Simply end the iterator
                     return None;
                 }
-                match self.encoder.read_char_or_null() {
-                    Ok(None) => {
+                match self.encoder.read_char_with(self.encoding, self.endianness) {
+                    Ok('\0') => {
                         // Null character found
                         // Read all the remaining nulls
                         for _ in 0..self.encoder.stream.remaining_readable() {
@@ -2382,7 +2415,7 @@ impl<T: Read> Encoder<'_, T> {
 
                         None // => STOP!
                     }
-                    Ok(Some(x)) => {
+                    Ok(x) => {
                         // Just a char
                         Some(Ok(x)) // ==> Continue
                     }
@@ -2394,22 +2427,30 @@ impl<T: Read> Encoder<'_, T> {
             }
         }
 
-        match self.ctxt.settings.string_repr.len {
+        match len_encoding {
             StrLen::LengthPrefixed => {
                 let length = self.read_usize()?;
                 let iter = LenPrefixCharIter {
                     encoder: Encoder::new(SizeLimit::new(&mut self.stream, 0, length), self.ctxt),
+                    encoding,
+                    endianness
                 };
 
                 iter.collect()
             }
             StrLen::NullTerminated => {
-                let iter = NullTermCharIter { encoder: self };
+                let iter = NullTermCharIter {
+                    encoder: self,
+                    encoding,
+                    endianness
+                };
                 iter.collect()
             }
             StrLen::NullTerminatedFixed(max) => {
-                let iter = NullTermWithMaxCharIter {
+                let iter = NullTermFixedLengthCharIter {
                     encoder: Encoder::new(SizeLimit::new(&mut self.stream, 0, max), self.ctxt),
+                    encoding,
+                    endianness
                 };
                 iter.collect()
             }
