@@ -1351,6 +1351,10 @@ macro_rules! make_write_fns {
 		    $(,)?
 	    }$(,)?
     ) => {
+        #[doc = "Encodes a `"]
+	    #[doc = stringify!($uty)]
+	    #[doc = "` to the underlying stream using ULEB-128 encoding"]
+        #[inline]
 	    fn $uleb128_encode(&mut self, value: $uty) -> EncodingResult<()> {
 		    let mut shifted = value;
 	        let mut more = true;
@@ -1377,7 +1381,10 @@ macro_rules! make_write_fns {
 		    self.$u_write_direct(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 
-	    #[inline]
+        #[doc = "Encodes a `"]
+	    #[doc = stringify!($uty)]
+	    #[doc = "` to the underlying stream, according to the endianness and numerical passed as parameters"]
+        #[inline]
         pub fn $u_write_direct(&mut self, value: $uty, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
 	        match num_encoding {
 		        NumEncoding::Fixed => {
@@ -1394,6 +1401,10 @@ macro_rules! make_write_fns {
             Ok(())
         }
 
+        #[doc = "Encodes a `"]
+	    #[doc = stringify!($ity)]
+	    #[doc = "` to the underlying stream using LEB-128 encoding"]
+        #[inline]
 	    fn $leb128_encode(&mut self, value: $ity) -> EncodingResult<()> {
 		        let mut shifted = value;
 		        let mut more = true;
@@ -1421,7 +1432,10 @@ macro_rules! make_write_fns {
 		    self.$i_write_direct(value, self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 
-	    #[inline]
+	    #[doc = "Encodes a `"]
+	    #[doc = stringify!($ity)]
+	    #[doc = "` to the underlying stream, according to the endianness and numerical encoding passed as parameters"]
+        #[inline]
         pub fn $i_write_direct(&mut self, value: $ity, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<()> {
 		    match num_encoding {
 		        NumEncoding::Fixed => {
@@ -1755,8 +1769,8 @@ impl<T: Write> Encoder<'_, T> {
     /// # Example
     ///
     /// ```
-    /// use ender::{Context, Encoder};
-    /// use ender::io::Zero;
+    /// # use ender::{Context, Encoder};
+    /// # use ender::io::Zero;
     ///
     /// let mut encoder = Encoder::new(Zero, Context::new());
     /// encoder.write_str("Hello, world!".chars()).unwrap();
@@ -1781,11 +1795,11 @@ impl<T: Write> Encoder<'_, T> {
     /// # Example
     ///
     /// ```
-    /// use ender::{Context, Encoder, Endianness, StrEncoding, StrLen};
-    /// use ender::io::Zero;
+    /// # use ender::{Context, Encoder, Endianness, StrEncoding, StrLen};
+    /// # use ender::io::Zero;
     ///
     /// let mut encoder = Encoder::new(Zero, Context::new());
-    /// encoder.write_str(
+    /// encoder.write_str_with(
     ///     "Goodbye, world :(".chars(),
     ///     StrEncoding::Utf16,
     ///     Endianness::BigEndian,
@@ -1871,6 +1885,10 @@ macro_rules! make_read_fns {
 	    }
 	    $(,)?
     ) => {
+        #[doc = "Decodes a `"]
+	    #[doc = stringify!($uty)]
+	    #[doc = "` from the underlying stream using ULEB-128 decoding"]
+        #[inline]
 	    fn $uleb128_decode(&mut self) -> EncodingResult<$uty> {
 			    let mut result: $uty = 0;
 		        let mut shift: u8 = 0;
@@ -1898,7 +1916,10 @@ macro_rules! make_read_fns {
 		    self.$u_read_direct(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 
-	    #[inline]
+	    #[doc = "Decodes a `"]
+	    #[doc = stringify!($uty)]
+	    #[doc = "` from the underlying stream, according to the endianness and numerical passed as parameters"]
+        #[inline]
         pub fn $u_read_direct(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$uty> {
 		    Ok(match num_encoding {
 		        NumEncoding::Fixed => {
@@ -1916,30 +1937,34 @@ macro_rules! make_read_fns {
 	        })
         }
 
-	     fn $leb128_decode(&mut self) -> EncodingResult<$ity> {
-			    let mut result: $ity = 0;
-		        let mut byte;
-		        let mut shift: u8 = 0;
-		        loop {
-			        if shift >= <$ity>::BITS as u8 {
-				        return Err(EncodingError::VarIntError);
-			        }
+        #[doc = "Decodes a `"]
+	    #[doc = stringify!($ity)]
+	    #[doc = "` from the underlying stream using LEB-128 decoding"]
+        #[inline]
+        fn $leb128_decode(&mut self) -> EncodingResult<$ity> {
+            let mut result: $ity = 0;
+            let mut byte;
+            let mut shift: u8 = 0;
+            loop {
+                if shift >= <$ity>::BITS as u8 {
+                    return Err(EncodingError::VarIntError);
+                }
 
-		            byte = self.read_byte()?;
-			        result |= (byte & 0b0111_1111) as $ity << shift;
-			        shift += 7;
+                byte = self.read_byte()?;
+                result |= (byte & 0b0111_1111) as $ity << shift;
+                shift += 7;
 
-			        if (byte & 0b1000_0000) == 0 {
-				        break;
-			        }
-				}
+                if (byte & 0b1000_0000) == 0 {
+                    break;
+                }
+            }
 
-		        if shift < <$ity>::BITS as u8 && (byte & 0b0100_0000) != 0 {
-			        result |= (!0 << shift);
-		        }
+            if shift < <$ity>::BITS as u8 && (byte & 0b0100_0000) != 0 {
+                result |= (!0 << shift);
+            }
 
-		        Ok(result)
-		    }
+            Ok(result)
+        }
 
 	    #[doc = "Decodes a `"]
 	    #[doc = stringify!($ity)]
@@ -1949,7 +1974,10 @@ macro_rules! make_read_fns {
 		    self.$i_read_direct(self.ctxt.settings.num_repr.num_encoding, self.ctxt.settings.num_repr.endianness)
 	    }
 
-	    #[inline]
+	    #[doc = "Decodes a `"]
+	    #[doc = stringify!($ity)]
+	    #[doc = "` from the underlying stream, according to the endianness and numerical encoding passed as parameters"]
+        #[inline]
         pub fn $i_read_direct(&mut self, num_encoding: NumEncoding, endianness: Endianness) -> EncodingResult<$ity> {
 	        Ok(match num_encoding {
 		        NumEncoding::Fixed => {
