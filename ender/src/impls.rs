@@ -5,7 +5,7 @@ use core::ops::Deref;
 use core::ops::{Bound, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo};
 use core::time::Duration;
 
-use crate::io::{BorrowRead, Read, Seek, Write};
+use crate::io::{BorrowRead, Read, Write};
 use crate::{
     BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
     StrEncoding, StringError,
@@ -45,7 +45,7 @@ impl_encode! {
     isize => write_isize;
 }
 
-impl<W: Write + Seek> Encode<W> for () {
+impl<W: Write> Encode<W> for () {
     #[inline]
     fn encode(&self, _encoder: &mut Encoder<W>) -> EncodingResult<()> {
         Ok(())
