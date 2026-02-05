@@ -5,6 +5,16 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, TokenStreamExt};
 
 impl Ctxt {
+    pub(super) fn derive_decode_in_place(&self) -> syn::Result<TokenStream2> {
+        let ref encoder = self.encoder;
+        let ref crate_name = self.flags.crate_name;
+        let ref encoder_generic = self.encoder_generic;
+        Ok(quote! {
+            *self = <Self as #crate_name::Decode<#encoder_generic>>::decode(#encoder)?;
+            Ok(())
+        })
+    }
+
     pub(super) fn derive_decode(&self) -> syn::Result<TokenStream2> {
         let ref crate_name = self.flags.crate_name;
         let ref item_name = self.item_name;

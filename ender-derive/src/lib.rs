@@ -55,7 +55,7 @@ pub fn encode(input: TokenStream1) -> TokenStream1 {
     let ref item_name = ctxt.item_name;
     let ref encoder = ctxt.encoder;
 
-    let body = match ctxt.derive() {
+    let (body, _) = match ctxt.derive() {
         Ok(ctxt) => ctxt,
         Err(err) => return TokenStream1::from(err.to_compile_error()),
     };
@@ -123,9 +123,10 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
     let ref item_name = ctxt.item_name;
     let ref encoder = ctxt.encoder;
 
-    let body = match ctxt.derive() {
-        Ok(ctxt) => ctxt,
+    let (body, body_in_place) = match ctxt.derive() {
+        Ok((body, Some(body_in_place))) => (body, body_in_place),
         Err(err) => return TokenStream1::from(err.to_compile_error()),
+        _ => unreachable!()
     };
 
     quote!(
@@ -135,6 +136,10 @@ pub fn decode(input: TokenStream1) -> TokenStream1 {
         impl #impl_generics #crate_name::Decode<#encoder_generic> for #item_name #ty_generics #where_clause {
             fn decode(#encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<Self> {
                 #body
+            }
+
+            fn decode_in_place(&mut self, #encoder: &mut #crate_name::Encoder<#encoder_generic>) -> #crate_name::EncodingResult<()> {
+                #body_in_place
             }
         }
     ).into()

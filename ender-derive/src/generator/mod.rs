@@ -14,10 +14,10 @@ pub mod encode;
 mod tokenize;
 
 impl Ctxt {
-    pub fn derive(&self) -> syn::Result<TokenStream2> {
+    pub fn derive(&self) -> syn::Result<(TokenStream2, Option<TokenStream2>)> {
         match self.target {
-            Target::Encode => self.derive_encode(),
-            Target::Decode => self.derive_decode(),
+            Target::Encode => Ok((self.derive_encode()?, None)),
+            Target::Decode => Ok((self.derive_decode()?, Some(self.derive_decode_in_place()?))),
         }
     }
 }
