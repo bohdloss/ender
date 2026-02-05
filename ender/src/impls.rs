@@ -1,15 +1,15 @@
+use crate::io::{BorrowRead, Read, Write};
+use crate::{
+    BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
+    StrEncoding, StringError,
+};
+use alloc::borrow::Cow;
 use core::cell::{Cell, RefCell};
 use core::ffi::CStr;
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::ops::{Bound, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo};
 use core::time::Duration;
-
-use crate::io::{BorrowRead, Read, Write};
-use crate::{
-    BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
-    StrEncoding, StringError,
-};
 
 // Primitives
 
@@ -656,6 +656,14 @@ impl<R: Read, T: Decode<R>, const SIZE: usize> Decode<R> for [T; SIZE] {
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         array_init::try_array_init(|i| decoder.with_index(|decoder| T::decode(decoder), i))
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        for (i, elem) in self.iter_mut().enumerate() {
+            decoder.with_index(|decoder| elem.decode_in_place(decoder), i)?;
+        }
+        Ok(())
+    }
 }
 
 macro_rules! consume {
@@ -665,34 +673,43 @@ macro_rules! consume {
 }
 
 macro_rules! tuple_decode {
-    ($($name:ident)+) => {
+    ($($name:ident.$lit:tt)+) => {
 	    #[allow(non_snake_case)]
-	    impl<R: $crate::io::Read, $($name: $crate::Decode<R>),+> $crate::Decode<R> for ($($name),+) {
+	    impl<R: $crate::io::Read, $($name: $crate::Decode<R>),+> $crate::Decode<R> for ($($name,)+) {
 		    #[inline]
             fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self>{
 			    Ok(($(
 		            consume!($name, $crate::Decode::decode(decoder)?),
 		        )+))
 		    }
+
+            #[inline]
+            fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+                $(
+                    self.$lit.decode_in_place(decoder)?;
+                )*
+                Ok(())
+            }
 	    }
     };
 }
 
-tuple_decode! { A B }
-tuple_decode! { A B C }
-tuple_decode! { A B C D }
-tuple_decode! { A B C D E }
-tuple_decode! { A B C D E F }
-tuple_decode! { A B C D E F G }
-tuple_decode! { A B C D E F G H }
-tuple_decode! { A B C D E F G H I }
-tuple_decode! { A B C D E F G H I J }
-tuple_decode! { A B C D E F G H I J K }
-tuple_decode! { A B C D E F G H I J K L }
-tuple_decode! { A B C D E F G H I J K L M }
-tuple_decode! { A B C D E F G H I J K L M N }
-tuple_decode! { A B C D E F G H I J K L M N O }
-tuple_decode! { A B C D E F G H I J K L M N O P } // Up to 16
+tuple_decode! { A.0 }
+tuple_decode! { A.0 B.1 }
+tuple_decode! { A.0 B.1 C.2 }
+tuple_decode! { A.0 B.1 C.2 D.3 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 I.8 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 I.8 J.9 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 I.8 J.9 K.10 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 I.8 J.9 K.10 L.11 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 I.8 J.9 K.10 L.11 M.12 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 I.8 J.9 K.10 L.11 M.12 N.13 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 I.8 J.9 K.10 L.11 M.12 N.13 O.14 }
+tuple_decode! { A.0 B.1 C.2 D.3 E.4 F.5 G.6 H.7 I.8 J.9 K.10 L.11 M.12 N.13 O.14 P.15 } // Up to 16
 
 macro_rules! slice_borrow {
     ($($ty:ty => $borrow:ident);* $(;)?) => {
@@ -700,7 +717,7 @@ macro_rules! slice_borrow {
 	    #[allow(non_snake_case)]
 	    impl<'data: 'a, 'a, R: BorrowRead<'data>> $crate::Decode<R> for &'a [$ty] {
 		    #[inline]
-            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self>{
+            fn decode(decoder: &mut $crate::Encoder<R>) -> $crate::EncodingResult<Self> {
 			    let len = decoder.read_usize()?;
 			    let endianness = decoder.ctxt.settings.num_repr.endianness;
 			    let num_encoding = decoder.ctxt.settings.num_repr.num_encoding;
@@ -773,6 +790,16 @@ impl<R: Read> Decode<R> for alloc::string::String {
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         decoder.read_str()
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let iter = decoder.read_str_iter()?;
+        self.clear();
+        for ch in iter {
+            self.push(ch?);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -813,6 +840,21 @@ impl<R: Read, T: Decode<R>> Decode<R> for Option<T> {
             false => None,
         })
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let b = decoder.read_bool()?;
+        match self {
+            Some(val) if b => {
+                val.decode_in_place(decoder)?;
+            }
+            _ => match b {
+                true => *self = Some(T::decode(decoder)?),
+                false => *self = None
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<R: Read, T: Decode<R>, E: Decode<R>> Decode<R> for Result<T, E> {
@@ -822,6 +864,24 @@ impl<R: Read, T: Decode<R>, E: Decode<R>> Decode<R> for Result<T, E> {
             true => Ok(T::decode(decoder)?),
             false => Err(E::decode(decoder)?),
         })
+    }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let b = decoder.read_bool()?;
+        match self {
+            Ok(val) if b => {
+                val.decode_in_place(decoder)?;
+            }
+            Err(val) if !b => {
+                val.decode_in_place(decoder)?;
+            }
+            _ => match b {
+                true => *self = Ok(T::decode(decoder)?),
+                false => *self = Err(E::decode(decoder)?)
+            }
+        }
+        Ok(())
     }
 }
 
@@ -839,6 +899,11 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<T> {
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(alloc::boxed::Box::new(<T as Decode<R>>::decode(decoder)?))
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        <T as Decode<R>>::decode_in_place(self, decoder)
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -855,6 +920,25 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::boxed::Box<[T]> {
         }
 
         Ok(vec.into_boxed_slice())
+    }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let len = decoder.read_usize()?;
+        if len == self.len() {
+            for i in 0..len {
+                decoder.with_index(|decoder| self[i].decode_in_place(decoder), i)?;
+            }
+        } else {
+            let mut vec = alloc::vec::Vec::new();
+            vec.reserve_exact(len);
+
+            for i in 0..len {
+                vec.push(decoder.with_index(|decoder| T::decode(decoder), i)?);
+            }
+            *self = vec.into_boxed_slice();
+        }
+        Ok(())
     }
 }
 
@@ -887,6 +971,15 @@ where
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::Borrowed(<&T>::decode(decoder)?))
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        match self {
+            Cow::Borrowed(x) => x.decode_in_place(decoder)?,
+            Cow::Owned(_) => *self = Self::decode(decoder)?
+        }
+        Ok(())
+    }
 }
 
 impl<R: Read, T: Copy + Decode<R>> Decode<R> for Cell<T> {
@@ -894,12 +987,22 @@ impl<R: Read, T: Copy + Decode<R>> Decode<R> for Cell<T> {
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Cell::new(T::decode(decoder)?))
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        self.get_mut().decode_in_place(decoder)
+    }
 }
 
 impl<R: Read, T: Decode<R>> Decode<R> for RefCell<T> {
     #[inline]
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(RefCell::new(T::decode(decoder)?))
+    }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        self.get_mut().decode_in_place(decoder)
     }
 }
 
@@ -910,6 +1013,16 @@ impl<R: Read, T: Decode<R>> Decode<R> for std::sync::Mutex<T> {
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(T::decode(decoder)?))
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        if let Ok(inner) = self.get_mut() {
+            inner.decode_in_place(decoder)?;
+        } else {
+            *self = Self::decode(decoder)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "std")]
@@ -918,6 +1031,16 @@ impl<R: Read, T: Decode<R>> Decode<R> for std::sync::RwLock<T> {
     #[inline]
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::new(T::decode(decoder)?))
+    }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        if let Ok(inner) = self.get_mut() {
+            inner.decode_in_place(decoder)?;
+        } else {
+            *self = Self::decode(decoder)?;
+        }
+        Ok(())
     }
 }
 
@@ -1037,6 +1160,30 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::LinkedList<T> {
 
         Ok(list)
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let len = decoder.read_usize()?;
+        let mut iter = Some(self.iter_mut());
+
+        for i in 0..len {
+            if let Some(the_iter) = iter.as_mut() {
+                if let Some(elem) = the_iter.next() {
+                    decoder.with_index(|decoder| elem.decode_in_place(decoder), i)?;
+                } else {
+                    iter = None;
+                    self.push_back(decoder.with_index(|decoder| T::decode(decoder), i)?);
+                }
+            } else {
+                iter = None;
+                self.push_back(decoder.with_index(|decoder| T::decode(decoder), i)?);
+            }
+        }
+
+        // PANIC SAFETY: the list at this point is AT LEAST `len` long due to the elements we have appended
+        let _  = self.split_off(len);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -1053,6 +1200,22 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::collections::VecDeque<T> {
 
         Ok(deque)
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let len = decoder.read_usize()?;
+
+        for i in 0..len {
+            if let Some(elem) = self.get_mut(i) {
+                decoder.with_index(|decoder| elem.decode_in_place(decoder), i)?;
+            } else {
+                self.push_back(decoder.with_index(|decoder| T::decode(decoder), i)?);
+            }
+        }
+
+        self.truncate(len);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -1068,6 +1231,22 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::vec::Vec<T> {
         }
 
         Ok(vec)
+    }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let len = decoder.read_usize()?;
+
+        for i in 0..len {
+            if let Some(elem) = self.get_mut(i) {
+                decoder.with_index(|decoder| elem.decode_in_place(decoder), i)?;
+            } else {
+                self.push(decoder.with_index(|decoder| T::decode(decoder), i)?);
+            }
+        }
+
+        self.truncate(len);
+        Ok(())
     }
 }
 
@@ -1133,6 +1312,18 @@ impl<R: Read> Decode<R> for std::ffi::OsString {
         // The error is of type `Infallible`
         Ok(std::ffi::OsString::from_str(&string).unwrap())
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let iter = decoder.read_str_iter()?;
+        self.clear();
+        let mut buf = [0u8; 4];
+        for ch in iter {
+            let str = ch?.encode_utf8(&mut buf);
+            self.push(str);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "std")]
@@ -1178,6 +1369,11 @@ impl<R: Read> Decode<R> for std::path::PathBuf {
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
         Ok(Self::from(std::ffi::OsString::decode(decoder)?))
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        self.as_mut_os_string().decode_in_place(decoder)
+    }
 }
 
 #[cfg(feature = "std")]
@@ -1208,6 +1404,13 @@ impl<R: Read, T: Decode<R>> Decode<R> for Range<T> {
             end: T::decode(decoder)?,
         })
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        self.start.decode_in_place(decoder)?;
+        self.end.decode_in_place(decoder)?;
+        Ok(())
+    }
 }
 
 impl<R: Read, T: Decode<R>> Decode<R> for RangeInclusive<T> {
@@ -1224,6 +1427,12 @@ impl<R: Read, T: Decode<R>> Decode<R> for RangeTo<T> {
             end: T::decode(decoder)?,
         })
     }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        self.end.decode_in_place(decoder)?;
+        Ok(())
+    }
 }
 
 impl<R: Read, T: Decode<R>> Decode<R> for RangeFrom<T> {
@@ -1232,6 +1441,12 @@ impl<R: Read, T: Decode<R>> Decode<R> for RangeFrom<T> {
         Ok(Self {
             start: T::decode(decoder)?,
         })
+    }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        self.start.decode_in_place(decoder)?;
+        Ok(())
     }
 }
 
@@ -1251,6 +1466,23 @@ impl<R: Read, T: Decode<R>> Decode<R> for Bound<T> {
             2 => Self::Unbounded,
             x => return Err(EncodingError::invalid_variant(x)),
         })
+    }
+
+    #[inline]
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        let variant = decoder.read_uvariant::<u8>()?;
+        match self {
+            Bound::Included(val) if variant == 0 => val.decode_in_place(decoder)?,
+            Bound::Excluded(val) if variant == 1 => val.decode_in_place(decoder)?,
+            Bound::Unbounded if variant == 2 => {}
+            _ => match variant {
+                0 => *self = Self::Included(T::decode(decoder)?),
+                1 => *self = Self::Excluded(T::decode(decoder)?),
+                2 => *self = Self::Unbounded,
+                x => return Err(EncodingError::invalid_variant(x)),
+            }
+        }
+        Ok(())
     }
 }
 

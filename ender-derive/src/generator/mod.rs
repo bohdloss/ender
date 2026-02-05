@@ -14,10 +14,10 @@ pub mod encode;
 mod tokenize;
 
 impl Ctxt {
-    pub fn derive(&self) -> syn::Result<TokenStream2> {
+    pub fn derive(&self) -> syn::Result<(TokenStream2, Option<TokenStream2>)> {
         match self.target {
-            Target::Encode => self.derive_encode(),
-            Target::Decode => self.derive_decode(),
+            Target::Encode => Ok((self.derive_encode()?, None)),
+            Target::Decode => Ok((self.derive_decode(false)?, Some(self.derive_decode(true)?))),
         }
     }
 }
@@ -37,19 +37,32 @@ impl<'a> RefCode<'a> {
         }
     }
 
-    pub fn append(&mut self, field: &Field) {
+    pub fn append(&mut self, field: &Field, in_place: bool) {
         match self.ctxt.target {
-            Target::Encode => {
+            Target::Encode => match self.ctxt.item_type {
                 // Only structs because enums already have references to their fields
-                if let ItemType::Struct = self.ctxt.item_type {
+                ItemType::Struct => {
                     let ref name = field.name;
                     let ref accessor = field.accessor;
                     self.code.append_all(quote!(
                         let ref #name = self.#accessor;
                     ));
                 }
+                ItemType::Enum => {}
             }
-            Target::Decode => {
+            Target::Decode => if in_place {
+                match self.ctxt.item_type {
+                    // Only structs because enums already have references to their fields
+                    ItemType::Struct => {
+                        let ref name = field.name;
+                        let ref accessor = field.accessor;
+                        self.code.append_all(quote!(
+                            let ref mut #name = self.#accessor;
+                        ));
+                    }
+                    ItemType::Enum => {}
+                }
+            } else {
                 // Here the field already exists, but it is Owned, we need to create a Reference to it
                 let ref name = field.name;
                 self.code.append_all(quote!(
@@ -120,6 +133,9 @@ impl Function {
                 Scope::Decode => unreachable!(),
                 Scope::Both => quote!(#path::encode(#input, &mut * #encoder, #(#args),* )?),
             },
+            Function::WithInPlace(path, args) => {
+                quote!(#path::encode(#input, &mut * #encoder, #(#args),* )?)
+            }
         })
     }
 
@@ -127,23 +143,50 @@ impl Function {
         &self,
         ctxt: &Ctxt,
         ty: &Type,
-        _field: &Field,
+        field: &Field,
+        in_place: bool
     ) -> syn::Result<TokenStream2> {
         let ref crate_name = ctxt.flags.crate_name;
         let ref encoder_generic = ctxt.encoder_generic;
         let ref encoder = ctxt.encoder;
+        let ref name = field.name;
         Ok(match self {
             Function::Default => {
-                quote!(<#ty as #crate_name::Decode<#encoder_generic>>::decode(#encoder)?)
+                if in_place {
+                    quote!(<#ty as #crate_name::Decode<#encoder_generic>>::decode_in_place(#name, #encoder)?)
+                } else {
+                    quote!(<#ty as #crate_name::Decode<#encoder_generic>>::decode(#encoder)?)
+                }
             }
             Function::Serde(serde_crate) => {
-                quote!(<#ty as #serde_crate::Deserialize>::deserialize(&mut * #encoder)?)
+                if in_place {
+                    quote!(<#ty as #serde_crate::Deserialize>::deserialize_in_place(&mut * #encoder, #name)?)
+                } else {
+                    quote!(<#ty as #serde_crate::Deserialize>::deserialize(&mut * #encoder)?)
+                }
             }
-            Function::With(path, args, scope) => match scope {
-                Scope::Encode => unreachable!(),
-                Scope::Decode => quote!(#path(&mut * #encoder, #(#args),* )?),
-                Scope::Both => quote!(#path::decode(&mut * #encoder, #(#args),* )?),
+            Function::With(path, args, scope) => {
+                if in_place {
+                    match scope {
+                        Scope::Encode => unreachable!(),
+                        Scope::Decode => quote!(*#name = #path(&mut * #encoder, #(#args),* )?;),
+                        Scope::Both => quote!(*#name = #path::decode(&mut * #encoder, #(#args),* )?;),
+                    }
+                } else {
+                    match scope {
+                        Scope::Encode => unreachable!(),
+                        Scope::Decode => quote!(#path(&mut * #encoder, #(#args),* )?),
+                        Scope::Both => quote!(#path::decode(&mut * #encoder, #(#args),* )?),
+                    }
+                }
             },
+            Function::WithInPlace(path, args) => {
+                if in_place {
+                    quote!(#path::decode_in_place(#name, &mut * #encoder, #(#args),* )?;)
+                } else {
+                    quote!(#path::decode(&mut * #encoder, #(#args),* )?)
+                }
+            }
         })
     }
 }

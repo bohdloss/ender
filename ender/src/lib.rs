@@ -259,9 +259,9 @@ use parse_display::Display;
 ///     * If the scope is Decode, the path must be callable as `decode`.<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
 /// with the same signatures as above.
-/// * `ptr $seek: $expr` - This is a `seek` flag. Seeks to the location given by $expr
-/// (which must be of type usize or isize) relative to $seek - which can be
-/// "start", "end" or "cur"rrent - before encoding/decoding this field, then seeks back to the
+/// * `ptr $seek: $expr` - This is a `seek` flag. Seeks to the location given by `$expr`
+/// (which must be of type usize or isize) relative to `$seek` - which can be
+/// `start`, `end` or `cur`rrent - before encoding/decoding this field, then seeks back to the
 /// previous location.
 /// ### Example:
 /// ```rust
@@ -310,10 +310,15 @@ use parse_display::Display;
 /// ```
 /// # 3. Function Modifiers
 /// Function-Modifier flags change the function that is used to encode/decode a field or item.
-/// * `serde: $crate` - Field will be serialized/deserialized with a serde compatibility layer.<br>
+/// * `serde: $crate` - Field will be serialized/deserialized with a serde compatibility layer.
+/// For the `decode_in_place` implementation, `deserialize_in_place` will be used.<br>
 /// Optionally, the serde crate name can be specified (useful if the serde crate was re-exported under
 /// another name).
 /// * `with: $path` - Uses the given path to find the encoding/decoding function.<br>
+/// This prevents optimizations in the `decode_in_place` implementation because it cannot predict
+/// if a specialized `decode_in_place` function exists in the module, so it will have to
+/// decode and then assign. If your module contains a specialized `decode_in_place`, you must use
+/// `with(in_place): $path` which actually expects the function to exist.
 ///     * If the scope is Encode, the path must be callable as
 /// `fn<T: Write>(&V, &mut ender::Encoder<T>) -> EncodingResult<()>`
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
@@ -321,7 +326,13 @@ use parse_display::Display;
 /// `fn<T: Read>(&mut ender::Encoder<T>) -> EncodingResult<V>`
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
-/// with the same signatures as above.
+/// with the same signatures as above.<br>
+/// * `with(in_place): $path` Uses the given path to find the encoding/decoding function, but
+/// expects to find a dedicated `decode_in_place` function too, callable as
+/// `fn<T: Read>(&mut V, &mut ender::Encoder<T>) -> EncodingResult<()>`
+/// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
+/// Differently from its counterpart, this modifier expects the path to be a module, even when
+/// a scope flag is explicitly specified.<br>
 /// ### Example:
 /// ```rust
 /// # use ender::{Encode, Decode};
@@ -381,7 +392,8 @@ use parse_display::Display;
 /// ```
 /// # 4. Type Modifiers
 /// Type-Modifier flags change the type of the value that's encoded, and change it back after
-/// decoding it.<br>
+/// decoding it.
+/// All of these currently block `decode_in_place` optimizations in generated code.<br>
 /// * `as: $ty` - Converts the value of the field to `$ty` before encoding it
 /// and back to the original field type after decoding it.<br>
 /// The conversion is done through the `as` keyword.
@@ -447,11 +459,13 @@ use parse_display::Display;
 /// * `crate: $crate` - Overwrites the default crate name which is assumed to be `ender`.
 /// Can only be applied to items.
 /// * `if: $expr` - The field will only be encoded/decoded if the given expression
-/// evaluates to true, otherwise the default value is computed.
+/// evaluates to true, otherwise the default value is computed. In a `decode_in place`
+/// implementation, if the expression evaluates to false the value is left untouched.
 /// * `default: $expr` - Overrides the default fallback for when a value can't be
 /// decoded, which is `Default::default()`
 /// * `skip` - Will not encode/decode this field.
-/// When decoding, computes the default value.
+/// When decoding, computes the default value. In a `decode_in place` implementation the value is
+/// left untouched.
 /// * `validate: $expr, $format_string, $arg1, $arg2, $arg3, ...` - Before encoding/after decoding, returns an error if the
 /// expression evaluates to false. The error message will use the given formatting (if present).
 /// * `flatten: $expr` - Indicates that the length of the given field (for example
@@ -2012,7 +2026,7 @@ macro_rules! make_read_fns {
     };
 }
 
-impl<T: Read> Encoder<'_, T> {
+impl<'user, T: Read> Encoder<'user, T> {
     make_read_fns! {
         type u8 {
             pub u_read: read_u8,
@@ -2352,11 +2366,7 @@ impl<T: Read> Encoder<'_, T> {
     where
         S: FromIterator<char>,
     {
-        self.read_str_with(
-            self.ctxt.settings.string_repr.encoding,
-            self.ctxt.settings.string_repr.endianness,
-            self.ctxt.settings.string_repr.len
-        )
+        self.read_str_iter()?.into_iter().collect()
     }
 
     /// Decodes a String from the underlying stream, according to the endianness,
@@ -2364,16 +2374,55 @@ impl<T: Read> Encoder<'_, T> {
     #[inline]
     pub fn read_str_with<S>(&mut self, encoding: StrEncoding, endianness: Endianness, len_encoding: StrLen) -> EncodingResult<S>
     where
-        S: FromIterator<char>,
+        S: FromIterator<char>
+    {
+        self.read_str_iter_with(encoding, endianness, len_encoding)?.into_iter().collect()
+    }
+
+    /// Returns an iterator which can be used to decode a String from the underlying stream.
+    /// The iterator acts according to the endianness, and string encoding in the encoder's state.
+    ///
+    /// Even if the iterator is not used, this method may read some data from the stream to determine
+    /// the length of the string.
+    ///
+    /// If the iterator returns `None` or `Some(Err)`, calling `next` again will most likely lead to
+    /// logic errors, and it should simply be dropped instead.
+    ///
+    /// Dropping the iterator before you reach the end or an error is returned will leave the stream
+    /// in a broken state, and successive reads will see the unread parts of the string.
+    #[inline]
+    pub fn read_str_iter<'a>(&'a mut self) -> EncodingResult<impl IntoIterator<Item = EncodingResult<char>> + use<'a, 'user, T>>
+    {
+        self.read_str_iter_with(
+            self.ctxt.settings.string_repr.encoding,
+            self.ctxt.settings.string_repr.endianness,
+            self.ctxt.settings.string_repr.len
+        )
+    }
+
+    /// Returns an iterator which can be used to decode a String from the underlying stream.
+    /// The iterator acts according to the endianness, and string encoding passed as parameters.
+    ///
+    /// Even if the iterator is not used, this method may read some data from the stream to determine
+    /// the length of the string.
+    ///
+    /// If the iterator returns `None` or `Some(Err)`, calling `next` again will most likely lead to
+    /// logic errors, and it should simply be dropped instead.
+    ///
+    /// Dropping the iterator before you reach the end or an error is returned will leave the stream
+    /// in a broken state, and successive reads will see the unread parts of the string.
+    #[inline]
+    pub fn read_str_iter_with<'a>(&'a mut self, encoding: StrEncoding, endianness: Endianness, len_encoding: StrLen) -> EncodingResult<impl IntoIterator<Item = EncodingResult<char>> + use<'a, 'user, T>>
     {
         struct LenPrefixCharIter<'iter, 'user, T: Read> {
             encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
             encoding: StrEncoding,
-            endianness: Endianness
+            endianness: Endianness,
         }
 
-        impl<'iter, 'user, T: Read> Iterator for LenPrefixCharIter<'iter, 'user, T> {
+        impl<T: Read> Iterator for LenPrefixCharIter<'_, '_, T> {
             type Item = EncodingResult<char>;
+            #[inline]
             fn next(&mut self) -> Option<Self::Item> {
                 if self.encoder.stream.remaining_readable() == 0 {
                     // We expect 0 more bytes
@@ -2383,16 +2432,23 @@ impl<T: Read> Encoder<'_, T> {
                 
                 Some(self.encoder.read_char_with(self.encoding, self.endianness))
             }
+
+            #[inline]
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                (0, Some(self.encoder.stream.remaining_readable()))
+            }
         }
 
         struct NullTermCharIter<'iter, 'user, T: Read> {
             encoder: &'iter mut Encoder<'user, T>,
             encoding: StrEncoding,
-            endianness: Endianness
+            endianness: Endianness,
         }
 
         impl<T: Read> Iterator for NullTermCharIter<'_, '_, T> {
             type Item = EncodingResult<char>;
+
+            #[inline]
             fn next(&mut self) -> Option<Self::Item> {
                 match self.encoder.read_char_with(self.encoding, self.endianness) {
                     Ok('\0') => {
@@ -2419,6 +2475,8 @@ impl<T: Read> Encoder<'_, T> {
 
         impl<T: Read> Iterator for NullTermFixedLengthCharIter<'_, '_, T> {
             type Item = EncodingResult<char>;
+
+            #[inline]
             fn next(&mut self) -> Option<Self::Item> {
                 if self.encoder.stream.remaining_readable() == 0 {
                     // We reached the maximum amount of bytes we can read
@@ -2453,6 +2511,39 @@ impl<T: Read> Encoder<'_, T> {
                     }
                 }
             }
+
+            #[inline]
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                (0, Some(self.encoder.stream.remaining_readable()))
+            }
+        }
+
+        enum IteratorDecider<'iter, 'user, T: Read> {
+            LenPrefix(LenPrefixCharIter<'iter, 'user, T>),
+            NullTerm(NullTermCharIter<'iter, 'user, T>),
+            NullTermFixedLength(NullTermFixedLengthCharIter<'iter, 'user, T>)
+        }
+
+        impl<T: Read> Iterator for IteratorDecider<'_, '_, T> {
+            type Item = EncodingResult<char>;
+
+            #[inline]
+            fn next(&mut self) -> Option<Self::Item> {
+                match self {
+                    IteratorDecider::LenPrefix(x) => x.next(),
+                    IteratorDecider::NullTerm(x) => x.next(),
+                    IteratorDecider::NullTermFixedLength(x) => x.next(),
+                }
+            }
+
+            #[inline]
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                match self {
+                    IteratorDecider::LenPrefix(x) => x.size_hint(),
+                    IteratorDecider::NullTerm(x) => x.size_hint(),
+                    IteratorDecider::NullTermFixedLength(x) => x.size_hint(),
+                }
+            }
         }
 
         match len_encoding {
@@ -2464,7 +2555,7 @@ impl<T: Read> Encoder<'_, T> {
                     endianness
                 };
 
-                iter.collect()
+                Ok(IteratorDecider::LenPrefix(iter))
             }
             StrLen::NullTerminated => {
                 let iter = NullTermCharIter {
@@ -2472,7 +2563,7 @@ impl<T: Read> Encoder<'_, T> {
                     encoding,
                     endianness
                 };
-                iter.collect()
+                Ok(IteratorDecider::NullTerm(iter))
             }
             StrLen::NullTerminatedFixed(max) => {
                 let iter = NullTermFixedLengthCharIter {
@@ -2480,7 +2571,7 @@ impl<T: Read> Encoder<'_, T> {
                     encoding,
                     endianness
                 };
-                iter.collect()
+                Ok(IteratorDecider::NullTermFixedLength(iter))
             }
         }
     }
@@ -2831,4 +2922,18 @@ pub trait Decode<R: Read>: Sized {
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self>;
+
+    /// Decodes `Self` from its binary format.
+    ///
+    /// See [`Decode::decode`] for more details.
+    ///
+    /// Doesn't create a new `Self`, but rather updates the existing data within it.
+    /// This is useful for preserving resources for example when decoding a struct continuously in
+    /// a loop. If you wish to implement this function you should recursively call
+    /// [`Decode::decode_in_place`] for the contents of your type whenever possible and
+    /// [`Decode::decode`] when it isn't.
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        *self = Self::decode(decoder)?;
+        Ok(())
+    }
 }

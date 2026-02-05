@@ -5,13 +5,13 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, TokenStreamExt};
 
 impl Ctxt {
-    pub(super) fn derive_decode(&self) -> syn::Result<TokenStream2> {
+    pub(super) fn derive_decode(&self, in_place: bool) -> syn::Result<TokenStream2> {
         let ref crate_name = self.flags.crate_name;
         let ref item_name = self.item_name;
         match self.item_type {
             ItemType::Struct => {
                 let (pre, post) = self.flags.mods.derive(self)?;
-                let body = self.struct_data.derive_decode(self)?;
+                let body = self.struct_data.derive_decode(self, in_place)?;
                 let modified = self.flags.derive_stream_modifiers(
                     self,
                     body,
@@ -23,16 +23,29 @@ impl Ctxt {
                 let puller = self.flags.derive_puller(self)?;
                 let pusher = self.flags.derive_pusher(self)?;
 
-                Ok(quote!(
-                    #pos_tracker
-                    #puller
-                    #pusher
-                    #pre
-                    #seek
-                    let __val: Self = { #modified };
-                    #post
-                    #crate_name::EncodingResult::Ok(__val)
-                ))
+                Ok(if in_place {
+                    quote!(
+                        #pos_tracker
+                        #puller
+                        #pusher
+                        #pre
+                        #seek
+                        { #modified };
+                        #post
+                        #crate_name::EncodingResult::Ok(())
+                    )
+                } else {
+                    quote!(
+                        #pos_tracker
+                        #puller
+                        #pusher
+                        #pre
+                        #seek
+                        let __val: Self = { #modified };
+                        #post
+                        #crate_name::EncodingResult::Ok(__val)
+                    )
+                })
             }
             ItemType::Enum => {
                 let ref crate_name = self.flags.crate_name;
@@ -48,6 +61,7 @@ impl Ctxt {
                 let (pre, post) = self.flags.mods.derive(self)?;
                 let mut const_code = ConstCode::new(self);
                 let mut variant_code = TokenStream2::new();
+                let mut variant_code_in_place = TokenStream2::new();
 
                 let read_variant = if self.enum_repr.signed() {
                     quote!(
@@ -61,15 +75,29 @@ impl Ctxt {
 
                 for variant in self.variants.iter() {
                     const_code.append(variant);
-                    variant_code.append_all(variant.derive_decode(self)?);
+                    variant_code.append_all(variant.derive_decode(self, false)?);
+                    variant_code_in_place.append_all(variant.derive_decode(self, true)?);
                 }
 
-                let body = quote!(
-                    match #read_variant {
-                        #variant_code
-                        __unknown_variant => #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant(#crate_name::Opaque::from(__unknown_variant))),
-                    }?
-                );
+                let body = if in_place {
+                    quote!(
+                        let __decoded_variant = #read_variant;
+                        match self {
+                            #variant_code_in_place
+                            _ => *self = match __decoded_variant {
+                                #variant_code
+                                __unknown_variant => #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant(#crate_name::Opaque::from(__unknown_variant))),
+                            }?
+                        }
+                    )
+                } else {
+                    quote!(
+                        match #read_variant {
+                            #variant_code
+                            __unknown_variant => #crate_name::EncodingResult::Err(#crate_name::EncodingError::InvalidVariant(#crate_name::Opaque::from(__unknown_variant))),
+                        }?
+                    )
+                };
                 let modified = self.flags.derive_stream_modifiers(
                     self,
                     body,
@@ -81,18 +109,33 @@ impl Ctxt {
                 let puller = self.flags.derive_puller(self)?;
                 let pusher = self.flags.derive_pusher(self)?;
 
-                Ok(quote!(
-                    #const_code
+                Ok(if in_place {
+                    quote!(
+                        #const_code
 
-                    #pos_tracker
-                    #puller
-                    #pusher
-                    #pre
-                    #seek
-                    let __val: Self = { #modified };
-                    #post
-                    #crate_name::EncodingResult::Ok(__val)
-                ))
+                        #pos_tracker
+                        #puller
+                        #pusher
+                        #pre
+                        #seek
+                        { #modified };
+                        #post
+                        #crate_name::EncodingResult::Ok(())
+                    )
+                } else {
+                    quote!(
+                        #const_code
+
+                        #pos_tracker
+                        #puller
+                        #pusher
+                        #pre
+                        #seek
+                        let __val: Self = { #modified };
+                        #post
+                        #crate_name::EncodingResult::Ok(__val)
+                    )
+                })
             }
         }
     }
@@ -100,9 +143,10 @@ impl Ctxt {
 
 impl Variant {
     /// Generates the match arm for this variant
-    fn decode_match(&self, ctxt: &Ctxt, body: TokenStream2) -> syn::Result<TokenStream2> {
+    fn decode_match(&self, ctxt: &Ctxt, body: TokenStream2, in_place: bool) -> syn::Result<TokenStream2> {
         let ref index = self.index.ident;
         let ref name = self.name;
+        let fields = self.fields.iter().map(|x| &x.name);
         let body = self.flags.derive_stream_modifiers(
             ctxt,
             body,
@@ -110,9 +154,29 @@ impl Variant {
             name.to_string(),
         )?;
 
-        Ok(quote!(
+        Ok(if in_place {
+            match self.flavor {
+                Flavor::Unit => {
+                    quote!(
+                    Self::#name if __decoded_variant == #index => { #body },
+                )
+                }
+                Flavor::Tuple => {
+                    quote!(
+                    Self::#name ( #(#fields),* ) if __decoded_variant == #index => { #body },
+                )
+                }
+                Flavor::Struct => {
+                    quote!(
+                    Self::#name { #(#fields),* } if __decoded_variant == #index => { #body },
+                )
+                }
+            }
+        } else {
+            quote!(
             #index => { #body },
-        ))
+        )
+        })
     }
 
     /// Generates code for aggregating together the decoded fields of an enum
@@ -141,15 +205,15 @@ impl Variant {
     }
 
     /// Generates the decode code for this variant, including the match arm
-    pub fn derive_decode(&self, ctxt: &Ctxt) -> syn::Result<TokenStream2> {
+    pub fn derive_decode(&self, ctxt: &Ctxt, in_place: bool) -> syn::Result<TokenStream2> {
         let mut ref_code = RefCode::new(ctxt);
         let mut field_code = TokenStream2::new();
 
         for field in self.fields.iter() {
-            field_code.append_all(field.derive_decode(ctxt, &mut ref_code)?);
+            field_code.append_all(field.derive_decode(ctxt, &mut ref_code, in_place)?);
         }
 
-        let aggregate = self.decode_aggregate(ctxt)?;
+        let aggregate = if in_place { TokenStream2::new() } else { self.decode_aggregate(ctxt)? };
 
         self.decode_match(
             ctxt,
@@ -158,6 +222,7 @@ impl Variant {
 
                 #aggregate
             ),
+            in_place
         )
     }
 }
@@ -187,26 +252,33 @@ impl Struct {
     }
 
     /// Generates the decode code for this struct
-    pub fn derive_decode(&self, ctxt: &Ctxt) -> syn::Result<TokenStream2> {
+    pub fn derive_decode(&self, ctxt: &Ctxt, in_place: bool) -> syn::Result<TokenStream2> {
         let mut ref_code = RefCode::new(ctxt);
         let mut field_code = TokenStream2::new();
 
         for field in self.fields.iter() {
-            field_code.append_all(field.derive_decode(ctxt, &mut ref_code)?);
+            field_code.append_all(field.derive_decode(ctxt, &mut ref_code, in_place)?);
         }
 
         let aggregate = self.decode_aggregate(ctxt)?;
 
-        Ok(quote!(
-            #field_code
+        Ok(if in_place {
+            quote!(
+                #ref_code
+                #field_code
+            )
+        } else {
+            quote!(
+                #field_code
 
-            #aggregate ?
-        ))
+                #aggregate ?
+            )
+        })
     }
 }
 
 impl Field {
-    pub fn derive_decode(&self, ctxt: &Ctxt, ref_code: &mut RefCode) -> syn::Result<TokenStream2> {
+    pub fn derive_decode(&self, ctxt: &Ctxt, ref_code: &mut RefCode, in_place: bool) -> syn::Result<TokenStream2> {
         let ref field_name = self.name;
         let ref field_accessor = self.accessor;
         let ref field_ty = self.ty;
@@ -218,10 +290,10 @@ impl Field {
                 self,
                 self.flags
                     .function
-                    .derive_decode(ctxt, converter.ty(), &self)?,
+                    .derive_decode(ctxt, converter.ty(), &self, false)?,
             )?
         } else {
-            self.flags.function.derive_decode(ctxt, field_ty, &self)?
+            self.flags.function.derive_decode(ctxt, field_ty, &self, in_place)?
         };
         let modified = self.flags.derive_stream_modifiers(
             ctxt,
@@ -235,51 +307,87 @@ impl Field {
         let pusher = self.flags.derive_pusher(ctxt)?;
 
         let decode = if self.flags.skip {
-            quote!(
-                {
-                    #ref_code
-                    #default
-                }
-            )
+            if in_place {
+                quote!({})
+            } else {
+                quote!(
+                    {
+                        #ref_code
+                        #default
+                    }
+                )
+            }
         } else if let Some(condition) = &self.flags.condition {
-            quote!(
-                {
-                    #ref_code
-                    if #condition {
+            if in_place {
+                quote!(
+                    {
+                        if #condition {
+                            #pre
+                            #seek
+                            #modified;
+                            #post
+                        }
+                    }
+                )
+            } else {
+                quote!(
+                    {
+                        #ref_code
+                        if #condition {
+                            #pre
+                            #seek
+                            let __val: #field_ty = #modified;
+                            #post
+                            __val
+                        } else {
+                            #default
+                        }
+                    }
+                )
+            }
+        } else {
+            if in_place {
+                quote!(
+                    {
+                        #pre
+                        #seek
+                        #modified;
+                        #post
+                    }
+                )
+            } else {
+                quote!(
+                    {
+                        #ref_code
                         #pre
                         #seek
                         let __val: #field_ty = #modified;
                         #post
                         __val
-                    } else {
-                        #default
                     }
-                }
+                )
+            }
+        };
+
+        ref_code.append(self, in_place);
+        let validate = self.flags.derive_validation(ctxt, if in_place { None } else { Some(ref_code) })?;
+
+        Ok(if in_place {
+            quote!(
+                #pos_tracker
+                #puller
+                #pusher
+                #decode;
+                #validate
             )
         } else {
             quote!(
-                {
-                    #ref_code
-                    #pre
-                    #seek
-                    let __val: #field_ty = #modified;
-                    #post
-                    __val
-                }
+                #pos_tracker
+                #puller
+                #pusher
+                let #field_name: #field_ty = #decode;
+                #validate
             )
-        };
-
-        ref_code.append(self);
-        let validate = self.flags.derive_validation(ctxt, Some(&ref_code))?;
-
-        let decode = quote!(
-            #pos_tracker
-            #puller
-            #pusher
-            let #field_name: #field_ty = #decode;
-            #validate
-        );
-
-        Ok(decode)
+        })
     }
 }

@@ -45,6 +45,7 @@ pub enum Function {
     Default,
     Serde(Ident),
     With(Path, Vec<Expr>, Scope),
+    WithInPlace(Path, Vec<Expr>),
 }
 
 impl Function {
@@ -544,6 +545,17 @@ impl Flags {
                     .unwrap_or(Vec::new());
 
                 self.function = Function::With(path, args, scope);
+            }
+            Flag::WithInPlace { path, args, .. } => {
+                if !self.function.is_default() {
+                    return Err(Error::new(span, MULTIPLE_FUNCTION_MODS));
+                }
+
+                let args = args
+                    .map(|x| x.args.into_iter().collect::<Vec<Expr>>())
+                    .unwrap_or(Vec::new());
+
+                self.function = Function::WithInPlace(path, args);
             }
             Flag::As { ty, .. } => {
                 if self.ty_mods.is_some() {
