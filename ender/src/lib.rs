@@ -259,9 +259,9 @@ use parse_display::Display;
 ///     * If the scope is Decode, the path must be callable as `decode`.<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
 /// with the same signatures as above.
-/// * `ptr $seek: $expr` - This is a `seek` flag. Seeks to the location given by $expr
-/// (which must be of type usize or isize) relative to $seek - which can be
-/// "start", "end" or "cur"rrent - before encoding/decoding this field, then seeks back to the
+/// * `ptr $seek: $expr` - This is a `seek` flag. Seeks to the location given by `$expr`
+/// (which must be of type usize or isize) relative to `$seek` - which can be
+/// `start`, `end` or `cur`rrent - before encoding/decoding this field, then seeks back to the
 /// previous location.
 /// ### Example:
 /// ```rust
@@ -310,10 +310,15 @@ use parse_display::Display;
 /// ```
 /// # 3. Function Modifiers
 /// Function-Modifier flags change the function that is used to encode/decode a field or item.
-/// * `serde: $crate` - Field will be serialized/deserialized with a serde compatibility layer.<br>
+/// * `serde: $crate` - Field will be serialized/deserialized with a serde compatibility layer.
+/// For the `decode_in_place` implementation, `deserialize_in_place` will be used.<br>
 /// Optionally, the serde crate name can be specified (useful if the serde crate was re-exported under
 /// another name).
 /// * `with: $path` - Uses the given path to find the encoding/decoding function.<br>
+/// This prevents optimizations in the `decode_in_place` implementation because it cannot predict
+/// if a specialized `decode_in_place` function exists in the module, so it will have to
+/// decode and then assign. If your module contains a specialized `decode_in_place`, you must use
+/// `with(in_place): $path` which actually expects the function to exist.
 ///     * If the scope is Encode, the path must be callable as
 /// `fn<T: Write>(&V, &mut ender::Encoder<T>) -> EncodingResult<()>`
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
@@ -321,7 +326,13 @@ use parse_display::Display;
 /// `fn<T: Read>(&mut ender::Encoder<T>) -> EncodingResult<V>`
 /// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
 ///     * If no scope is specified, the path must point to a module with encoding and decoding functions
-/// with the same signatures as above.
+/// with the same signatures as above.<br>
+/// * `with(in_place): $path` Uses the given path to find the encoding/decoding function, but
+/// expects to find a dedicated `decode_in_place` function too, callable as
+/// `fn<T: Read>(&mut V, &mut ender::Encoder<T>) -> EncodingResult<()>`
+/// where `V` is the type of the field (the function is allowed to be generic over `V`).<br>
+/// Differently from its counterpart, this modifier expects the path to be a module, even when
+/// a scope flag is explicitly specified.<br>
 /// ### Example:
 /// ```rust
 /// # use ender::{Encode, Decode};
@@ -381,7 +392,8 @@ use parse_display::Display;
 /// ```
 /// # 4. Type Modifiers
 /// Type-Modifier flags change the type of the value that's encoded, and change it back after
-/// decoding it.<br>
+/// decoding it.
+/// All of these currently block `decode_in_place` optimizations in generated code.<br>
 /// * `as: $ty` - Converts the value of the field to `$ty` before encoding it
 /// and back to the original field type after decoding it.<br>
 /// The conversion is done through the `as` keyword.
@@ -447,11 +459,13 @@ use parse_display::Display;
 /// * `crate: $crate` - Overwrites the default crate name which is assumed to be `ender`.
 /// Can only be applied to items.
 /// * `if: $expr` - The field will only be encoded/decoded if the given expression
-/// evaluates to true, otherwise the default value is computed.
+/// evaluates to true, otherwise the default value is computed. In a `decode_in place`
+/// implementation, if the expression evaluates to false the value is left untouched.
 /// * `default: $expr` - Overrides the default fallback for when a value can't be
 /// decoded, which is `Default::default()`
 /// * `skip` - Will not encode/decode this field.
-/// When decoding, computes the default value.
+/// When decoding, computes the default value. In a `decode_in place` implementation the value is
+/// left untouched.
 /// * `validate: $expr, $format_string, $arg1, $arg2, $arg3, ...` - Before encoding/after decoding, returns an error if the
 /// expression evaluates to false. The error message will use the given formatting (if present).
 /// * `flatten: $expr` - Indicates that the length of the given field (for example
@@ -2914,6 +2928,10 @@ pub trait Decode<R: Read>: Sized {
     /// See [`Decode::decode`] for more details.
     ///
     /// Doesn't create a new `Self`, but rather updates the existing data within it.
+    /// This is useful for preserving resources for example when decoding a struct continuously in
+    /// a loop. If you wish to implement this function you should recursively call
+    /// [`Decode::decode_in_place`] for the contents of your type whenever possible and
+    /// [`Decode::decode`] when it isn't.
     fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
         *self = Self::decode(decoder)?;
         Ok(())

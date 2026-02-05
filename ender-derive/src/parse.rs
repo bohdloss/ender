@@ -26,6 +26,7 @@ pub mod kw {
     custom_keyword!(serde);
     custom_keyword!(skip);
     custom_keyword!(with);
+    custom_keyword!(in_place);
     custom_keyword!(flatten);
     custom_keyword!(validate);
     custom_keyword!(borrow);
@@ -297,6 +298,15 @@ pub enum Flag {
         path: Path,
         args: Option<FnArgs>,
     },
+    /// The field should be encoded/decoded using the given function. If the Encode scope
+    /// is specified, it must be callable as
+    WithInPlace {
+        kw: kw::with,
+        in_place: (Paren, kw::in_place),
+        colon: Token![:],
+        path: Path,
+        args: Option<FnArgs>,
+    },
     /// The field should be encoded/decoded as if it was of the given type. It should then be
     /// converted back to the appropriate type. The conversion method is the as keyword.
     As {
@@ -409,6 +419,7 @@ impl Flag {
             Flag::If { kw, .. } => kw.span,
             Flag::Default { kw, .. } => kw.span,
             Flag::With { kw, .. } => kw.span,
+            Flag::WithInPlace { kw, .. } => kw.span,
             Flag::As { kw, .. } => kw.span,
             Flag::Into { kw, .. } => kw.span,
             Flag::From { kw, .. } => kw.span,
@@ -653,15 +664,33 @@ impl Parse for Flag {
                 expr: input.parse()?,
             })
         } else if input.peek(kw::with) {
-            Ok(Self::With {
-                kw: input.parse()?,
-                colon: input.parse()?,
-                path: input.parse()?,
-                args: if input.peek(Paren) {
-                    Some(input.parse()?)
-                } else {
-                    None
-                },
+            let kw = input.parse()?;
+            Ok(if input.peek(Paren) {
+                Self::WithInPlace {
+                    kw,
+                    in_place: {
+                        let inside;
+                        (parenthesized!(inside in input), inside.parse()?)
+                    },
+                    colon: input.parse()?,
+                    path: input.parse()?,
+                    args: if input.peek(Paren) {
+                        Some(input.parse()?)
+                    } else {
+                        None
+                    },
+                }
+            } else {
+                Self::With {
+                    kw,
+                    colon: input.parse()?,
+                    path: input.parse()?,
+                    args: if input.peek(Paren) {
+                        Some(input.parse()?)
+                    } else {
+                        None
+                    },
+                }
             })
         } else if input.peek(Token![as]) {
             Ok(Self::As {

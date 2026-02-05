@@ -284,18 +284,16 @@ impl Field {
         let ref field_ty = self.ty;
         let ref default = self.flags.default;
 
-        let mut optimized_in_place = false;
-
         let (pre, post) = self.flags.mods.derive(ctxt)?;
         let decode = if let Some(converter) = &self.flags.ty_mods {
             converter.convert_from(
                 self,
                 self.flags
                     .function
-                    .derive_decode(ctxt, converter.ty(), &self, false, &mut optimized_in_place)?,
+                    .derive_decode(ctxt, converter.ty(), &self, false)?,
             )?
         } else {
-            self.flags.function.derive_decode(ctxt, field_ty, &self, in_place, &mut optimized_in_place)?
+            self.flags.function.derive_decode(ctxt, field_ty, &self, in_place)?
         };
         let modified = self.flags.derive_stream_modifiers(
             ctxt,
@@ -321,29 +319,16 @@ impl Field {
             }
         } else if let Some(condition) = &self.flags.condition {
             if in_place {
-                if optimized_in_place {
-                    quote!(
-                        {
-                            if #condition {
-                                #pre
-                                #seek
-                                #modified;
-                                #post
-                            }
+                quote!(
+                    {
+                        if #condition {
+                            #pre
+                            #seek
+                            #modified;
+                            #post
                         }
-                    )
-                } else {
-                    quote!(
-                        {
-                            if #condition {
-                                #pre
-                                #seek
-                                *#field_name = #modified;
-                                #post
-                            }
-                        }
-                    )
-                }
+                    }
+                )
             } else {
                 quote!(
                     {
@@ -362,25 +347,14 @@ impl Field {
             }
         } else {
             if in_place {
-                if optimized_in_place {
-                    quote!(
-                        {
-                            #pre
-                            #seek
-                            #modified;
-                            #post
-                        }
-                    )
-                } else {
-                    quote!(
-                        {
-                            #pre
-                            #seek
-                            *#field_name = #modified;
-                            #post
-                        }
-                    )
-                }
+                quote!(
+                    {
+                        #pre
+                        #seek
+                        #modified;
+                        #post
+                    }
+                )
             } else {
                 quote!(
                     {
@@ -403,7 +377,7 @@ impl Field {
                 #pos_tracker
                 #puller
                 #pusher
-                #decode
+                #decode;
                 #validate
             )
         } else {

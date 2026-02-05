@@ -133,6 +133,9 @@ impl Function {
                 Scope::Decode => unreachable!(),
                 Scope::Both => quote!(#path::encode(#input, &mut * #encoder, #(#args),* )?),
             },
+            Function::WithInPlace(path, args) => {
+                quote!(#path::encode(#input, &mut * #encoder, #(#args),* )?)
+            }
         })
     }
 
@@ -141,8 +144,7 @@ impl Function {
         ctxt: &Ctxt,
         ty: &Type,
         field: &Field,
-        in_place: bool,
-        optimized_in_place: &mut bool,
+        in_place: bool
     ) -> syn::Result<TokenStream2> {
         let ref crate_name = ctxt.flags.crate_name;
         let ref encoder_generic = ctxt.encoder_generic;
@@ -151,30 +153,40 @@ impl Function {
         Ok(match self {
             Function::Default => {
                 if in_place {
-                    *optimized_in_place = true;
                     quote!(<#ty as #crate_name::Decode<#encoder_generic>>::decode_in_place(#name, #encoder)?)
                 } else {
-                    *optimized_in_place = false;
                     quote!(<#ty as #crate_name::Decode<#encoder_generic>>::decode(#encoder)?)
                 }
             }
             Function::Serde(serde_crate) => {
                 if in_place {
-                    *optimized_in_place = true;
                     quote!(<#ty as #serde_crate::Deserialize>::deserialize_in_place(&mut * #encoder, #name)?)
                 } else {
-                    *optimized_in_place = false;
                     quote!(<#ty as #serde_crate::Deserialize>::deserialize(&mut * #encoder)?)
                 }
             }
             Function::With(path, args, scope) => {
-                *optimized_in_place = true;
-                match scope {
-                    Scope::Encode => unreachable!(),
-                    Scope::Decode => quote!(#path(&mut * #encoder, #(#args),* )?),
-                    Scope::Both => quote!(#path::decode(&mut * #encoder, #(#args),* )?),
+                if in_place {
+                    match scope {
+                        Scope::Encode => unreachable!(),
+                        Scope::Decode => quote!(*#name = #path(&mut * #encoder, #(#args),* )?;),
+                        Scope::Both => quote!(*#name = #path::decode(&mut * #encoder, #(#args),* )?;),
+                    }
+                } else {
+                    match scope {
+                        Scope::Encode => unreachable!(),
+                        Scope::Decode => quote!(#path(&mut * #encoder, #(#args),* )?),
+                        Scope::Both => quote!(#path::decode(&mut * #encoder, #(#args),* )?),
+                    }
                 }
             },
+            Function::WithInPlace(path, args) => {
+                if in_place {
+                    quote!(#path::decode_in_place(#name, &mut * #encoder, #(#args),* )?;)
+                } else {
+                    quote!(#path::decode(&mut * #encoder, #(#args),* )?)
+                }
+            }
         })
     }
 }

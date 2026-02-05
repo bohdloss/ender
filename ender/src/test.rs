@@ -305,3 +305,63 @@ fn impls_test() {
 //         })
 //     }
 // }
+
+ use crate::facade::fake::*;
+#[derive(Encode, Decode)]
+struct Friends {
+    /// Has Serialize/Deserialize implementations, but no Encode/Decode implementations.
+    /// A perfect fit for integrating with serde!
+    #[ender(serde)]
+    uuid: (),
+    /// Here we demonstrate how the with flag changes based on whether a scope
+    /// is declared. This:
+    #[ender(with(in_place): person_encoder)]
+    friend1: person_encoder::Person,
+    /// ...is equivalent to this!
+    #[ender(en; with: person_encoder::encode)]
+    #[ender(de; with: person_encoder::decode)]
+    friend2: person_encoder::Person,
+    /// Not the smartest way to store a private key!
+    private_key: Vec<u8>,
+    public_key: Vec<u8>,
+    /// This block of data will be encrypted before being encoded using the public key,
+    /// and decrypted after being decoded using the private key.
+    #[ender(with: rsa(public_key, private_key))]
+    even_more_secret_data: Vec<u8>,
+}
+
+mod person_encoder {
+    use crate::{Encoder, EncodingResult, Encode, Decode};
+    use crate::io::{Read, Write};
+
+    pub struct Person {
+        name: String,
+        surname: String,
+        age: u32,
+    }
+
+    pub fn encode<T: Write>(person: &Person, encoder: &mut Encoder<T>) -> EncodingResult<()> {
+        /* ... */
+        person.name.encode(encoder)?;
+        person.surname.encode(encoder)?;
+        person.age.encode(encoder)?;
+        Ok(())
+    }
+
+    pub fn decode<T: Read>(encoder: &mut Encoder<T>) -> EncodingResult<Person> {
+        /* ... */
+        Ok(Person {
+            name: encoder.decode_value()?,
+            surname: encoder.decode_value()?,
+            age: encoder.decode_value()?,
+        })
+    }
+
+    pub fn decode_in_place<T: Read>(person: &mut Person, encoder: &mut Encoder<T>) -> EncodingResult<()> {
+        /* ... */
+        person.name.decode_in_place(encoder)?;
+        person.surname.decode_in_place(encoder)?;
+        person.age.decode_in_place(encoder)?;
+        Ok(())
+    }
+}
