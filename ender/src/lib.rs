@@ -2012,7 +2012,7 @@ macro_rules! make_read_fns {
     };
 }
 
-impl<T: Read> Encoder<'_, T> {
+impl<'user, T: Read> Encoder<'user, T> {
     make_read_fns! {
         type u8 {
             pub u_read: read_u8,
@@ -2352,11 +2352,7 @@ impl<T: Read> Encoder<'_, T> {
     where
         S: FromIterator<char>,
     {
-        self.read_str_with(
-            self.ctxt.settings.string_repr.encoding,
-            self.ctxt.settings.string_repr.endianness,
-            self.ctxt.settings.string_repr.len
-        )
+        self.read_str_iter()?.into_iter().collect()
     }
 
     /// Decodes a String from the underlying stream, according to the endianness,
@@ -2364,16 +2360,55 @@ impl<T: Read> Encoder<'_, T> {
     #[inline]
     pub fn read_str_with<S>(&mut self, encoding: StrEncoding, endianness: Endianness, len_encoding: StrLen) -> EncodingResult<S>
     where
-        S: FromIterator<char>,
+        S: FromIterator<char>
+    {
+        self.read_str_iter_with(encoding, endianness, len_encoding)?.into_iter().collect()
+    }
+
+    /// Returns an iterator which can be used to decode a String from the underlying stream.
+    /// The iterator acts according to the endianness, and string encoding in the encoder's state.
+    ///
+    /// Even if the iterator is not used, this method may read some data from the stream to determine
+    /// the length of the string.
+    ///
+    /// If the iterator returns `None` or `Some(Err)`, calling `next` again will most likely lead to
+    /// logic errors, and it should simply be dropped instead.
+    ///
+    /// Dropping the iterator before you reach the end or an error is returned will leave the stream
+    /// in a broken state, and successive reads will see the unread parts of the string.
+    #[inline]
+    pub fn read_str_iter<'a>(&'a mut self) -> EncodingResult<impl IntoIterator<Item = EncodingResult<char>> + use<'a, 'user, T>>
+    {
+        self.read_str_iter_with(
+            self.ctxt.settings.string_repr.encoding,
+            self.ctxt.settings.string_repr.endianness,
+            self.ctxt.settings.string_repr.len
+        )
+    }
+
+    /// Returns an iterator which can be used to decode a String from the underlying stream.
+    /// The iterator acts according to the endianness, and string encoding passed as parameters.
+    ///
+    /// Even if the iterator is not used, this method may read some data from the stream to determine
+    /// the length of the string.
+    ///
+    /// If the iterator returns `None` or `Some(Err)`, calling `next` again will most likely lead to
+    /// logic errors, and it should simply be dropped instead.
+    ///
+    /// Dropping the iterator before you reach the end or an error is returned will leave the stream
+    /// in a broken state, and successive reads will see the unread parts of the string.
+    #[inline]
+    pub fn read_str_iter_with<'a>(&'a mut self, encoding: StrEncoding, endianness: Endianness, len_encoding: StrLen) -> EncodingResult<impl IntoIterator<Item = EncodingResult<char>> + use<'a, 'user, T>>
     {
         struct LenPrefixCharIter<'iter, 'user, T: Read> {
             encoder: Encoder<'user, SizeLimit<&'iter mut T>>,
             encoding: StrEncoding,
-            endianness: Endianness
+            endianness: Endianness,
         }
 
-        impl<'iter, 'user, T: Read> Iterator for LenPrefixCharIter<'iter, 'user, T> {
+        impl<T: Read> Iterator for LenPrefixCharIter<'_, '_, T> {
             type Item = EncodingResult<char>;
+            #[inline]
             fn next(&mut self) -> Option<Self::Item> {
                 if self.encoder.stream.remaining_readable() == 0 {
                     // We expect 0 more bytes
@@ -2383,16 +2418,23 @@ impl<T: Read> Encoder<'_, T> {
                 
                 Some(self.encoder.read_char_with(self.encoding, self.endianness))
             }
+
+            #[inline]
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                (0, Some(self.encoder.stream.remaining_readable()))
+            }
         }
 
         struct NullTermCharIter<'iter, 'user, T: Read> {
             encoder: &'iter mut Encoder<'user, T>,
             encoding: StrEncoding,
-            endianness: Endianness
+            endianness: Endianness,
         }
 
         impl<T: Read> Iterator for NullTermCharIter<'_, '_, T> {
             type Item = EncodingResult<char>;
+
+            #[inline]
             fn next(&mut self) -> Option<Self::Item> {
                 match self.encoder.read_char_with(self.encoding, self.endianness) {
                     Ok('\0') => {
@@ -2419,6 +2461,8 @@ impl<T: Read> Encoder<'_, T> {
 
         impl<T: Read> Iterator for NullTermFixedLengthCharIter<'_, '_, T> {
             type Item = EncodingResult<char>;
+
+            #[inline]
             fn next(&mut self) -> Option<Self::Item> {
                 if self.encoder.stream.remaining_readable() == 0 {
                     // We reached the maximum amount of bytes we can read
@@ -2453,6 +2497,39 @@ impl<T: Read> Encoder<'_, T> {
                     }
                 }
             }
+
+            #[inline]
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                (0, Some(self.encoder.stream.remaining_readable()))
+            }
+        }
+
+        enum IteratorDecider<'iter, 'user, T: Read> {
+            LenPrefix(LenPrefixCharIter<'iter, 'user, T>),
+            NullTerm(NullTermCharIter<'iter, 'user, T>),
+            NullTermFixedLength(NullTermFixedLengthCharIter<'iter, 'user, T>)
+        }
+
+        impl<T: Read> Iterator for IteratorDecider<'_, '_, T> {
+            type Item = EncodingResult<char>;
+
+            #[inline]
+            fn next(&mut self) -> Option<Self::Item> {
+                match self {
+                    IteratorDecider::LenPrefix(x) => x.next(),
+                    IteratorDecider::NullTerm(x) => x.next(),
+                    IteratorDecider::NullTermFixedLength(x) => x.next(),
+                }
+            }
+
+            #[inline]
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                match self {
+                    IteratorDecider::LenPrefix(x) => x.size_hint(),
+                    IteratorDecider::NullTerm(x) => x.size_hint(),
+                    IteratorDecider::NullTermFixedLength(x) => x.size_hint(),
+                }
+            }
         }
 
         match len_encoding {
@@ -2464,7 +2541,7 @@ impl<T: Read> Encoder<'_, T> {
                     endianness
                 };
 
-                iter.collect()
+                Ok(IteratorDecider::LenPrefix(iter))
             }
             StrLen::NullTerminated => {
                 let iter = NullTermCharIter {
@@ -2472,7 +2549,7 @@ impl<T: Read> Encoder<'_, T> {
                     encoding,
                     endianness
                 };
-                iter.collect()
+                Ok(IteratorDecider::NullTerm(iter))
             }
             StrLen::NullTerminatedFixed(max) => {
                 let iter = NullTermFixedLengthCharIter {
@@ -2480,7 +2557,7 @@ impl<T: Read> Encoder<'_, T> {
                     encoding,
                     endianness
                 };
-                iter.collect()
+                Ok(IteratorDecider::NullTermFixedLength(iter))
             }
         }
     }
@@ -2831,4 +2908,14 @@ pub trait Decode<R: Read>: Sized {
     /// no guarantees are made about the state of the encoder,
     /// and users should reset it before reuse.
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self>;
+
+    /// Decodes `Self` from its binary format.
+    ///
+    /// See [`Decode::decode`] for more details.
+    ///
+    /// Doesn't create a new `Self`, but rather updates the existing data within it.
+    fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
+        *self = Self::decode(decoder)?;
+        Ok(())
+    }
 }
