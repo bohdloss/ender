@@ -3,7 +3,6 @@ use crate::{
     BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
     StrEncoding, StringError,
 };
-use alloc::borrow::Cow;
 use core::cell::{Cell, RefCell};
 use core::ffi::CStr;
 use core::marker::PhantomData;
@@ -975,8 +974,8 @@ where
     #[inline]
     fn decode_in_place(&mut self, decoder: &mut Encoder<R>) -> EncodingResult<()> {
         match self {
-            Cow::Borrowed(x) => x.decode_in_place(decoder)?,
-            Cow::Owned(_) => *self = Self::decode(decoder)?
+            Self::Borrowed(x) => x.decode_in_place(decoder)?,
+            Self::Owned(_) => *self = Self::decode(decoder)?
         }
         Ok(())
     }
