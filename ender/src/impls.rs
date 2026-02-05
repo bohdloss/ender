@@ -1,18 +1,15 @@
+use crate::io::{BorrowRead, Read, Write};
+use crate::{
+    BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
+    StrEncoding, StringError,
+};
 use alloc::borrow::Cow;
-use alloc::rc::Rc;
 use core::cell::{Cell, RefCell};
 use core::ffi::CStr;
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::ops::{Bound, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo};
 use core::time::Duration;
-use std::collections::VecDeque;
-use std::ops::{DerefMut, IndexMut};
-use crate::io::{BorrowRead, Read, Write};
-use crate::{
-    BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
-    StrEncoding, StringError,
-};
 
 // Primitives
 

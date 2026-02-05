@@ -169,7 +169,7 @@ impl Struct {
 
 impl Field {
     pub fn derive_encode(&self, ctxt: &Ctxt, ref_code: &mut RefCode) -> syn::Result<TokenStream2> {
-        ref_code.append(self);
+        ref_code.append(self, false);
         let ref field_name = self.name;
         let ref field_accessor = self.accessor;
         let ref field_ty = self.ty;
