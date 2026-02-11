@@ -2189,7 +2189,7 @@ impl<'user, T: Read> Encoder<'user, T> {
             let endianness = self.ctxt.settings.variant_repr.endianness;
 
             match width {
-                BitWidth::Bit8 => Opaque::from(self.read_u8_with(encoding, endianness)?),
+                BitWidth::Bit8 => Opaque::from(self.read_i8_with(encoding, endianness)?),
                 BitWidth::Bit16 => Opaque::from(self.read_i16_with(encoding, endianness)?),
                 BitWidth::Bit32 => Opaque::from(self.read_i32_with(encoding, endianness)?),
                 BitWidth::Bit64 => Opaque::from(self.read_i64_with(encoding, endianness)?),
