@@ -830,7 +830,7 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a str {
                 core::str::from_utf8(bytes).map_err(|_| StringError::InvalidChar)?
             }
             StrLen::NullTerminated => {
-                let mut len = 1;
+                let mut len = 0;
                 loop {
                     let slice = decoder.peek_bytes(len)?;
                     if slice[len] == 0 {
@@ -846,6 +846,7 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a str {
                 for _ in 0..fixed {
                     slice = decoder.peek_bytes(len)?;
                     if slice[len] == 0 {
+                        slice = &slice[..slice.len() - 1];
                         break;
                     }
                     len += 1;
