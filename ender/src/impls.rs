@@ -1,8 +1,5 @@
 use crate::io::{BorrowRead, Read, Write};
-use crate::{
-    BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, NumEncoding,
-    StrEncoding, StringError,
-};
+use crate::{BorrowError, Decode, Encode, Encoder, EncodingError, EncodingResult, StrEncoding, StrLen, StringError};
 use core::cell::{Cell, RefCell};
 use core::ffi::CStr;
 use core::marker::PhantomData;
@@ -814,10 +811,10 @@ impl<R: Read> Decode<R> for alloc::boxed::Box<str> {
 impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a str {
     #[inline]
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
-        // Can only be borrowed when the string encoding is utf-8
+        // Can only be borrowed when the string encoding is utf-8 or ascii
         // else the user might get some surprises if we just assume it to be utf-8
         let str_encoding = decoder.ctxt.settings.string_repr.encoding;
-        if str_encoding != StrEncoding::Utf8 {
+        if str_encoding != StrEncoding::Utf8 && str_encoding != StrEncoding::Ascii {
             return Err(BorrowError::StrEncodingMismatch {
                 found: str_encoding,
                 while_decoding: StrEncoding::Utf8,
@@ -825,9 +822,46 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a str {
             .into());
         }
 
-        let len = decoder.read_usize()?;
-        let bytes = decoder.borrow_u8_slice(len, NumEncoding::Fixed)?;
-        Ok(core::str::from_utf8(bytes).map_err(|_| StringError::InvalidChar)?)
+        let str_len = decoder.ctxt.settings.string_repr.len;
+        let string = match str_len {
+            StrLen::LengthPrefixed => {
+                let len = decoder.read_usize()?;
+                let bytes = decoder.borrow_byte_slice(len)?;
+                core::str::from_utf8(bytes).map_err(|_| StringError::InvalidChar)?
+            }
+            StrLen::NullTerminated => {
+                let mut len = 1;
+                loop {
+                    let slice = decoder.peek_bytes(len)?;
+                    if slice[len] == 0 {
+                        break;
+                    }
+                    len += 1;
+                }
+                core::str::from_utf8(decoder.borrow_byte_slice(len)?).map_err(|_| StringError::InvalidChar)?
+            }
+            StrLen::NullTerminatedFixed(fixed) => {
+                let mut len = 1;
+                let mut slice = [].as_slice();
+                for _ in 0..fixed {
+                    slice = decoder.peek_bytes(len)?;
+                    if slice[len] == 0 {
+                        break;
+                    }
+                    len += 1;
+                }
+                // Explicitly discard result, we only care about consuming the bytes in the stream
+                let _ = decoder.borrow_byte_slice(fixed)?;
+
+                core::str::from_utf8(slice).map_err(|_| StringError::InvalidChar)?
+            }
+        };
+
+        if str_encoding == StrEncoding::Ascii && !string.is_ascii() {
+            return Err(StringError::InvalidChar.into());
+        }
+
+        Ok(string)
     }
 }
 
@@ -1254,14 +1288,25 @@ impl<R: Read, T: Decode<R>> Decode<R> for alloc::vec::Vec<T> {
 impl<R: Read> Decode<R> for alloc::ffi::CString {
     #[inline]
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
-        let mut data = alloc::vec::Vec::new();
-        loop {
-            let val = decoder.read_byte()?;
-            data.push(val);
-            if val == 0 {
-                break;
-            }
+        let str_encoding = decoder.ctxt.settings.string_repr.encoding;
+        if str_encoding != StrEncoding::Ascii && str_encoding != StrEncoding::Windows1252 {
+            return Err(BorrowError::StrEncodingMismatch {
+                found: str_encoding,
+                while_decoding: StrEncoding::Ascii,
+            }.into());
         }
+
+        let mut data = alloc::vec::Vec::new();
+        let iter = decoder.read_str_iter()?;
+        for ch in iter {
+            let ch = ch?;
+            if ch == '\0' || !ch.is_ascii() {
+                return Err(StringError::InvalidChar.into());
+            }
+            data.push(ch as u8); // Ascii and windows1252 are single-byte char encodings
+        }
+        data.push(0);
+
         // PANIC SAFETY:
         // The above implementation guarantees that the vec will only ever
         // contain 1 null value and that it will be in the last position.
@@ -1282,10 +1327,25 @@ impl<R: Read> Decode<R> for alloc::boxed::Box<CStr> {
 impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a CStr {
     #[inline]
     fn decode(decoder: &mut Encoder<R>) -> EncodingResult<Self> {
+        let len = decoder.ctxt.settings.string_repr.len;
+        let str_encoding = decoder.ctxt.settings.string_repr.encoding;
+        if len != StrLen::NullTerminated {
+            return Err(BorrowError::StrLenEncodingMismatch {
+                found: len,
+                while_decoding: StrLen::NullTerminated,
+            }.into());
+        }
+        if str_encoding != StrEncoding::Ascii {
+            return Err(BorrowError::StrEncodingMismatch {
+                found: str_encoding,
+                while_decoding: StrEncoding::Ascii,
+            }.into());
+        }
+
         let mut len = 1;
         loop {
             let slice = decoder.peek_bytes(len)?;
-            if &slice[len - 1..len] == &[0] {
+            if slice[len] == 0 {
                 break;
             }
             len += 1;
@@ -1295,7 +1355,7 @@ impl<'data: 'a, 'a, R: BorrowRead<'data>> Decode<R> for &'a CStr {
         // The above implementation guarantees that the slice will only ever
         // contain 1 null value and that it will be in the last position.
         // It is safe to unwrap
-        Ok(CStr::from_bytes_with_nul(decoder.borrow_u8_slice(len, NumEncoding::Fixed)?).unwrap())
+        Ok(CStr::from_bytes_with_nul(decoder.borrow_byte_slice(len)?).unwrap())
     }
 }
 

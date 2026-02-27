@@ -1,5 +1,5 @@
 use crate::source::Stack;
-use crate::{BitWidth, Endianness, NumEncoding, Opaque, StrEncoding};
+use crate::{BitWidth, Endianness, NumEncoding, Opaque, StrEncoding, StrLen};
 use core::fmt;
 use core::fmt::Formatter;
 use embedded_io::{Error, ErrorKind, ReadExactError};
@@ -242,6 +242,13 @@ pub enum BorrowError {
     StrEncodingMismatch {
         found: StrEncoding,
         while_decoding: StrEncoding,
+    },
+    #[display(
+        "String length encoding mismatch: expected {found} while decoding a {while_decoding} string"
+    )]
+    StrLenEncodingMismatch {
+        found: StrLen,
+        while_decoding: StrLen,
     },
     #[display("Endianness mismatch: stream contains {found} data, but system uses {system}")]
     EndiannessMismatch {
