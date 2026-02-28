@@ -1,5 +1,5 @@
 use crate::{Context, Decode, Encode, Encoder, EncodingResult};
-use crate::io::{Read, Slice, SliceMut, Write};
+use crate::io::{Read, SizeTrack, Slice, SliceMut, Write, Zero};
 
 /// Encodes the given value by constructing an encoder on the fly backed by a
 /// [VecStream][`crate::io::VecStream`], then returning the wrapped vector of bytes.
@@ -78,6 +78,25 @@ pub fn encode<W: IntoWrite, V: Encode<W::Write>>(
 ) -> EncodingResult<()> {
 	let mut encoder = Encoder::new(writer.into_write(), Context::default());
 	value.encode(&mut encoder)
+}
+
+
+/// Calculates the encoded length of the given value by constructing an encoder on the fly that
+/// ignores all write calls except for tracking the amount of bytes that would have been written.
+pub fn length_of<V: Encode<SizeTrack<Zero>>>(value: V) -> EncodingResult<usize> {
+	let mut encoder = Encoder::new(SizeTrack::new(Zero), Context::default());
+	value.encode(&mut encoder)?;
+	Ok(encoder.stream.size_written())
+}
+
+
+/// Calculates the encoded length of the given value by constructing an encoder on the fly, with
+/// the given context, that ignores all write calls except for tracking the amount of bytes
+/// that would have been written.
+pub fn length_of_with<V: Encode<SizeTrack<Zero>>>(value: V, context: Context) -> EncodingResult<usize> {
+	let mut encoder = Encoder::new(SizeTrack::new(Zero), context);
+	value.encode(&mut encoder)?;
+	Ok(encoder.stream.size_written())
 }
 
 /// Decodes the given value by constructing an encoder on the fly and using it to wrap the reader,
