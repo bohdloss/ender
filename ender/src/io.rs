@@ -432,6 +432,12 @@ impl<T> SizeTrack<T> {
         self.rsize
     }
 
+    /// Resets the internal counter of the number of bytes read and written.
+    pub fn clear(&mut self) {
+        self.wsize = 0;
+        self.rsize = 0;
+    }
+
     /// Read-only reference to `T`.
     #[inline]
     pub fn inner(&self) -> &T {
