@@ -25,6 +25,16 @@ pub fn decode_bytes<'a, R: AsRef<[u8]>, V: Decode<Slice<'a>>>(bytes: &'a R) -> E
 	V::decode(&mut decoder)
 }
 
+/// Decodes the given value in place by constructing an encoder on the fly and using it to wrap a
+/// byte slice.
+///
+/// Uses the default [`Context`]
+#[inline]
+pub fn decode_bytes_in_place<'a, R: AsRef<[u8]>, V: Decode<Slice<'a>>>(value: &mut V, bytes: &'a R) -> EncodingResult<()> {
+	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), Context::default());
+	V::decode_in_place(value, &mut decoder)
+}
+
 /// Decodes the given value by constructing an encoder on the fly and using it to wrap a byte
 /// slice.
 ///
@@ -33,6 +43,15 @@ pub fn decode_bytes<'a, R: AsRef<[u8]>, V: Decode<Slice<'a>>>(bytes: &'a R) -> E
 pub fn decode_bytes_owned<R: AsRef<[u8]>, V: for<'a> Decode<Slice<'a>>>(bytes: &R) -> EncodingResult<V> {
 	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), Context::default());
 	V::decode(&mut decoder)
+}
+/// Decodes the given value in place by constructing an encoder on the fly and using it to wrap a
+/// byte slice.
+///
+/// Uses the default [`Context`]
+#[inline]
+pub fn decode_bytes_in_place_owned<R: AsRef<[u8]>, V: for<'a> Decode<Slice<'a>>>(value: &mut V, bytes: &R) -> EncodingResult<()> {
+	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), Context::default());
+	V::decode_in_place(value, &mut decoder)
 }
 
 /// Encodes the given value by constructing an encoder on the fly backed by a
@@ -59,6 +78,16 @@ pub fn decode_bytes_with<'a, R: AsRef<[u8]>, V: Decode<Slice<'a>>>(bytes: &'a R,
 	V::decode(&mut decoder)
 }
 
+/// Decodes the given value in place by constructing an encoder on the fly and using it to wrap a
+/// byte slice.
+///
+/// Uses the given [`Context`]
+#[inline]
+pub fn decode_bytes_in_place_with<'a, R: AsRef<[u8]>, V: Decode<Slice<'a>>>(value: &mut V, bytes: &'a R, context: Context) -> EncodingResult<()> {
+	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), context);
+	V::decode_in_place(value, &mut decoder)
+}
+
 /// Decodes the given value by constructing an encoder on the fly and using it to wrap a byte
 /// slice.
 ///
@@ -67,6 +96,16 @@ pub fn decode_bytes_with<'a, R: AsRef<[u8]>, V: Decode<Slice<'a>>>(bytes: &'a R,
 pub fn decode_bytes_with_owned<R: AsRef<[u8]>, V: for<'a> Decode<Slice<'a>>>(bytes: &R, context: Context) -> EncodingResult<V> {
 	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), context);
 	V::decode(&mut decoder)
+}
+
+/// Decodes the given value in place by constructing an encoder on the fly and using it to wrap a
+/// byte slice.
+///
+/// Uses the given [`Context`]
+#[inline]
+pub fn decode_bytes_in_place_with_owned<R: AsRef<[u8]>, V: for<'a> Decode<Slice<'a>>>(value: &mut V, bytes: &R, context: Context) -> EncodingResult<()> {
+	let mut decoder = Encoder::new(Slice::new(bytes.as_ref()), context);
+	V::decode_in_place(value, &mut decoder)
 }
 
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
@@ -107,6 +146,14 @@ pub fn decode<R: IntoRead, V: Decode<R::Read>>(reader: R) -> EncodingResult<V> {
 	V::decode(&mut decoder)
 }
 
+/// Decodes the given value in place by constructing an encoder on the fly and using it to wrap the
+/// reader, with the default context.
+#[inline]
+pub fn decode_in_place<R: IntoRead, V: Decode<R::Read>>(value: &mut V, reader: R) -> EncodingResult<()> {
+	let mut decoder = Encoder::new(reader.into_read(), Context::default());
+	V::decode_in_place(value, &mut decoder)
+}
+
 /// Encodes the given value by constructing an encoder on the fly and using it to wrap the writer,
 /// with the given context.
 #[inline]
@@ -125,6 +172,14 @@ pub fn encode_with<W: IntoWrite, V: Encode<W::Write>>(
 pub fn decode_with<R: IntoRead, V: Decode<R::Read>>(reader: R, context: Context) -> EncodingResult<V> {
 	let mut decoder = Encoder::new(reader.into_read(), context);
 	V::decode(&mut decoder)
+}
+
+/// Decodes the given value in place by constructing an encoder on the fly and using it to wrap the
+/// reader, with the given context.
+#[inline]
+pub fn decode_in_place_with<R: IntoRead, V: Decode<R::Read>>(value: &mut V, reader: R, context: Context) -> EncodingResult<()> {
+	let mut decoder = Encoder::new(reader.into_read(), context);
+	V::decode_in_place(value, &mut decoder)
 }
 
 /// Something that can be turned into a writer compatible with [Encoder][`crate::Encoder`]
