@@ -36,9 +36,9 @@ fn i64_to_isize(val: i64) -> isize {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-impl Into<std::io::Error> for EncodingError {
-    fn into(self) -> std::io::Error {
-        match self {
+impl From<EncodingError> for std::io::Error {
+    fn from(err: EncodingError) -> std::io::Error {
+        match err {
             EncodingError::IOError(error) => {
                 std::io::Error::from(<std::io::ErrorKind as From<_>>::from(error))
             }
