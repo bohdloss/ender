@@ -36,13 +36,15 @@ fn i64_to_isize(val: i64) -> isize {
 
 #[cfg(feature = "std")]
 #[cfg_attr(feature = "unstable", doc(cfg(feature = "std")))]
-fn io_err(err: EncodingError) -> std::io::Error {
-    match err {
-        EncodingError::IOError(error) => {
-            std::io::Error::from(<std::io::ErrorKind as From<_>>::from(error))
+impl Into<std::io::Error> for EncodingError {
+    fn into(self) -> std::io::Error {
+        match self {
+            EncodingError::IOError(error) => {
+                std::io::Error::from(<std::io::ErrorKind as From<_>>::from(error))
+            }
+            EncodingError::UnexpectedEnd => std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
+            error => std::io::Error::new(std::io::ErrorKind::Other, error),
         }
-        EncodingError::UnexpectedEnd => std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
-        error => std::io::Error::new(std::io::ErrorKind::Other, error),
     }
 }
 
@@ -89,7 +91,7 @@ impl<T> Std<T> {
 impl<T: Write> std::io::Write for Std<T> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        <T as Write>::write(&mut self.0, buf).map_err(io_err)?;
+        <T as Write>::write(&mut self.0, buf).map_err(Into::<std::io::Error>::into)?;
         Ok(buf.len())
     }
     #[inline]
@@ -103,7 +105,7 @@ impl<T: Write> std::io::Write for Std<T> {
 impl<T: Read> std::io::Read for Std<T> {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        <T as Read>::read(&mut self.0, buf).map_err(io_err)?;
+        <T as Read>::read(&mut self.0, buf).map_err(Into::<std::io::Error>::into)?;
         Ok(buf.len())
     }
 }
@@ -120,7 +122,7 @@ impl<T: Seek> std::io::Seek for Std<T> {
         };
         match <T as Seek>::seek(&mut self.0, pos) {
             Ok(off) => Ok(usize_to_u64(off)),
-            Err(err) => Err(io_err(err)),
+            Err(err) => Err(err.into()),
         }
     }
 }

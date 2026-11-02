@@ -86,10 +86,10 @@ impl<W: Write, T: Encode<W>, const SIZE: usize> Encode<W> for [T; SIZE] {
 macro_rules! tuple_encode {
     ($($name:ident)+) => {
 	    #[allow(non_snake_case)]
-	    impl<__W: $crate::io::Write, $($name: $crate::Encode<__W>),+> $crate::Encode<__W> for ($($name),+) {
+	    impl<__W: $crate::io::Write, $($name: $crate::Encode<__W>),+> $crate::Encode<__W> for ($($name,)+) {
 		    #[inline]
             fn encode(&self, encoder: &mut $crate::Encoder<__W>) -> $crate::EncodingResult<()> {
-		        let ($($name),*) = self;
+		        let ($($name,)*) = self;
 			    $(
 			        $crate::Encode::encode($name, encoder)?;
 			    )+
@@ -99,6 +99,7 @@ macro_rules! tuple_encode {
     };
 }
 
+tuple_encode! { A }
 tuple_encode! { A B }
 tuple_encode! { A B C }
 tuple_encode! { A B C D }
